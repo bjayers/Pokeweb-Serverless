@@ -114,6 +114,7 @@ def main():
   'These numbers are not whole-game peak heap measurements. A fresh base',
   'installation omits the Surf and land-rider archives, their registries and',
   'anchors, and the associated resident textures.', '',
+  *['Stock White 2 0.6.89 uses eight fewer code/initialized-data bytes in each field package than 0.6.88. Its wider sideways dialogue corridor adds no BSS or heap allocation; the battle-resident payload remains 1,152 bytes.' for r in reports if r['profile']=='stock' and r['version']=='0.6.89-alpha'], '',
   '## Battle residency','',
   'Only the small core owns ARM9 hooks. A separate 364-byte module targets battle overlay 167; it has no BSS, imports, or heap buffers. The combined battle-resident code, initialized data and BSS are '+', '.join(f"{r['profile']} {r['battleResidentPayloadBytes']:,} B" for r in reports)+'.',
   'Compared with the preceding core plus resident event bridge, the fixed payload saved during battle is '+', '.join(f"{r['profile']} {entry['fixedPayloadSavedBytes']:,} B" for r,entry in zip(reports,battle_comparison))+'.',

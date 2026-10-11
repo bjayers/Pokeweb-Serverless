@@ -45,6 +45,17 @@ zone handling are retained. A changed appearance uses normal trail reseeding.
 
 ## Storage and compatibility
 
+Stock White 2 0.6.89 widens the dialogue corridor sideways from one-third to
+one-half of a tile (eight world units), independently of both actors' facings
+and rendered sprite widths. A recent turn can leave a perpendicular-facing
+follower offset within its adjacent tile. The supplied Purrloin state has a
+16-unit forward and six-unit sideways separation: the previous corridor
+rejected it although the native target tile and obstruction query allow it.
+The same half-tile limit applies to every retained trail sample, including
+rotated rail tangents. Forward separation limits, target-grid admission,
+obstructions, generation and height checks remain. Neither walking offsets
+nor the existing bounded pose clamp changes.
+
 Full FWDB version 3 uses reserved byte 15 of each unchanged 24-byte row. Compact
 version 4 uses bits 3–5 of byte 8 in each unchanged 12-byte row. Values above six
 are rejected. Legacy versions 1/2 remain readable with zero added spacing; older
@@ -68,6 +79,18 @@ Registry checks cover each installed appearance, fallback selection, malformed
 spacing, cache bounds and allocation-free reads. Import tests cover transparent
 padding, maximum pose width, mirroring, asymmetric sides and legacy formats.
 Executed results are recorded in [VALIDATION.md](VALIDATION.md).
+
+The current stock side-on artwork scan is reproducible without an emulator:
+
+```sh
+npx vite-node scripts/verify-following-dialogue-assets.ts /path/to/White2-Following-0.6.89-alpha.nds runtime/following-pokemon/build/dialogue-assets.json
+python3 runtime/following-pokemon/verify_dialogue_assets.py runtime/following-pokemon/build/dialogue-assets.json runtime/following-pokemon/build/dialogue-assets-cpu.json
+```
+
+For a base ROM, set `FOLLOWING_BUILD_DIR=runtime/following-pokemon/build/base`
+and `FOLLOWING_MODULE_SUFFIX=W2Base` on the Python command. The scan binds its
+catalog to the installed field DLL hash and includes all forms, genders and
+shiny appearances, not just the narrowest artwork.
 
 Human acceptance is pending: run W01–W05 in [EMULATOR-CHECKLIST.md](EMULATOR-CHECKLIST.md)
 on both profiles, including large sprites on stairs and near buildings, and
