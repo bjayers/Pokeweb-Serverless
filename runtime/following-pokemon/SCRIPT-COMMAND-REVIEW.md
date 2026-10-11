@@ -2,16 +2,16 @@
 
 The stock US White 2 dispatch table has 755 opcode slots (`0x000`–`0x2F2`).
 The supplied command sheet contains 660 of those IDs, including one blank name.
-The revised runtime policy admits **373 commands**: 173 already admitted before
+The revised runtime policy admits **375 commands**: 173 already admitted before
 the first review, **135 added after source review**, **47 further named commands**,
-and **18 child-event/application commands** admitted by project decision. The complete opcode-by-opcode decision
+**18 child-event/application commands** admitted by project decision, and two later audited synchronous data writes (`0x262` and `0x2C5`). The complete opcode-by-opcode decision
 is in [script-command-review.csv](script-command-review.csv). The separate
 [non-allowlisted command register](NON-ALLOWLISTED-COMMANDS.md) gives a reason
-for each of the other 382 standard slots. `0x2C2` remains permitted only for
+for each of the other 380 standard slots. `0x2C2` remains permitted only for
 the verified Repel-continuation script.
 
 Command numbers were taken from the stock US White 2 dispatch table and each
-new handler is pinned by its address and first 16 bytes in `event-policy.json`.
+new handler is pinned by its address and audited instruction bytes in `event-policy.json`.
 The command implementations informed the behavior review, but their command
 table does not have the same numeric ordering as the US ROM. A matching name
 alone is therefore insufficient evidence to transfer an opcode number. The
@@ -20,6 +20,13 @@ child-callback, actor movement, placement, deletion, mode, and teardown guards
 still run afterward.
 
 ## Newly admitted commands
+
+Stock 0.6.90 admits `0x2C5` after the reported trashcan recall. The native
+handler consumes one u16 activity ID and calls the Join Avenue recent-activity
+updater synchronously. Complete native updater bytes and the handler are
+pinned; the captured-state CPU check protects actor/event RAM and permits only
+the recent-ID/date fields to change. The command itself creates no child event
+or actor movement.
 
 | Behavior | US opcodes | Reason |
 | --- | --- | --- |

@@ -2,12 +2,13 @@
 
 The generated checklist collects targeted regression cases before the baseline cases below. All rows begin NOT RUN; host and isolated-CPU checks are not game-emulator results. Cold boot the current profile export with an ordinary matching save. Record ROM hash, emulator version, map, species/form, facing, and a fresh state for failures.
 
-## Stock White 2 0.6.89 visual checks
+## Stock White 2 0.6.91 visual checks
 
 Cold boot the versioned ROM with its matching ordinary save; older diagnostic states retain their earlier loaded code.
 
 | ID | Steps | Expected | Result / evidence |
 |---|---|---|---|
+| F91 | Recreate `quick-launch-20261011-152314.dst` with Mew trailing north while walking south to the trashcan. Compare the supplied correct/incorrect screenshots. Repeat the earlier `issue1.dst`: approach the Aspertia trashcan from the north with a trailing follower, inspect it, then walk one tile north as in `issue3.dst`. Repeat with small/large followers, all facings, benches/bookshelves and rotated furniture. | The trashcan covers the player's/follower's overlapping feet; stationary inspection retains the same follower without a recall/send-out. Sprite projection, follower/player order, shadows and later grass effects stay correct. | NOT RUN |
 | D89 | Turn at an L bend, then face a north/south-facing Purrloin from the side. Repeat player left/right against follower up/down and player up/down against follower left/right, on both sides, with small/large followers. Also try a wall, another floor, and an unrelated nearby tile. | Follower dialogue starts from the unobstructed native target tile despite a small sideways offset after turning. Walls, different floors and unrelated tiles still reject it. Normal NPC/sign actions keep priority. | NOT RUN |
 | C88 | Author a zone-specific rule with Hop before dialogue and Look left/right after it. Export and cold boot. Repeat each motion on either side, None/None, and Diglett/Dugtrio; test fade/warp interruption and a failed message opening. | Prefix finishes before text opens; suffix starts after dismissal and finishes before control returns. Offsets/facing restore, the original cry cue plays once per motion, grounded species do not jump, and existing text-only rules remain intact. | NOT RUN |
 | T87 | At the locations in `headgrass.mln`, `followergrass.mln`, `wronggrassfacingdown.mln` and `sidewaysfollowerontopgrass.mln`, compare Followers Off/On. Walk up, down and sideways for several tiles, then turn; repeat walking/running and with small/large followers. Cross shallow water and return to grass. | Each squashed grass tile covers its owner’s feet. Walking down, follower grass stays behind the player; walking up, player grass stays behind the follower. Neither rear tile covers the nearer sprite’s head or body. Sideways feet coverage, shadows and splash remain correct. | NOT RUN |

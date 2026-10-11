@@ -59,7 +59,7 @@ callsite in `VM_Run` precedes both standard and extended dispatch. Reading an
 operand does not invoke the observer. Native permission checks, branch behavior,
 arguments and return values remain unchanged.
 
-The allowlist covers 373 standard commands: basic control flow/variables,
+The allowlist covers 375 standard commands: basic control flow/variables,
 dialogue and name formatting, choices, ordinary sound, camera operations,
 read-only context, isolated save-data writes, and actor commands with
 additional resolved-action checks. The per-opcode review and commands still
@@ -70,6 +70,12 @@ Opcode `0x276` is included as an interaction-progress broadcast. Stock sign
 and static-furniture scripts run it after actor pause and before their sound and
 message commands; it does not move actors, replace the field, or start a
 communication activity. The exact handler bytes in overlay 33 are pinned.
+Stock 0.6.90 also admits `0x2C5`, a synchronous recent-activity record used by
+trashcan scripts. It updates the current Join Avenue person's recent IDs/dates
+without moving actors or creating a child event. The overlay-36 handler and
+complete ARM9 updater are pinned; native operand consumption and return value
+are retained. Other stationary furniture scripts use the same ordinary command
+and callback policy, including all existing movement and teardown guards.
 Other standard commands, apart from the narrowly scoped PC fade and Repel
 exceptions, and all extended commands recall before native dispatch. An untaken
 branch is never scanned. Supported child callbacks include
