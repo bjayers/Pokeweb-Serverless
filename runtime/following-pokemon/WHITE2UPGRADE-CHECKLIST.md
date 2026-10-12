@@ -1,7 +1,7 @@
-# White2Upgrade follower 0.7.33-alpha — human emulator checklist
+# White2Upgrade follower 0.7.44-alpha — human emulator checklist
 
 All rows start NOT RUN. Automated CPU tests are not DS emulator results.
-Export the 0.7.33-alpha package from Pokeweb and cold boot it with an ordinary
+Export the 0.7.44-alpha package from Pokeweb and cold boot it with an ordinary
 matching save. Do not load a state captured under another ROM version. Keep expansion save copies separate from
 stock White 2 once later-generation Pokémon are obtained.
 
@@ -13,7 +13,7 @@ failure. Existing detailed cases remain in [EMULATOR-CHECKLIST.md](EMULATOR-CHEC
 |---|---|---|---|
 | U17 | Run I01–I05 from EMULATOR-CHECKLIST with a stock follower and a wide Gen 6–9 follower. | The native directional idle loop runs only while visible ordinary following is active. Dialogue, menus, PC presentation, safe scenes and ball effects keep the current frame frozen. | NOT RUN |
 | U16 | Run W01–W05 from EMULATOR-CHECKLIST with narrow and wide Gen 6–9 art, forms, shinies and a placeholder. | Spacing follows maximum visible side width, up to six extra world units. Conversations, turns, stairs, menu/PC retention and seamless crossings remain correct. | NOT RUN |
-| U01 | Install 0.7.33-alpha on a clean White2Upgrade ROM in Pokeweb, export, and cold boot with an ordinary matching save. Walk, run, reverse and stop. | Exactly one follower appears; no startup freeze, stuck input or duplicated actor. | NOT RUN |
+| U01 | Install 0.7.44-alpha on the audited White2Upgrade integration ROM in Pokeweb, export, and cold boot with an ordinary matching save. Walk, run, reverse and stop. | Exactly one follower appears; no startup freeze, stuck input or duplicated actor. | NOT RUN |
 | U01a | After startup, close the X menu, enter/leave PC storage without party changes, then cross a seamless zone boundary. Separately test a door and a battle. | Menu closure and seamless crossings retain the follower. Unchanged PC lead returns visibly without ball effects. Doors/battles use normal recall/reseed; capture a state if absent. | NOT RUN |
 | U02 | Put Chespin (650), Rowlet (722), Grookey (810), and Iron Crown (1023) at the front in turn. Test all four directions. | Every lead uses its own artwork, including Iron Crown; none is skipped as an invalid species. | NOT RUN |
 | U03 | Use Sprigatito, Meowscarada, Koraidon, Miraidon, Poltchageist and Iron Crown, both normal and shiny. Then try an explicitly substituted alternate form. | Base species display matching artwork with correct directions and transparency. Alternate-form substitutions match UPGRADE-ASSET-COVERAGE.json without changing species or nickname. | NOT RUN |

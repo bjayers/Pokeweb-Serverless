@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 HERE=Path(__file__).resolve().parent
 manifest=json.loads((HERE.parents[1]/'src/assets/following/white2upgrade/later-followers.json').read_text())
+version=json.loads((HERE.parents[1]/'src/assets/following/white2upgrade/runtime.json').read_text())['version']
 rows=[]
 for generation,lo,hi in [(6,650,721),(7,722,809),(8,810,905),(9,906,1023)]:
     entries=[e for e in manifest['appearances'] if lo<=e['species']<=hi]
@@ -13,7 +14,7 @@ coverage={'profile':'white2upgrade','speciesMax':1023,'generationCoverage':rows,
 cases=[
 ('U17','Run I01–I05 from EMULATOR-CHECKLIST with a stock follower and a wide Gen 6–9 follower.','The native directional idle loop runs only while visible ordinary following is active. Dialogue, menus, PC presentation, safe scenes and ball effects keep the current frame frozen.'),
 ('U16','Run W01–W05 from EMULATOR-CHECKLIST with narrow and wide Gen 6–9 art, forms, shinies and a placeholder.','Spacing follows maximum visible side width, up to six extra world units. Conversations, turns, stairs, menu/PC retention and seamless crossings remain correct.'),
-('U01','Install 0.7.33-alpha on a clean White2Upgrade ROM in Pokeweb, export, and cold boot with an ordinary matching save. Walk, run, reverse and stop.','Exactly one follower appears; no startup freeze, stuck input or duplicated actor.'),
+('U01',f'Install {version} on the audited White2Upgrade integration ROM in Pokeweb, export, and cold boot with an ordinary matching save. Walk, run, reverse and stop.','Exactly one follower appears; no startup freeze, stuck input or duplicated actor.'),
 ('U01a','After startup, close the X menu, enter/leave PC storage without party changes, then cross a seamless zone boundary. Separately test a door and a battle.','Menu closure and seamless crossings retain the follower. Unchanged PC lead returns visibly without ball effects. Doors/battles use normal recall/reseed; capture a state if absent.'),
 ('U02','Put Chespin (650), Rowlet (722), Grookey (810), and Iron Crown (1023) at the front in turn. Test all four directions.','Every lead uses its own artwork, including Iron Crown; none is skipped as an invalid species.'),
 ('U03','Use Sprigatito, Meowscarada, Koraidon, Miraidon, Poltchageist and Iron Crown, both normal and shiny. Then try an explicitly substituted alternate form.','Base species display matching artwork with correct directions and transparency. Alternate-form substitutions match UPGRADE-ASSET-COVERAGE.json without changing species or nickname.'),
@@ -49,10 +50,10 @@ cases=[
 ('U34','Cold boot 0.7.32 with Rapidash walking, then Reuniclus walking and A+B mounted. Check idle and movement in all four directions and a lateral player overlap.','The shadows stay on the ground without darkening Pokémon pixels. Walking Reuniclus remains visually unchanged; mounted Reuniclus clears the player shadow without losing rider or terrain depth order.'),
 ('U35','Cold boot 0.7.33 with Arceus and a wide later-generation follower in turn. Walk south through a player overlap, then check the same Pokémon while walking north, sideways beside a building, and on stairs.','The player stays in front on southward steps while each follower stays above its ground shadow. North-facing priority and building/stair order remain unchanged.'),
 ]
-text='''# White2Upgrade follower 0.7.33-alpha — human emulator checklist
+text=f'''# White2Upgrade follower {version} — human emulator checklist
 
 All rows start NOT RUN. Automated CPU tests are not DS emulator results.
-Export the 0.7.33-alpha package from Pokeweb and cold boot it with an ordinary
+Export the {version} package from Pokeweb and cold boot it with an ordinary
 matching save. Do not load a state captured under another ROM version. Keep expansion save copies separate from
 stock White 2 once later-generation Pokémon are obtained.
 

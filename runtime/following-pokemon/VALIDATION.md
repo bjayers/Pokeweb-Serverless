@@ -5,7 +5,65 @@
 | Stock White 2 IRDO | 0.6.91-alpha | Passed | Passed | Pending cold boot |
 | Stock Black 2 IREO | 0.6.48-alpha | Passed | Passed | Pending cold boot |
 | Italian White 2 IRDI | 0.6.49-alpha | Passed | Passed | Pending cold boot |
-| White2Upgrade | 0.7.43-alpha | Passed | Passed | Pending cold boot |
+| White2Upgrade | 0.7.44-alpha | Passed | Passed | Pending cold boot |
+
+## White2Upgrade integration re-audit — 2026-10-11
+
+The approved input is SHA-256
+`41ec23667f7e8ce0d6269a84d910a34a841ae8b5987d47654042bf4a95461140`.
+All four Upgrade DLL fingerprints were refreshed only after the shared binary
+contract and all ten existing Upgrade adapters passed. The generator now
+preserves these adapters and rejects changed signatures instead of capturing
+changed bytes as trusted. Historical source hashes recognize owned receipts
+and workspaces only; installation and reenabling still require the current
+complete DLL set. Unknown runtimes and overlapping hook writes remain rejected.
+
+The appearance manifest adds 72 explicit source-form substitutes for 18
+species with G-Max-derived Megas. Toxtricity and Urshifu retain the correct
+source form. These entries are labeled placeholders, not new Mega artwork;
+the artwork archive and existing resource entries are unchanged. Unreviewed
+forms remain unsupported. The installed catalog contains 4,842 appearances.
+
+The old field package lagged the reviewed source and failed its newer
+interaction-reach regression. Version 0.7.44 rebuilds the current source rather
+than changing that test. All seven shipped DLLs exactly match the freshly
+audited base/full builds. The module/registry ABIs and other game profiles are
+unchanged.
+
+Passed checks:
+
+- 55 focused editor/model/memory tests; 24 Python tests plus sanitized C host
+  logic/reaction checks, including profile-generation and form-substitute tests.
+- Base and full CPU build gates, including 496/627 packaged immediate calls at
+  three load addresses, 100 simulated conversations, scene/transition/cycling
+  lifecycle, native script contracts, mount sites/rider art and mocked rendering.
+- Actual source ROM: 416 base / 450 full compatibility checks and 13 atomic
+  rejection cases per variant (missing/changed required DLLs, changed hook and
+  adapter bytes, malformed descriptors, hook conflict, corrupt fetched DLL).
+- Install, idempotent reinstall, disable/reenable, remove/reinstall, export/reopen,
+  base/full conversion, physical mount-file removal, authored-dialogue/position
+  preservation and migration from the previous base/full 0.7.43 exports.
+- Both exports preserve all 370 original NitroFS payloads, ARM9/ARM7 programs
+  and overlay tables. Options changes stay within the four owned entries;
+  allowed NARC normalization preserves unrelated member bytes.
+- ROM-backed registry CPU test: 6,888 selection cases, all 65,536 object codes,
+  100 unload/reload cycles, 16 failure modes, 10,296 balanced file opens/closes,
+  no registry heap allocations and support for older zero-spacing registries.
+- Production Vite bundle, source privacy scan and whitespace check.
+
+Follower code/data/BSS payloads are 60,356 bytes base / 73,464 bytes full.
+Battle-resident core plus battle intro remains 1,152 bytes; overlay-12 events
+add 1,464 bytes only when loaded. These are packaged payload measurements,
+not actual free PMC heap, allocator/loader overhead, native sprite heap or VRAM
+measurements.
+
+No game emulator or hardware was run, no old savestate was reused, and the
+original ROM/save remained byte-identical. The input has damaged DSi integrity
+metadata: export/conversion checks exercise the editor's existing warned
+DS-only path, not DSi acceptance. Cold-boot visuals and hardware remain pending.
+Whole-site TypeScript checking is blocked by unrelated in-progress script
+compiler schema errors; the focused tests and Vite bundle pass independently.
+Machine-readable evidence is in [upgrade-profile-audit.json](upgrade-profile-audit.json).
 
 Stock White 2 0.6.91 retains the loaded static-prop depth budget and raises its foreground clearance from one eighth to four world units. In `quick-launch-20261011-152314.dst`, the old player submission and the farthest corner of the trashcan box both quantize to Z value 16,718,848. The geometric-only check missed that tie. The new guard reserves more depth before advancing either actor; it still borrows visible native prop bounds and rotations without loading resources, allocating memory or changing persistent state.
 
