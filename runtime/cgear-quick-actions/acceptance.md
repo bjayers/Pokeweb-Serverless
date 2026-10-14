@@ -1,6 +1,81 @@
 # C-Gear Button Editor acceptance record
 
-Development build 0.3.5, 2026-10-10. Supported profiles: English US Black 2 (`IREO`) and White 2 (`IRDO`), revision 0, plus derivatives preserving the checked interfaces. This is a test delivery; the gameplay checks below remain necessary.
+The separate Black/White port is recorded in the [BW1 acceptance checklist](acceptance-bw1.md).
+
+Development build 0.3.8, 2026-10-14. Supported profiles: English US Black 2 (`IREO`) and White 2 (`IRDO`), revision 0, plus derivatives preserving the checked interfaces. The broader historical gameplay checklist below remains applicable.
+
+## 0.3.8 mute feedback and control spacing
+
+- Mute/unmute uses Party sound 1356 once per accepted press; held, blocked,
+  unavailable and wrench-edit touches stay silent. Keyboard state stays shared.
+- Audible music shows a plain note; muted music shows a slash. The native
+  animation sequence is selected and its first frame held, avoiding the
+  single-frame limitation and the native help-press flashing sequence.
+- The note moves one pixel up/right from 0.3.7. Both states keep the normal
+  native circle fill for contrast. The Save symbol is 10×10 pixels with three
+  pixels of padding in its 16×16 glyph slot; nearest-neighbor sampling retains
+  the closed lower edge. Graphics version 5 retains version 4 for migration.
+- The editor offers a **Music muted** preview checkbox; clicking the fixed
+  music control in its canvas also previews the other state.
+- 94 focused tests passed, including artwork versions 1–4 migration/restore,
+  distinct music symbols, Save padding, installation, skins and BW1 regressions.
+- Both native CPU harnesses passed shared mute/keyboard state, animation
+  selection, once-per-press sounds, silent blocked/edit/held input and cleanup.
+- Emulator checks passed in White 2 with wireless on and Black 2 with wireless
+  off, including a held mute press, native map return, icon sequence/hold flag,
+  and unmute. Both states and the smaller Save symbol were visually inspected
+  in White 2. These are state/image checks, not an audio listening test.
+- Both retail graphics checks passed. Owned edits are confined to glyphs and
+  the music state's normal palette selection. Eight-button worst case:
+  15,808 / 16,384 sprite bytes and 85 / 128 OAM entries.
+- TypeScript and production build passed. Source ROMs and saves remain intact.
+
+## 0.3.7 music control and Pokéradar sound
+
+- The fixed question-mark control becomes a crossed-out music note and toggles
+  the existing shared BGM mute state. Native music and replacement tracks use
+  the same volume path; sound effects are not muted. Keyboard and touch share
+  one state. Native actor/circle/theme resources are retained.
+- The mark is shifted one native pixel left/down for visual centering. Graphics
+  metadata version 4 preserves older artwork for updates and disable/restore.
+- The installer stages the shared music runtime atomically, preserving mappings
+  and existing shortcut preferences. Removing a required staged music runtime
+  is blocked until the importing C-Gear runtime is removed.
+- Pokéradar plays sound 1356, matching PARTY, once per accepted press. Held,
+  blocked and unavailable presses do not replay it.
+- 171 focused tests pass, covering BW1 regressions, streamed music, both BW2
+  installers, graphics migration, recovery and dependency removal protection.
+- Both native CPU harnesses pass, including the real compiled shared mute and
+  shortcut entry points, register/stack preservation, held/block/edit input,
+  volume restoration and no added event or heap allocation. The Pokéradar
+  sound ID and single-press behavior are checked with native-call stubs.
+- Emulator touch checks pass in B2/W2 with wireless on/off: muted through a
+  map round trip, a held first press, and restored music state on second press.
+  These checks inspect resident state; they do not constitute a recording or
+  listening test of replacement music or sound effects.
+- Both retail graphics checks preserve all 126 losslessly packed cell images
+  per game and confine owned substitutions to glyphs/pressed palette. The
+  eight-button budget is 15,680 / 16,384 sprite bytes, 85 / 128 OAM entries.
+- TypeScript and production build pass. Original inputs and saves are intact.
+
+## 0.3.6 Pokéradar
+
+- The editor offers **Pokéradar — generate a nearby phenomenon**, action 17, with **RADAR** as its starting label and no required item. Existing defaults and the eight-button limit are unchanged. Visibility flags, authored coordinates, layers, native patterns and font styling apply normally.
+- An accepted press calls the retail phenomenon generator immediately. Two scoped call adapters bypass the walking interval and spawn probability during that call. Normal generation forwards to the original routines. Both English binaries have independently verified call sites, getters and generator/search/setup signatures.
+- The native first-badge, encounter-data, grid, zone, terrain and collision checks remain. Placement makes at most 32 immediate attempts, then returns without queueing a later activation. Existing phenomena are retained. Native field-effect ownership and subsequent encounter/item behavior are unchanged.
+- Both rebuilt DLLs and their compatibility manifest are bundled with Pokeweb. Version 0.3.5 is recognized for in-place updates; prior authored documents and stable IDs remain intact.
+
+Checks completed:
+
+| Check | Result and scope |
+|---|---|
+| Focused automated suite | 71 tests passed: 33 compiler/editor, 32 installer, 6 skins. Covers action encoding and recovery, optional visibility, exact 0.3.5 DLL migration, exported configuration recovery, altered generator code and conflicting hook rejection. |
+| Native CPU harnesses | Both games passed existing resource/input/request/skin/save cases and new Pokéradar cases. The actual retail generator executes through the compiled interval/chance adapters, with isolated terrain/effect-task stubs. Covers terrain flags, bounded occupied/empty searches, first-badge/grid/data rejection, existing phenomena, held/blocked input, and ordinary interval/chance restoration. |
+| DS emulator | Immediate grass generation passed in White 2 with wireless on. Rippling water passed in both games with wireless on; cave dust passed in both games with wireless off. RAM records changed from no phenomenon before the press to a native phenomenon within four frames, with unchanged position/type/task through a held press and a second tap. Screenshots were inspected. Fixtures relocate copied starter data; original ROMs and personal saves are untouched. |
+| Installation/export | Clean B2/W2 passed repeated install/update, disable, staged removal and export/reopen with eight authored buttons including Pokéradar, plus Learnset, Summary and Porta PC companions. Source ROM hashes and native overlay bytes were preserved. |
+| Production build | TypeScript and Vite build passed; existing chunk-size warnings remain. |
+
+Bridge effects, sea-water variants, entering a generated spot, long play sessions, DSi mode and physical hardware have not been separately accepted for this revision. They continue through the native generator and encounter flow; this is not a claim of new gameplay coverage for those routes.
 
 ## 0.3.5 selector feedback, dark Save detail and active rings
 

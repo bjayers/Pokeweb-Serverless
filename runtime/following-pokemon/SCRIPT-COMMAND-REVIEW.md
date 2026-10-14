@@ -21,6 +21,14 @@ still run afterward.
 
 ## Newly admitted commands
 
+Stock 0.6.92 changes no opcode classification. It completes the callback check
+for all pure audio commands by recognizing the eight native music/fanfare
+constructors and sound work. Their full native bytes are pinned, and packaged
+checks cover root/child creation, waits and return. The earlier callback concern
+for music commands is resolved for the rebuilt stock profile; other profiles
+retain their prior validation status. Audio-visual model animation remains a
+model/presentation command with its existing actor guards.
+
 Stock 0.6.90 admits `0x2C5` after the reported trashcan recall. The native
 handler consumes one u16 activity ID and calls the Join Avenue recent-activity
 updater synchronously. Complete native updater bytes and the handler are
@@ -58,8 +66,9 @@ TrialHouseDownloadBattleTest, and `23F` CallPlaceNameDisp are likewise allowed.
 
 This admission only bypasses recall **before those 18 commands execute**.
 Subsequent child callbacks and field-mode changes retain their separate guards;
-some of these commands may still cause recall after dispatch. Their callback
-lifetime is not established as safe for global retention.
+some non-audio commands may still cause recall after dispatch. Stock 0.6.92
+checks every pure music/fanfare callback separately; the other child-application
+lifetimes remain governed by their existing guards.
 
 ## Additional named commands admitted by project decision
 
@@ -82,7 +91,7 @@ script-lifetime checks before being described as safe in every cutscene.
 | `1EB` TrialHouseMsgDisp; `230` MsgAbyssalRuins; `278` FunfestDispSalesmanMessage | Special message paths need child-callback and cleanup checks. |
 | `1FF` SurveyGetCurrentQuestionID; `200` SurveyGetCurrentAnswerIDs; `201` SurveyGetPopularOptionMsgID; `204` SurveyGetTime | Handlers live in an additional overlay; callback and scene-lifetime behavior still need checking. |
 | `20D` PokePartyFindEx; `252` ActorPairGetTrID | Getter-looking commands, but the extended party and actor-pair paths need direct US behavior checks. |
-| `245` BGMFadeOut; `246` BGMFadeOutAll; `279` FunfestBGMReturn; `2BB` Gym0601FanAmbienceStart | Check whether they start an audio child event, as other BGM commands do. |
+| `245` BGMFadeOut; `246` BGMFadeOutAll; `279` FunfestBGMReturn; `2BB` Gym0601FanAmbienceStart | Stock 0.6.92 retains followers through the audited audio callbacks; gym ambience is synchronous. Other profiles retain their previous validation status. |
 | `295` HiddenHollowReset; `2C6` JoinAvenueStoreStart; `2C7` JoinAvenueStoreEnd; `2E1` MedalDiscoverInitial; `2E3` LensFlareRequest; `2E5` HiddenHollowSet | May alter field event ownership, spawn effects, or perform broader initialization. |
 
 The sheet also uses placeholder `CMD_*` names for **143 still-unresolved

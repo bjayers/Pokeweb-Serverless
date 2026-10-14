@@ -1,0 +1,459 @@
+{
+  "format": "pokeweb-edit-commit-performance-v1",
+  "browser": "Chrome/155.0.8059.40",
+  "platform": "Darwin arm64",
+  "capturedAt": "2026-10-14T19:10:36.752Z",
+  "method": {
+    "workload": "100 groups of a move-power edit, item packed-flag edit, and one-byte animation replacement; five snapshot/serialization samples and five real IndexedDB saves per configuration.",
+    "baseline": "Frozen pre-change working-tree versions of the move/item model, animation model, and persistence module, loaded through the benchmark server.",
+    "configuration": "Synthetic 256/512 MiB source buffers; minimal resources or 64 MiB unchanged sprite buffers and 2048 decoded sprite-cache records. Dedicated temporary browser profile.",
+    "initialSourceWrite": "Excluded from steady-state timings and long-task observations.",
+    "memory": "Peak observed performance.memory.usedJSHeapSize sampled between operations; CDP heap/backing-storage values recorded at the end. These are not operating-system process RSS or a guaranteed instantaneous peak.",
+    "limitations": [
+      "Development-server browser modules, synthetic fixtures, one machine and one browser.",
+      "CPU throttling is not an emulation of a 4 GB machine; no actual low-RAM hardware claim.",
+      "Rendering a fully populated editor, source import, ROM export, and native runtime execution are outside the timed workload."
+    ],
+    "reproduce": "node scripts/run-edit-benchmark.mjs --output /absolute/report.json; add --baseline /absolute/pre-change-source-snapshot for a comparison. CHROME_BIN can select a Chrome executable."
+  },
+  "uiSmoke": {
+    "commits": 2,
+    "legacyNotifications": 0,
+    "invalidEditRestored": true,
+    "editorDomPreserved": true
+  },
+  "validation": {
+    "focusedTestsPassed": 170,
+    "fullTestsPassed": 2788,
+    "fullTestsSkipped": 5,
+    "fullTestFilesPassed": 220,
+    "typecheck": "passed",
+    "productionBuild": "passed"
+  },
+  "results": [
+    {
+      "cpuThrottle": 1,
+      "sourceMiB": 256,
+      "loadedSpriteCacheMiB": 0,
+      "before": {
+        "cpuThrottle": 1,
+        "sourceMiB": 256,
+        "loaded": false,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 0.7999997138977051,
+        "saveP95Ms": 1.4000000953674316,
+        "peakObservedJSHeapBytes": 285334688,
+        "serializationP95Ms": 0.7000002861022949,
+        "explicitSnapshotCloneBytesPerSave": 272,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 284996159,
+        "totalJSHeapBytes": 289653103,
+        "heap": {
+          "usedSize": 9695056,
+          "totalSize": 14336000,
+          "embedderHeapUsedSize": 986176,
+          "backingStorageSize": 275317103
+        }
+      },
+      "after": {
+        "cpuThrottle": 1,
+        "sourceMiB": 256,
+        "loaded": false,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 0.09999990463256836,
+        "saveP95Ms": 1,
+        "peakObservedJSHeapBytes": 285553786,
+        "serializationP95Ms": 0.40000009536743164,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 284430506,
+        "totalJSHeapBytes": 289401430,
+        "heap": {
+          "usedSize": 9118952,
+          "totalSize": 14073856,
+          "embedderHeapUsedSize": 997920,
+          "backingStorageSize": 275327574
+        }
+      }
+    },
+    {
+      "cpuThrottle": 1,
+      "sourceMiB": 256,
+      "loadedSpriteCacheMiB": 64,
+      "before": {
+        "cpuThrottle": 1,
+        "sourceMiB": 256,
+        "loaded": true,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.10000038146972656,
+        "snapshotP95Ms": 28.5,
+        "saveP95Ms": 31.100000381469727,
+        "peakObservedJSHeapBytes": 688721169,
+        "serializationP95Ms": 0.5,
+        "explicitSnapshotCloneBytesPerSave": 67371280,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 688721509,
+        "totalJSHeapBytes": 695976077,
+        "heap": {
+          "usedSize": 9194560,
+          "totalSize": 16433152,
+          "embedderHeapUsedSize": 915680,
+          "backingStorageSize": 679542925
+        }
+      },
+      "after": {
+        "cpuThrottle": 1,
+        "sourceMiB": 256,
+        "loaded": true,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 0.09999990463256836,
+        "saveP95Ms": 1.1999998092651367,
+        "peakObservedJSHeapBytes": 353034096,
+        "serializationP95Ms": 0.40000009536743164,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 351576177,
+        "totalJSHeapBytes": 356788469,
+        "heap": {
+          "usedSize": 8894040,
+          "totalSize": 14336000,
+          "embedderHeapUsedSize": 1072072,
+          "backingStorageSize": 342698229
+        }
+      }
+    },
+    {
+      "cpuThrottle": 1,
+      "sourceMiB": 512,
+      "loadedSpriteCacheMiB": 0,
+      "before": {
+        "cpuThrottle": 1,
+        "sourceMiB": 512,
+        "loaded": false,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.10000038146972656,
+        "snapshotP95Ms": 0.7999997138977051,
+        "saveP95Ms": 2,
+        "peakObservedJSHeapBytes": 553773744,
+        "serializationP95Ms": 0.6000003814697266,
+        "explicitSnapshotCloneBytesPerSave": 272,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 553428607,
+        "totalJSHeapBytes": 558088559,
+        "heap": {
+          "usedSize": 9691820,
+          "totalSize": 14336000,
+          "embedderHeapUsedSize": 987384,
+          "backingStorageSize": 543752559
+        }
+      },
+      "after": {
+        "cpuThrottle": 1,
+        "sourceMiB": 512,
+        "loaded": false,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 0.09999990463256836,
+        "saveP95Ms": 1.3000001907348633,
+        "peakObservedJSHeapBytes": 553711354,
+        "serializationP95Ms": 0.40000009536743164,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 552837650,
+        "totalJSHeapBytes": 557574742,
+        "heap": {
+          "usedSize": 9090540,
+          "totalSize": 13811712,
+          "embedderHeapUsedSize": 1060496,
+          "backingStorageSize": 543763030
+        }
+      }
+    },
+    {
+      "cpuThrottle": 1,
+      "sourceMiB": 512,
+      "loadedSpriteCacheMiB": 64,
+      "before": {
+        "cpuThrottle": 1,
+        "sourceMiB": 512,
+        "loaded": true,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 47,
+        "saveP95Ms": 29.199999809265137,
+        "peakObservedJSHeapBytes": 1024525029,
+        "serializationP95Ms": 0.5999999046325684,
+        "explicitSnapshotCloneBytesPerSave": 67371280,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 756148931,
+        "totalJSHeapBytes": 762657931,
+        "heap": {
+          "usedSize": 10300636,
+          "totalSize": 17219584,
+          "embedderHeapUsedSize": 906192,
+          "backingStorageSize": 745864331
+        }
+      },
+      "after": {
+        "cpuThrottle": 1,
+        "sourceMiB": 512,
+        "loaded": true,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.3000001907348633,
+        "snapshotP95Ms": 0.5999999046325684,
+        "saveP95Ms": 2.6999998092651367,
+        "peakObservedJSHeapBytes": 621338904,
+        "serializationP95Ms": 1.200000286102295,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 619910477,
+        "totalJSHeapBytes": 624961781,
+        "heap": {
+          "usedSize": 8792912,
+          "totalSize": 14073856,
+          "embedderHeapUsedSize": 1091320,
+          "backingStorageSize": 611133685
+        }
+      }
+    },
+    {
+      "cpuThrottle": 4,
+      "sourceMiB": 256,
+      "loadedSpriteCacheMiB": 0,
+      "before": {
+        "cpuThrottle": 4,
+        "sourceMiB": 256,
+        "loaded": false,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.3000001907348633,
+        "snapshotP95Ms": 4.199999809265137,
+        "saveP95Ms": 5,
+        "peakObservedJSHeapBytes": 285383632,
+        "serializationP95Ms": 2.700000286102295,
+        "explicitSnapshotCloneBytesPerSave": 272,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 285019707,
+        "totalJSHeapBytes": 289653103,
+        "heap": {
+          "usedSize": 9718760,
+          "totalSize": 14336000,
+          "embedderHeapUsedSize": 1087336,
+          "backingStorageSize": 275317103
+        }
+      },
+      "after": {
+        "cpuThrottle": 4,
+        "sourceMiB": 256,
+        "loaded": false,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.2999997138977051,
+        "snapshotP95Ms": 0.19999980926513672,
+        "saveP95Ms": 3.4000000953674316,
+        "peakObservedJSHeapBytes": 285492530,
+        "serializationP95Ms": 2.0999999046325684,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 284402054,
+        "totalJSHeapBytes": 289417814,
+        "heap": {
+          "usedSize": 9090744,
+          "totalSize": 14336000,
+          "embedderHeapUsedSize": 1047208,
+          "backingStorageSize": 275327574
+        }
+      }
+    },
+    {
+      "cpuThrottle": 4,
+      "sourceMiB": 256,
+      "loadedSpriteCacheMiB": 64,
+      "before": {
+        "cpuThrottle": 4,
+        "sourceMiB": 256,
+        "loaded": true,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.3000001907348633,
+        "snapshotP95Ms": 115.59999990463257,
+        "saveP95Ms": 114.59999990463257,
+        "peakObservedJSHeapBytes": 688703481,
+        "serializationP95Ms": 2.3000001907348633,
+        "explicitSnapshotCloneBytesPerSave": 67371280,
+        "longTasks": 10,
+        "longestTaskMs": 118,
+        "usedJSHeapBytes": 688703821,
+        "totalJSHeapBytes": 695976077,
+        "heap": {
+          "usedSize": 9176860,
+          "totalSize": 16433152,
+          "embedderHeapUsedSize": 918112,
+          "backingStorageSize": 679542925
+        }
+      },
+      "after": {
+        "cpuThrottle": 4,
+        "sourceMiB": 256,
+        "loaded": true,
+        "sourceBufferBytes": 268435456,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 0.3000001907348633,
+        "saveP95Ms": 3,
+        "peakObservedJSHeapBytes": 352903436,
+        "serializationP95Ms": 1.1999998092651367,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 351446025,
+        "totalJSHeapBytes": 356509941,
+        "heap": {
+          "usedSize": 8763940,
+          "totalSize": 13811712,
+          "embedderHeapUsedSize": 1064600,
+          "backingStorageSize": 342698229
+        }
+      }
+    },
+    {
+      "cpuThrottle": 4,
+      "sourceMiB": 512,
+      "loadedSpriteCacheMiB": 0,
+      "before": {
+        "cpuThrottle": 4,
+        "sourceMiB": 512,
+        "loaded": false,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.10000038146972656,
+        "snapshotP95Ms": 3.299999713897705,
+        "saveP95Ms": 4.399999618530273,
+        "peakObservedJSHeapBytes": 553768028,
+        "serializationP95Ms": 2.3000001907348633,
+        "explicitSnapshotCloneBytesPerSave": 272,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 553428719,
+        "totalJSHeapBytes": 557826415,
+        "heap": {
+          "usedSize": 9692100,
+          "totalSize": 14073856,
+          "embedderHeapUsedSize": 1094224,
+          "backingStorageSize": 543752559
+        }
+      },
+      "after": {
+        "cpuThrottle": 4,
+        "sourceMiB": 512,
+        "loaded": false,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 0,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.40000009536743164,
+        "snapshotP95Ms": 0.19999980926513672,
+        "saveP95Ms": 3.700000286102295,
+        "peakObservedJSHeapBytes": 553860146,
+        "serializationP95Ms": 1.6999998092651367,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 552841582,
+        "totalJSHeapBytes": 557591126,
+        "heap": {
+          "usedSize": 9094744,
+          "totalSize": 14073856,
+          "embedderHeapUsedSize": 1038472,
+          "backingStorageSize": 543763030
+        }
+      }
+    },
+    {
+      "cpuThrottle": 4,
+      "sourceMiB": 512,
+      "loadedSpriteCacheMiB": 64,
+      "before": {
+        "cpuThrottle": 4,
+        "sourceMiB": 512,
+        "loaded": true,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.19999980926513672,
+        "snapshotP95Ms": 111.80000019073486,
+        "saveP95Ms": 108.30000019073486,
+        "peakObservedJSHeapBytes": 1024515353,
+        "serializationP95Ms": 2.799999713897705,
+        "explicitSnapshotCloneBytesPerSave": 67371280,
+        "longTasks": 10,
+        "longestTaskMs": 113,
+        "usedJSHeapBytes": 756171491,
+        "totalJSHeapBytes": 764034187,
+        "heap": {
+          "usedSize": 10323244,
+          "totalSize": 18530304,
+          "embedderHeapUsedSize": 932680,
+          "backingStorageSize": 745864331
+        }
+      },
+      "after": {
+        "cpuThrottle": 4,
+        "sourceMiB": 512,
+        "loaded": true,
+        "sourceBufferBytes": 536870912,
+        "unrelatedBytes": 67108864,
+        "explicitEditCopiedBytesPerGroup": 1,
+        "editGroupP95Ms": 0.40000009536743164,
+        "snapshotP95Ms": 0.09999990463256836,
+        "saveP95Ms": 3.3999996185302734,
+        "peakObservedJSHeapBytes": 621304776,
+        "serializationP95Ms": 1.9000000953674316,
+        "explicitSnapshotCloneBytesPerSave": 0,
+        "longTasks": 0,
+        "longestTaskMs": 0,
+        "usedJSHeapBytes": 619891799,
+        "totalJSHeapBytes": 624175279,
+        "heap": {
+          "usedSize": 8774196,
+          "totalSize": 13287424,
+          "embedderHeapUsedSize": 1049192,
+          "backingStorageSize": 611133615
+        }
+      }
+    }
+  ]
+}

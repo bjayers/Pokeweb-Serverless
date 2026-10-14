@@ -3,7 +3,7 @@
 `BgmToggleB2.dll` and `BgmToggleW2.dll` provide the shared background-music
 runtime for the matching US Black 2 or White 2 revision. Their versioned
 configuration supports a shortcut, any number of distinct streamed-BGM
-mappings within native ID/export limits, or both. Version 3.0.0 uses a
+mappings within native ID/export limits, or both. Version 3.0.1 uses a
 variable-length ABI 2 mapping table and migrates ABI 1 single-track installs.
 
 On the Music page, choose a target and import audio to **Add Replacement**.
@@ -148,3 +148,12 @@ call site and native entry point against local Black 2 and White 2 inputs. Use
 `npm run bgmtoggle:test` for host-only allocator tests (no DS emulation). Use
 `npm run streamedbgm:verify-rom -- <b2.nds> <w2.nds>` to round-trip SDAT
 installation and removal on full ROM sound archives.
+
+## Shared C-Gear mute control (3.0.1)
+
+`PokewebBgmMute(request)` is a resident exported Thumb API: 0 queries the
+current mute state, 1 toggles it, and the return value is 0 for audible or 1
+for muted. It uses the same state and volume path as L + R + Select, including
+replacement streams. It accepts no pointers and allocates no resources.
+The C-Gear installer upgrades this runtime without changing existing music
+mappings or shortcut settings.

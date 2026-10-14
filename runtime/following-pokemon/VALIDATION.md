@@ -2,7 +2,7 @@
 
 | Profile | Bundled package | Base/full CPU build | Installer/export | Human acceptance |
 |---|---|---|---|---|
-| Stock White 2 IRDO | 0.6.91-alpha | Passed | Passed | Pending cold boot |
+| Stock White 2 IRDO | 0.6.93-alpha | Passed | Passed | Pending cold boot |
 | Stock Black 2 IREO | 0.6.48-alpha | Passed | Passed | Pending cold boot |
 | Italian White 2 IRDI | 0.6.49-alpha | Passed | Passed | Pending cold boot |
 | White2Upgrade | 0.7.44-alpha | Passed | Passed | Pending cold boot |
@@ -64,6 +64,14 @@ DS-only path, not DSi acceptance. Cold-boot visuals and hardware remain pending.
 Whole-site TypeScript checking is blocked by unrelated in-progress script
 compiler schema errors; the focused tests and Vite bundle pass independently.
 Machine-readable evidence is in [upgrade-profile-audit.json](upgrade-profile-audit.json).
+
+Stock White 2 0.6.93 adds independently optional inclusive tile bounds to contextual dialogue and gifts. ASAN/UBSAN host tests cover all sixteen presence masks, each rectangle edge and adjacent outside tile, signed/zero coordinates, ordered fallback, existing selector conjunction, animations, and unchanged claim slots. Codec checks cover old and new formats, mixed rows, invalid coordinates and masks, reversed limits, canonical unused values, checksum repair and the existing archive limit. Packaged CPU interaction checks cover 72 player-versus-follower coordinate cases in four facings, distinguish map Y from elevation, execute a bounded prefix/text/suffix conversation, and verify one-time grant behavior. Native services are modeled; no game emulator was run. Cold-boot acceptance remains pending for authored bounds and the existing scene/rendering checks.
+
+Stock White 2 0.6.92 fixes the callback layer for pure audio events. All 28 sound/music/cry/fanfare/ambience commands were already in the opcode allowlist, but the eight resident music/fanfare callbacks were not admitted. The field guard now checks each known callback and its sound work against the live game context. Root events, script children and audio under safe cleanup/menu supervisors are covered; unrelated ancestor callbacks still use their own policy. Native calls, values, waits and playback remain unchanged. The callback bodies and constructors are fully pinned in `contract.json`, and `audio-event-policy.json` identifies their layouts and command callers. No new opcode, bridge ABI, save field or heap allocation is introduced.
+
+The previous package reproduces recall for all 16 music/fanfare constructor cases (eight event types as roots and children). Packaged CPU checks execute the native constructors and callback phases with audio mixing/allocation observed by spies. The rebuilt variants must retain actor, facing, world position and trail through busy waits, completion and parent-script return. Foreign sound contexts, missing work, different game owners and unrelated ancestors retain their ownership rejection. The existing cry, sound finalizer, forced movement, unknown command, battle and lifecycle regressions remain in the required builder checks. These checks do not run a game emulator or establish audible/visual cold-boot acceptance.
+
+All 55 focused follower editor tests, the production build, fresh base/full installation, conversion and update from 0.6.91 passed. The actual full export passed reopen, toggle, removal, reinstall and artwork/positioning checks. ROM comparison preserves 680 base and 684 full file IDs, unrelated files and native programs; core/event/Options/battle executable images and BSS remain identical. The audio guard adds 92 bytes to the base fixed payload and 88 bytes to full, with no BSS growth and unchanged 1,152-byte battle residency. Matching ordinary saves were copied without overwriting existing saves. The Virbank capture was unavailable because melonDS did not write the requested state; acceptance relies on the audited native paths and packaged fixtures until the human test.
 
 Stock White 2 0.6.91 retains the loaded static-prop depth budget and raises its foreground clearance from one eighth to four world units. In `quick-launch-20261011-152314.dst`, the old player submission and the farthest corner of the trashcan box both quantize to Z value 16,718,848. The geometric-only check missed that tie. The new guard reserves more depth before advancing either actor; it still borrows visible native prop bounds and rotations without loading resources, allocating memory or changing persistent state.
 

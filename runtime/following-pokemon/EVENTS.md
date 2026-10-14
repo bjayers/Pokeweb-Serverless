@@ -7,7 +7,8 @@ mode, partner, fade, teardown and ownership guards still apply.
 
 Forced player translation/jumping, a conflicting NPC action, ID/slot pressure,
 and unsupported commands or child callbacks recall immediately. The native
-operation then runs normally; it never waits for the detached recall effect.
+callback resumes after the 12-update recall hold; native arguments and behavior
+are preserved.
 Zone setup command `0x1D9` only updates pending NPC entity data and is allowed;
 the ensuing allocation and first-position write still check conflicts. Initial
 placement checks its endpoint, while initialized movement checks its swept path.
@@ -86,8 +87,16 @@ child is accepted only while its work points to the live script VM and parent
 event that issued the sound command. A Yes/No child is accepted only when its
 prompt work points to the script work owned by its live native supervisor; the
 Repel-use opcode remains scoped separately to its continuation script.
-Synchronous sound-only commands are allowed
-without changing follower state. Cleanup is allowed only with a valid native
+Stock White 2 0.6.92 additionally accepts all eight native music/fanfare event
+callbacks, covering the 28 pure audio opcodes including item receipt, music
+changes/fades, push/pop and ambience. `audio-event-policy.json` records the
+complete constructor/callback byte pins and sound-work layout. Each live
+16-byte work references the same sound context as the current game; native
+playback and waits are forwarded unchanged. Root audio events and children
+under safe supervisors qualify without requiring a particular preceding
+opcode. Each ancestor is still checked independently. The same opcode policy
+was already present; this release fixes the separate callback admission.
+Synchronous sound-only commands are allowed without changing follower state. Cleanup is allowed only with a valid native
 work layout and a registered-bit mask containing audited camera, message-window,
 auto-print and volume/ambience finalizers. The mask is checked before every callback, including
 resumed cleanup. Other finalizers and child callbacks recall before execution.
