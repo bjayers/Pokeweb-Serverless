@@ -2,7 +2,99 @@
 
 The separate Black/White port is recorded in the [BW1 acceptance checklist](acceptance-bw1.md).
 
-Development build 0.3.8, 2026-10-14. Supported profiles: English US Black 2 (`IREO`) and White 2 (`IRDO`), revision 0, plus derivatives preserving the checked interfaces. The broader historical gameplay checklist below remains applicable.
+Development build 0.5.3, 2026-10-17. Supported profiles: English US Black 2 (`IREO`) and White 2 (`IRDO`), revision 0, plus derivatives preserving the checked interfaces. The broader historical gameplay checklist below remains applicable.
+
+## 0.5.3 dial sensitivity
+
+- Each skin swap requires 12° of rotation in either direction. The shared
+  centidegree threshold is 1,200 in both the browser preview and native builds.
+  Editor/installer help text uses the new angle. Clock/decal removal, moving
+  marker, sound, touch ownership and saved skin IDs are preserved.
+- The dial tests include a sub-threshold 11° sample and an accepted 13° sample,
+  reversing, angle-zero wrapping, multiple steps and stationary jitter.
+- Native harness and emulator gestures use the shorter step, including held
+  touches, clockwise/counterclockwise changes and Party/PC/Map return. These
+  remain DS emulator checks; physical hardware acceptance is not inferred.
+- Version 0.5.2 remains recognized for updates. Archive/save formats and BW1
+  binaries are unchanged. Separate 0.5.3 test ROMs use copied fixture saves.
+- 44 focused tests and the production build passed. Both native profiles
+  passed their 12° dial checks. DS emulator runs passed in White 2 with eight
+  buttons/wireless on and Black 2 with six buttons/wireless off, including
+  27° drags advancing two skins, a reverse step, wrapping and menu returns.
+
+## 0.5.2 clock and decal removal
+
+- The four digital time sprites, circular clock backing and chevron selector
+  actor are hidden after each native update. Their former clock/selector hit
+  targets are disabled, including in wrench mode. The former clock area is
+  available for rim capture. The preview omits the same artwork.
+- The 20° dial, moving marker, skin sound and other controls are preserved.
+  Owned graphics/metadata remain version 6 for update/restore compatibility;
+  archive layout and saved records are unchanged. Version 0.5.1 is recognized
+  for updates. BW1 is unchanged.
+- 101 focused tests and the production build passed. Native harness checks
+  cover all six hidden actors, the disabled clock hit target and capture in
+  the former clock area, in addition to the existing dial/action checks.
+- DS emulator checks passed in White 2 with wireless on/eight buttons and
+  Black 2 with wireless off/six buttons. Every frame with the custom C-Gear
+  attached checks that all six clock/decal actors remain hidden. Dial steps,
+  marker visibility and Party/PC/Map return also passed. Both final screens
+  were visually inspected. Physical hardware acceptance remains untested.
+- Separate 0.5.2 test ROMs and copied fixture saves preserve all earlier builds
+  and personal saves.
+- Both delivered 0.5.1 ROMs passed update, disable, export/reopening and source
+  preservation checks against the bundled 0.5.2 installer.
+
+## 0.5.1 outer-rim skin dial
+
+- The former upper-right circular selector is removed. Dragging the exposed
+  outer rim advances one skin per 20° clockwise or counterclockwise, with
+  wraparound. Five faint gray-blue chevrons follow the upper-right arc and
+  brighten slightly during capture. An 8×8 marker follows the stylus.
+- The editor and native runtime share geometry and the integer angle table.
+  Native/custom controls own their initial touches. Captured drags cannot
+  activate controls they cross. Holds do not repeat; blocked/native events
+  cancel capture and discard unprepared steps. Prepared uploads retain their
+  skin ID until the matching pixels and palette have been displayed.
+- Graphics metadata version 6 adds a ninth cell/animation and a dial capability
+  byte to format 7. Earlier graphics versions remain recognized. The previous
+  0.5.0 DLL fingerprints are retained for in-place updates. BW1 binaries and
+  graphics are unchanged.
+- 101 focused tests passed: compiler/editor state, dial math/resources, skins,
+  both BW2 installers and BW1 regressions. The production build passed.
+- Both native CPU harnesses passed: direction/20° accumulation, wrapping,
+  stationary holds, marker position, in-flight request identity, blocked and
+  wrench cancellation, native/custom priority, nine owned resources, marker
+  VRAM exhaustion, allocation failures and cleanup. Existing actions, save
+  records, native controls and Pokéradar checks also passed. Sound 1356 is
+  verified through native-call stubs; this is not an audio listening test.
+- Both retail graphics checks passed. Eight buttons plus the dial use
+  16,320 / 16,384 sprite bytes and 85 / 128 OAM entries. The additional marker
+  resource is 128 bytes. Decal normal/pressed colors and all five chevrons were
+  visually inspected in an emulator capture.
+- DS emulator checks passed in White 2 with wireless on and eight buttons,
+  and Black 2 with wireless off and six buttons. They cover the removed tap
+  target, clockwise/counterclockwise steps, the angle-zero boundary, stationary
+  hold, marker visibility/position, and return from Party, PC and Map with the
+  selected skin retained. Both profiles returned to their initial power state
+  with the expected custom captions. This is DS emulator evidence; live DSi
+  and physical hardware acceptance remain untested.
+- Real-ROM installer checks passed for both profiles with eight buttons and
+  companion Learnset, Summary and Porta PC patches: install, update, disable,
+  staged removal, export/reopening, configuration recovery and input ROM
+  preservation. Separate 0.5.1 test ROMs and copied fixture saves were produced;
+  original ROMs and personal saves were not modified.
+
+Manual acceptance checklist:
+
+- [x] Faint five-chevron decal; no circular browse button.
+- [x] CW next / CCW previous, one step per 20°, wraparound and stationary hold.
+- [x] Moving marker; custom/native touch priority and blocked cancellation.
+- [x] Eight-button resource capacity, upload ownership and failure cleanup.
+- [x] Party / PC / Map round trips with wireless on/off across both games.
+- [x] Editable install/export/reopen and disable/restore checks.
+- [ ] Listen to the skin sound effect on the user's emulator/audio setup.
+- [ ] Physical DS/DSi checks.
 
 ## 0.3.8 mute feedback and control spacing
 

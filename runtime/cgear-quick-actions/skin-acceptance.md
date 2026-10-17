@@ -1,15 +1,15 @@
 # C-Gear skin carousel
 
-Runtime version: 0.3.5. Private archive format: 7. The carousel checks below were completed on 0.3.1; 0.3.2 adds the **>>** selector glyph, native Save control and communication-button visibility. Version 0.3.5 adds a brief native pressed appearance and menu click, once per accepted selector press. Its focused checks are recorded in the current [quick-action acceptance record](acceptance.md).
+Runtime version: 0.5.3. Private archive format: 7. The original carousel checks below were completed on 0.3.1; 0.3.2 added the **>>** selector glyph, native Save control and communication-button visibility. Version 0.3.5 added a brief pressed appearance and menu click. Version 0.5.1 replaced the circular selector with an outer-rim dial. Version 0.5.2 removes the chevrons and digital clock while preserving the dial and moving marker. Version 0.5.3 changes skin swaps to 12° per step. Current dial checks are recorded in the [quick-action acceptance record](acceptance.md).
 
 ## Using the editor
 
 1. Open **More → C-Gear Buttons**.
-2. Choose **Preview skin**, use **Next skin**, or click the upper-right circle in the preview.
+2. Choose **Preview skin**, use **Next skin**, or drag the outer rim in the preview.
 3. Choose a **Starting skin**. A player's saved carousel choice takes priority.
 4. Import native BW2 `.cgb` files with **+ Import .cgb skins**. Imported palettes and tile data are preserved. The carousel supports up to 64 skins.
 5. Select a skin to rename, reorder, or remove it. These edits support undo and redo.
-6. Apply the changes and export the ROM. In game, tap the upper-right **>>** circle to cycle through the ordered skins and the original/save-file background.
+6. Apply the changes and export the ROM. In game, drag the outer rim through 12° steps: clockwise next, counterclockwise previous. The ordered skins and original/save-file background wrap in either direction.
 
 All 15 bundled BW2 skins are included by default. BW1 `.cgb` tile layouts are incompatible. Invalid files and duplicate imports leave the existing design intact.
 

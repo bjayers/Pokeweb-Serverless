@@ -1,6 +1,6 @@
 # C-Gear Buttons and Quick Actions
 
-Development package 0.3.8 for English US White 2 (`IRDO`) and Black 2 (`IREO`), revision 0, and compatible derivatives preserving the verified native interfaces. The installer stages PMC and the shared music runtime automatically, retaining existing replacement tracks and shortcut settings.
+Development package 0.5.3 for English US White 2 (`IRDO`) and Black 2 (`IREO`), revision 0, and compatible derivatives preserving the verified native interfaces. The installer stages PMC and the shared music runtime automatically, retaining existing replacement tracks and shortcut settings.
 
 English US revision-0 Black and White also have a separate functional release
 **0.1.2-bw1**. See [BW1 C-Gear Buttons](BW1.md) for its native backgrounds,
@@ -35,7 +35,7 @@ Overlap warnings allow installation. Native wrench and pattern-toggle input take
 
 PC skips the boot and PC-owner messages and opens Deposit, Withdraw, Move Pokémon, Battle Box, Move items and No thanks. Its native event owns a private script copy; only that invocation's entry instructions change. The storage loop, application calls and field cleanup remain native. Ordinary PCs and the Porta PC Start shortcut retain their existing script. The installer rejects an unrecognized storage script when the design includes PC; designs without PC can still be applied.
 
-PARTY, BAG, Town Map / eligible Fly, ordinary Town Map and Pokéradar use the native field-menu selection sound (1356). PC uses the native storage access sound (1372). An accepted press plays the launch sound once; held or blocked touches do not repeat it. The skin selector uses the same menu sound and a 200 ms pressed state, with the native pressed palette and a one-pixel-down caption. Loading a saved skin is silent. The fixed Save symbol uses native palette index 3, matching the wrench/question mark's dark detail; the native circle supplies the theme fill. Active REPEL and BIKE keep their bright outer ring without an additional inner border.
+PARTY, BAG, Town Map / eligible Fly, ordinary Town Map and Pokéradar use the native field-menu selection sound (1356). PC uses the native storage access sound (1372). An accepted press plays the launch sound once; held or blocked touches do not repeat it. The skin dial plays the same menu sound when a changed skin is displayed. Loading a saved skin is silent. The fixed Save symbol uses native palette index 3, matching the wrench/question mark's dark detail; the native circle supplies the theme fill. Active REPEL and BIKE keep their bright outer ring without an additional inner border.
 
 The bundled BW2 quick-launch saves (`test.sav`, `White2Upgrade.dsv` and `Black2Upgrade.dsv`) start with C-Gear obtained and enabled. Both save copies have repaired block/table checksums; other settings, party data and emulator footers are preserved. This changes the bundled starter files only.
 
@@ -57,6 +57,7 @@ The bundled BW2 quick-launch saves (`test.sav`, `White2Upgrade.dsv` and `Black2U
 | Reveal Glass | 638 | Native party selection and item use |
 | BAG | None | Native bag, item use and party handoffs |
 | PARTY | None | Native party, summary, item and field-skill handoffs |
+| Pokenav | None | Read-only current-area encounters and species information; see [Pokenav](../pokenav/README.md) |
 | Pokéradar | None | Immediate native phenomenon placement: shaking grass, rippling water, cave dust clouds, or bridge effects as supported nearby |
 
 **Pokéradar — generate a nearby phenomenon** is available in the button editor, with the initial label **RADAR**. It does not add a button to existing designs automatically. One press calls the native generator immediately, bypassing its walking interval and random spawn chance only during that call. The native first-badge, map, terrain, collision and encounter-data checks remain. Up to 32 placement attempts handle a random search direction or occupied tile; unsupported locations and locations without a suitable nearby tile produce no spot. Existing phenomena are retained and the button is dimmed while one is present. Normal walking-based generation, timers and probabilities remain native outside that press. Optional visibility flags work as for other custom buttons.
@@ -73,7 +74,11 @@ BAG and PARTY are additional action choices within the same eight-button limit. 
 
 ## Skins
 
-The coordinated skin feature includes 15 BW2 skins, a preview, a starting-skin selector, and import of native BW2 `.cgb` files, up to 64 skins. Colors are preserved. Skin order controls the in-game carousel; stable skin IDs preserve a player's saved selection when reordered. The upper-right **>>** circle cycles through the catalog and the original/save-file picture, once per stylus press. Skin cycling is blocked during wrench editing and native events.
+The skin feature includes 15 BW2 skins, a preview, a starting-skin selector, and import of native BW2 `.cgb` files, up to 64 skins. Colors are preserved. Skin order controls the in-game carousel; stable skin IDs preserve a player's saved selection when reordered.
+
+Drag the outer rim to browse the catalog and original/save-file picture. Each 12° moves one skin: clockwise next, counterclockwise previous, wrapping at either end. The touch band is 116–138 pixels from center `(128, 96)`. A small marker follows the stylus at radius 125 while dragging. The chevron decal and digital clock, including its circular backing, are hidden. Their former touch targets are disabled and release the rim for dial input. Pokeweb's preview uses the same angle table and thresholds.
+
+Native controls and visible custom buttons receive the initial touch first, including dimmed buttons. A captured rim drag retains its touch until release, so crossing another control cannot activate it. Stationary holds do not repeat; center-crossing jumps are ignored. Wrench mode and native events cancel the gesture and discard unprepared requests. A prepared upload keeps its own skin ID paired with its pixels and palette, even if another step arrives before display. No skin changes are queued from blocked presses.
 
 A chosen starting skin applies only when no valid saved skin selection exists. Pre-skin position records preserve their coordinates while adopting that starting skin. The original downloaded picture is retained and never overwritten in save data. Only the original and currently selected skin are loaded into RAM. Initial capture uses the native retained palette rather than a potentially faded VRAM palette.
 
@@ -83,7 +88,7 @@ Buttons are available after C-Gear is obtained, including with wireless off. Ins
 
 The original **?** control at `(215, 163)` becomes a crossed-out music note. One accepted press toggles only BGM through the shared music runtime, including replacement tracks; sound effects remain audible. It works with wireless off and shares its state with **L + R + Select** when that shortcut is enabled. Muting changes volume rather than pausing or restarting the track. The native circle/theme palettes are retained. The note is one pixel up/right from 0.3.7; the audible state has a plain note and the muted state adds its diagonal slash, using the same normal circle fill. Each accepted mute or unmute plays Party menu sound 1356 once. This is a session preference, matching the original mute patch; it resets on cold boot. Updates retain installed music mappings and any existing shortcut preference. A new shared runtime enables the ordinary shortcut. The music runtime remains installed on C-Gear disable/removal and cannot be removed while a C-Gear DLL imports its mute API.
 
-The original power control becomes a centered 10×10-pixel floppy-disk **Save** control at `(200, 180)`. It opens the native save confirmation and completion flow, including with wireless off. Cancellation and completion return to C-Gear directly. This fixed control does not consume an authored button slot. Existing field events retain priority; held or blocked touches never queue a later save. Native request data remains owned until the save flow and deferred subscreen transition finish. The network-status sprite is moved out of view only while the custom selector is displayed, and restored on cleanup. Disabling restores the original native power and selector graphics. Both gender pattern sets come from the loaded ROM.
+The original power control becomes a centered 10×10-pixel floppy-disk **Save** control at `(200, 180)`. It opens the native save confirmation and completion flow, including with wireless off. Cancellation and completion return to C-Gear directly. This fixed control does not consume an authored button slot. Existing field events retain priority; held or blocked touches never queue a later save. Native request data remains owned until the save flow and deferred subscreen transition finish. The network-status sprite is moved out of view while the custom dial is installed, and restored on cleanup. Disabling restores the original native power and selector graphics. Both gender pattern sets come from the loaded ROM.
 
 Hold **L + R for one second in wrench mode** to reset custom positions to authored defaults, once per hold. Native panel positions, theme, design and power settings are preserved.
 
@@ -94,12 +99,12 @@ Unlimited Repel uses Options bit 12, preserving retail settings and Following Po
 ## Resources and ownership
 
 - Separate B2/W2 profiles verify hooks, imported functions, calling conventions, native item routes and save accessors. Unknown conflicting native/PMC modifications are rejected. These checks cannot prove arbitrary indirect changes in a hack safe.
-- The native unit retains 84 actor slots and gains eight custom slots. Custom palettes use banks 7–14; the native network palette keeps bank 15. Conflicting palette use is rejected.
-- Eight buttons need 4 KiB of sprite character data and 256 palette bytes. Retail common sprite graphics are losslessly repacked from 12,288 to 10,048 bytes by deduplicating tiles and dividing transparent non-affine effects into smaller cells. Affine cells remain intact. All 126 decoded cell images per game are identical before/after lossless packing. The selector/save/music substitutions change only their glyph areas and the owned music state uses the normal native circle palette; native circle artwork and unrelated cells remain identical. With the selector/save glyph substitutions, the packed common data is 9,920 bytes. Current retail worst case is 15,808 / 16,384 sprite bytes and 85 / 128 OAM entries. The compiler checks the loaded ROM's resource totals.
+- The native unit retains 84 actor slots and gains up to eight custom slots plus one dial marker slot. Custom palettes use banks 7–14; the native network palette keeps bank 15. The dial marker uses owned bank 7. Other use of reserved banks is rejected.
+- Eight buttons need 4 KiB of sprite character data and 256 palette bytes; the 8×8 dial marker reserves another 128 character bytes. Retail common sprite graphics are losslessly repacked from 12,288 to 10,048 bytes by deduplicating tiles and dividing transparent non-affine effects into smaller cells. Affine cells remain intact. All 126 decoded cell images per game are identical before/after lossless packing. The owned substitutions replace the selector circle with a bare 16×32 decal and modify only the Save/music glyphs and music state palette. Other cells remain intact. Current retail worst case with the dial and eight buttons is 16,320 / 16,384 sprite bytes and 85 / 128 OAM entries. The compiler checks the loaded ROM's resource totals.
 - Only native C-Gear archive members 16/17 (characters/cells) are replaced. Their original versions are backed up and restored on disable/removal. Updates preserve unrelated background, palette and pattern edits, including changes made after installation. Unknown changes to the owned pair are rejected instead of overwritten. Skin tooling must coordinate if it edits this pair or reserved palette banks.
-- The owned private archive is format 7: configuration (including communication visibility), NCLR/NCER/NANR, eight four-pose banks, ten native patterns, editable draft/applied JSON metadata, the original native sprite pair, a skin catalog and skin resources. Recognized older runtimes/archives migrate in place.
-- Initialization requires 64 KiB free heap and a 16 KiB contiguous allocation. Eight pose banks use 16 KiB CPU memory, patterns 5 KiB, retained upload staging 4 KiB, original/selected skin buffers up to 19 KiB, plus native resources, actors and runtime state. Normal button frames allocate nothing; a skin change loads one retained resource.
-- Uploads use the native display scheduler and retained main-RAM buffers. A palette refresh transfers all eight banks (256 bytes), and synchronizes owned banks 7–13 with the native fade buffers. Worst-case changed button characters add 4 KiB, or 4,352 bytes total. A simultaneous skin change adds 9,728 bytes, for 14,080 bytes. Stack/DTCM data is not used as a DMA source. No direct display-register replacement occurs.
+- The owned private archive is format 7: configuration (including communication visibility and the dial capability in byte 47), NCLR/NCER/NANR, eight four-pose banks, ten native patterns, editable draft/applied JSON metadata, the original native sprite pair, a skin catalog and skin resources. The ninth cell/animation belongs to the dial marker. Graphics metadata version 6 recognizes versions 1–5 for migration, including release 0.5.0. Recognized older runtimes/archives migrate in place.
+- Initialization requires 64 KiB free heap and a 16 KiB contiguous allocation. Eight pose banks use 16 KiB CPU memory, patterns 5 KiB, retained upload staging 4,224 bytes, original/selected skin buffers up to 19 KiB, plus native resources, actors and runtime state. Normal button and dial input frames allocate nothing; a skin change loads one retained resource.
+- Uploads use the native display scheduler and retained main-RAM buffers. A palette refresh transfers all eight banks (256 bytes), and synchronizes owned banks 7–13 with the native fade buffers. Worst-case changed button characters add 4 KiB; the marker's first upload adds 128 bytes, or 4,480 bytes total. A simultaneous skin change adds 9,728 bytes, for 14,208 bytes. Subsequent marker movement only changes actor position. Stack/DTCM data is not used as a DMA source. No direct display-register replacement occurs.
 - Native events retain priority. Blocked requests are discarded. One stylus press activates once. PC uses native script ownership; native applications use owned parent requests through completion/cancellation. Teardown releases custom actors and upload sources before borrowed native resources disappear. Rebuilt field screens reattach cleanly, even when native allocation addresses are reused.
 - The independent Porta PC Start shortcut is preserved. Removing a staged module follows Pokeweb's existing rules; already exported modules can be disabled.
 
@@ -107,15 +112,19 @@ Unlimited Repel uses Options bit 12, preserving retail settings and Following Po
 
 `src/cgearButtons/document.ts` defines project version 1, stable IDs and the action catalog. `compiler.ts` exposes shared `validate`, `compile` and `preview` functions. The editor and bundled graphics generator use the same implementation. Ordinary button edits update archive data without rebuilding ARM code. No executable user code is accepted.
 
+`src/cgearButtons/dial.json` supplies shared hit geometry, colors and an integer angle table. `dial.ts` handles preview gestures; the native builder generates its C++ constants from the same JSON. `nativeGraphics.ts` retains earlier owned artwork for update/restore integrity; the current runtime hides the clock and selector actors after each native update.
+
 Building native modules requires Python 3 with ndspy, Unicorn and pyelftools; Java with RPMTool; the ARM GNU toolchain; and matching clean US B2/W2 ROMs. `ARM_TOOLCHAIN_BIN`, `RPM_TOOL_JAR`, `QUICK_ACTIONS_W2_ROM` and `QUICK_ACTIONS_B2_ROM` override local inputs. The former Python graphics generator has been replaced by browser-compatible TypeScript.
 
 ```sh
 npm run cgear:build
 npm run cgear:verify
 npx vitest run src/test/cgearButtons.test.ts src/test/cgearQuickActionsModel.test.ts src/test/cgearSkins.test.ts
+npx vitest run src/test/cgearDial.test.ts
 npx vite-node scripts/verify-cgear-native-graphics.ts /path/to/clean-white2.nds /path/to/clean-black2.nds
 npm run cgear:verify-rom -- /path/to/input.nds --eight --bag-party --companions --output /path/to/separately-named-test.nds
 QUICK_ACTIONS_FRAMES=1650 npm run cgear:emulator -- /path/to/input.nds --scenario bike --bicycle --eight --power-on
+QUICK_ACTIONS_FRAMES=3500 npm run cgear:emulator -- /path/to/input.nds --scenario dial --bicycle --eight --power-on
 QUICK_ACTIONS_FRAMES=2400 npm run cgear:emulator -- /path/to/input.nds --scenario action --action medals --bicycle --eight
 python3 runtime/cgear-quick-actions/emulator_matrix.py
 python3 runtime/cgear-quick-actions/emulator_matrix.py --special
@@ -125,3 +134,5 @@ npm run build
 ```
 
 The CPU harness executes compiled Thumb code with native-call stubs and selected retail parsers. Emulator tests use copied fixture data; input ROMs and user saves are never written. Local screenshots, RAM traces and fixture copies live in ignored `build/`. See [acceptance record](acceptance.md) for tested scope and remaining gameplay checks. Cold boot test ROMs with copied ordinary saves; old emulator states restore old runtime code.
+
+BW2 0.5.0 includes the optional Nuzlocke Style Encounters snapshot provider for Pokenav 0.3.0. It reads the installed feature's configuration and native caught records at entry; C-Gear alone does not filter encounters or enable the Nuzlocke patch.
