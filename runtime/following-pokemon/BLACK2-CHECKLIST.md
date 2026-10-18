@@ -6,6 +6,7 @@ Start with B01–B06 and B13. If those pass, continue through B12. For a failure
 
 | ID | Steps | Expected | Result / evidence |
 |---|---|---|---|
+| ART01 | In stock Black 2 and White 2, prepare graphics before installation and inspect missing retail Gen 5 species. Import the supplied eight-pose sheet over Dewott (502), apply artwork, export and cold boot. Check all four facings, idle/walk, both genders and shiny selection. Repeat a 64-pixel replacement and full-package mounted previews. | Bundled species show their own artwork before/after installation; Dewott uses the imported sheet in-game after applying it. Transparency, colors, frame order, spacing and rider anchors match the preview. Existing art/positions survive reopen and reinstall. | NOT RUN |
 | B01 | Cold boot an ordinary Black 2 save, walk one tile, then walk and run in all four directions. | Exactly one party Pokémon appears and follows the recorded route without blocking movement. | NOT RUN |
 | B02 | Enter and leave a house or Pokémon Center twice, then use a door, stairs, and an elevator. | Required transitions recall once and the follower returns once after walking; controls remain responsive. | NOT RUN |
 | B03 | Open and close the X menu, then use the Pokémon Center PC without changing the party. | The follower remains visible and paused, then resumes without a recall or send-out effect. | NOT RUN |

@@ -1,12 +1,62 @@
 # C-Gear Buttons and Quick Actions
 
-Development package 0.5.3 for English US White 2 (`IRDO`) and Black 2 (`IREO`), revision 0, and compatible derivatives preserving the verified native interfaces. The installer stages PMC and the shared music runtime automatically, retaining existing replacement tracks and shortcut settings.
+Development package 0.5.4 for English US White 2 (`IRDO`) and Black 2 (`IREO`), revision 0, and compatible derivatives preserving the verified native interfaces. The installer stages PMC and the shared music runtime automatically, retaining existing replacement tracks and shortcut settings.
 
 English US revision-0 Black and White also have a separate functional release
-**0.1.2-bw1**. See [BW1 C-Gear Buttons](BW1.md) for its native backgrounds,
+**0.1.3-bw1**. See [BW1 C-Gear Buttons](BW1.md) for its native backgrounds,
 removed communication controls, action catalog and verification scope.
 
 Open **More → C-Gear Buttons**, or **Configure Buttons** in **Code Injection → Quality of Life → C-Gear Quick Actions**.
+
+## Beginner guide and source organization
+
+The [Custom C-Gear buttons webpage](../../docs/cgear-buttons/index.html) walks
+through graphics, touch input, REPEL, PC and PARTY, including a command-line
+three-button build. It assumes basic programming and ROM-format familiarity;
+its short C++ primer explains the native-call notation used here. Serve the
+repository with `npm run dev` and open `/docs/cgear-buttons/index.html`, or open
+the HTML directly for an offline copy. The page is local documentation, not an
+additional installer screen.
+
+BW2 remains one translation unit: `quick_actions.cpp` includes the following
+readable sections **once, in order**. Do not compile the `.inc` files separately.
+
+| File | Responsibility |
+|---|---|
+| `runtime.h` | Native structure layouts, checked address conversion and byte-field access |
+| `native_addresses.h` | Named native addresses, action codes and sound constants; these names describe our usage |
+| `bw2/session.inc` | Button configuration, retained session state and ownership |
+| `bw2/game_state.inc` | Item ownership, visibility, eligibility and native field queries |
+| `bw2/configuration.inc` | Archive loading, integrity checks and saved positions |
+| `bw2/actors_and_dial.inc` | Sprite placement, wrench dragging and dial geometry |
+| `bw2/resources.inc` | Allocation, scheduled uploads, display readiness and cleanup |
+| `bw2/update.inc` | Per-frame refresh and custom hit testing |
+| `bw2/requests.inc` | Owned native Save, PC, Party/Bag/Map and optional Pokenav events |
+| `bw2/hooks.inc` | Exported lifecycle, input, dispatch and encounter hooks |
+
+`bw1.cpp` is the separate Black/White adapter. The graphics compiler lives in
+`src/cgearButtons/`; the atomic installer lives in
+`src/pokeweb/cgearQuickActionsModel.ts` and `cgearButtonsModel.ts`. The scoped
+`.clang-format` keeps native formatting consistent. Python build/harness files
+and the shared graphics code use expanded formatting as well.
+
+The introductory readability refactor preserved function order, private symbols,
+native layouts, expressions and control flow. Its rebuilt assets matched the
+pre-refactor bytes for both generations. Later behavior changes are recorded
+separately in the [acceptance record](acceptance.md).
+
+Refresh real source panels and decoded sprite examples after source changes:
+
+```sh
+npx vite-node scripts/build-cgear-button-guide.ts
+npx vite-node scripts/build-cgear-button-guide.ts --check
+```
+
+The [lesson design](../../docs/cgear-buttons/example-design.json) and
+`scripts/build-cgear-button-example.ts` use the production compiler and installer.
+The lesson command refuses an existing output ROM and leaves input ROMs and
+saves intact. Its optional extracted resources are inspection copies, not a
+standalone replacement for PMC installation and dependency checks.
 
 ## Editor
 
@@ -45,6 +95,7 @@ The bundled BW2 quick-launch saves (`test.sav`, `White2Upgrade.dsv` and `Black2U
 | PC | None | Owned invocation of field script 10090, entering its storage choice loop |
 | Bicycle | 450 | Native field event |
 | Town Map / eligible Fly | 442 | Native map and Fly request |
+| Town Map / Fly — HM02, no Fly Pokémon required | 421 | Same native map/Fly request; HM ownership replaces the learned-move requirement |
 | Ordinary Town Map | 442 | Native map application |
 | Dowsing Machine | 471 | Native field event |
 | Super Rod | 447 | Native fishing event |
@@ -63,6 +114,17 @@ The bundled BW2 quick-launch saves (`test.sav`, `White2Upgrade.dsv` and `Black2U
 **Pokéradar — generate a nearby phenomenon** is available in the button editor, with the initial label **RADAR**. It does not add a button to existing designs automatically. One press calls the native generator immediately, bypassing its walking interval and random spawn chance only during that call. The native first-badge, map, terrain, collision and encounter-data checks remain. Up to 32 placement attempts handle a random search direction or occupied tile; unsupported locations and locations without a suitable nearby tile produce no spot. Existing phenomena are retained and the button is dimmed while one is present. Normal walking-based generation, timers and probabilities remain native outside that press. Optional visibility flags work as for other custom buttons.
 
 Ownership, location checks, progression, confirmations, communication prompts and cancellation stay native. MAP chooses the first eligible non-egg party member knowing Fly. If there is none, or Fly is prohibited here, it opens ordinary Town Map. Ordinary Town Map is also a separate choice. Story/passive items are omitted. Modified field-handler groups in a hack produce a specific incompatible-handler diagnostic; arbitrary addresses and scripts are not accepted.
+
+**Town Map / Fly — HM02, no Fly Pokémon required** is a separate option in both
+games' action catalogs, initially labeled **FLY**. It is hidden unless HM02
+(item 421) is present in the native TM/HM bag pocket. Town Map ownership is not
+required. Native Fly location/progression checks, visited destinations,
+confirmation, animation and cancellation remain. The first non-Egg supplies
+the native animation without learning Fly or spending PP. A prohibited location
+or a party with no non-Egg falls back to ordinary Town Map, as with the existing
+option. HM ownership is checked again before travel; it is never consumed.
+Optional visibility flags also apply. Existing presets keep their original MAP
+action until the author selects this new option.
 
 Key-item buttons are invisible without their required item. An optional saved flag further gates any button: **Show when flag is set** or **Hide when flag is set**. Temporarily unusable owned actions are dimmed. Flags accept decimal or hexadecimal saved IDs 1–3059. Installation and activation never write visibility flags.
 

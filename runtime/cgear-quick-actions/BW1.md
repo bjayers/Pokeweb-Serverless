@@ -1,6 +1,6 @@
 # BW1 C-Gear Buttons
 
-Release **0.1.2-bw1** supports English US revision-0 Black (`IRBO`)
+Release **0.1.3-bw1** supports English US revision-0 Black (`IRBO`)
 and White (`IRAO`). Open **More → C-Gear Buttons**, or the Configure Buttons
 link in **Code Injection → Quality of Life → C-Gear Quick Actions**.
 
@@ -9,9 +9,17 @@ link in **Code Injection → Quality of Life → C-Gear Quick Actions**.
 The initial preset remains REPEL, PC, BIKE, MAP, PARTY and BAG. Up to eight
 editable buttons are supported, including duplicate actions. The BW1 catalog
 offers unlimited Repel, direct PC storage choices, Bicycle, Town Map / eligible
-Fly, ordinary Town Map, Dowsing Machine, Super Rod, Vs. Recorder, Pal Pad, Party,
+Fly, HM02-gated Fly without a learned-move requirement, ordinary Town Map,
+Dowsing Machine, Super Rod, Vs. Recorder, Pal Pad, Party,
 Bag and Pokéradar. Item ownership, native location restrictions, confirmations,
 party selection and application completion remain native.
+
+The separate **Town Map / Fly — HM02, no Fly Pokémon required** option is hidden
+without HM02 (item 421) in the TM/HM pocket. It uses the first non-Egg for the
+native animation without changing moves or consuming the HM. Native location,
+progression, destination and confirmation rules remain. Prohibited locations
+and empty/Egg-only parties open ordinary Town Map. The existing MAP preset and
+its Town Map/Fly-user requirements are unchanged.
 
 Pokéradar immediately searches for a native phenomenon near the player. The
 first badge, suitable nearby terrain, encounter data and native placement

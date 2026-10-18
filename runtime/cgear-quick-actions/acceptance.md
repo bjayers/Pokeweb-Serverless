@@ -2,7 +2,65 @@
 
 The separate Black/White port is recorded in the [BW1 acceptance checklist](acceptance-bw1.md).
 
-Development build 0.5.3, 2026-10-17. Supported profiles: English US Black 2 (`IREO`) and White 2 (`IRDO`), revision 0, plus derivatives preserving the checked interfaces. The broader historical gameplay checklist below remains applicable.
+Development build 0.5.4, 2026-10-17. Supported profiles: English US Black 2 (`IREO`) and White 2 (`IRDO`), revision 0, plus derivatives preserving the checked interfaces. The broader historical gameplay checklist below remains applicable.
+
+## 0.5.4 HM02 Fly
+
+- Added `mapFlyHm` (action 19), separate from the existing map/Fly action.
+  HM02 item 421 in the native TM/HM pocket gates visibility; Town Map and
+  a learned Fly move are not required. The native map and Fly event keep
+  location/progression checks, destination eligibility, confirmation,
+  animation and cancellation. The first non-Egg supplies the animation;
+  empty/Egg-only parties and prohibited locations fall back to ordinary map.
+  Ownership is rechecked before travel. No item, move, PP or visibility flag
+  is changed. Default designs, save layouts and archive formats are unchanged.
+- Both native CPU profiles pass HM ownership/no-move travel, Egg skipping,
+  empty-party fallback, prohibited-location and lost-HM rejection, held input,
+  retained request ownership and cleanup. Existing move-required Fly tests
+  continue to pass. BW1 has its own adapter and acceptance entry.
+- **109 tests in five files** and the production build pass, including
+  0.5.3/BW1 0.1.2 upgrades, integrity checks and export/reopening of the new
+  action/flag/ID. Both current and older released profiles remain recognized.
+- DS emulator travel succeeds with a verified no-Fly party and HM02, without
+  Town Map, in White 2 with wireless on and Black 2 with wireless off. Map
+  confirmation, native travel animation, return, captions and C-Gear power
+  state were checked; final screens were inspected. A separate White 2
+  no-HM cold boot verifies that the button is absent. Only copied/in-memory
+  fixture saves were used. Physical hardware acceptance is not claimed.
+
+## Readability and beginner guide, 2026-10-17
+
+- BW2 is split into named include sections compiled once by
+  `quick_actions.cpp`. Native addresses and action/sound constants now have
+  aliases, with expanded formatting, local names and ownership comments.
+  BW1, the build/harness scripts and shared graphics modules are formatted too.
+  Function order, exported/private symbols, native layouts and behavior remain
+  intact. This is not a new native release.
+- Rebuilding both generations reproduced all ten baseline assets byte for byte:
+  four DLLs, two private archives, two manifests and two preview PNGs. Versions
+  remain BW2 **0.5.3** and BW1 **0.1.2-bw1**. Five Python syntax trees are
+  unchanged; five shared TypeScript syntax trees match after ignoring comments,
+  source positions and redundant parentheses added by formatting.
+- All **101 focused tests**, both B2/W2 native CPU profiles, both B/W native CPU
+  profiles and the production build passed. The build retains its existing
+  large-chunk advisory. No new DS emulator or hardware acceptance was performed
+  for this source-only change; earlier gameplay evidence remains separately
+  recorded below.
+- The beginner webpage covers graphics, input ownership, native lifecycle,
+  REPEL, PC, PARTY, item gating, layout persistence and build/install steps.
+  Its generator verifies 15 real source panels, ten hook rows and nine decoded
+  button images. Teaching pseudocode and the browser illustration are explicitly
+  distinguished from executable native code and emulation.
+- The three-button CLI lesson built from separately named retail B2 and W2
+  inputs. Both exported ROMs reopened with enabled, applied REPEL/PC/PARTY
+  designs, stable IDs/coordinates and no unapplied changes. Input ROM hashes
+  remained unchanged; no save was written. These are build/installer/reopening
+  checks, not gameplay acceptance of those new fixture ROMs.
+- Browser checks passed at 375, 768 and 1280 pixels: no horizontal page overflow,
+  working chapter navigation, search, light/dark themes, code copying and
+  illustrated native-busy/request routes. The page reported no console errors.
+  Source privacy and whitespace checks passed. The tutorial is a local/offline
+  documentation page; it was not published to a remote site.
 
 ## 0.5.3 dial sensitivity
 

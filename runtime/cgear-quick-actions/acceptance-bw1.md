@@ -1,7 +1,26 @@
 # BW1 C-Gear acceptance checklist
 
-Current test release **0.1.2-bw1**, 2026-10-14. English US revision-0
+Current test release **0.1.3-bw1**, 2026-10-17. English US revision-0
 Black (`IRBO`) and White (`IRAO`) only.
+
+## 0.1.3 HM02 Fly
+
+- [x] A separate `mapFlyHm` action requires HM02 (421) in the TM/HM pocket.
+  It uses the native map and travel flow without requiring any learned Fly
+  move. Native location, progression, visited destinations, confirmation,
+  animation and cancellation remain. A real non-Egg supplies the animation;
+  empty/Egg-only parties and prohibited areas fall back to ordinary map.
+- [x] Both compiled profiles pass missing-HM visibility, no-Fly travel,
+  Egg skipping, map fallback, lost-HM rejection, held input, owned requests
+  and cleanup. Visibility flags, party moves and HM quantities are not written.
+- [x] Both DS emulator profiles complete map confirmation, travel animation
+  and C-Gear return with no Pokémon knowing Fly. Black uses wireless off;
+  White uses wireless on. Screens were inspected. This does not establish
+  physical DS/DSi acceptance.
+- [x] The shared 109-test run includes upgrades from exact 0.1.0, 0.1.1 and
+  0.1.2 binaries and action/flag/stable-ID recovery through ROM export.
+  Production build passes. The native graphics, default buttons, archive
+  format and saved layout record remain unchanged.
 
 ## 0.1.2 startup background fix
 

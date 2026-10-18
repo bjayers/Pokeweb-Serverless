@@ -7,6 +7,9 @@
 | Italian White 2 IRDI | 0.6.49-alpha | Passed | Passed | Pending cold boot |
 | White2Upgrade | 0.7.44-alpha | Passed | Passed | Pending cold boot |
 
+The 2026-10-18 artwork installer/editor update passed clean stock Black 2 and White 2 base/full preparation, migration, replacement and export/reopen checks. Prepared catalogs include all 624 external Gen 5 appearance rows with zero Bulbasaur substitutions, replacing the 422 substitution rows generated from the retail table. Regression checks preserve custom imports and walking/rider edits, reconcile stale installed previews, repair recognized legacy installed catalogs using retail placeholder rows while retaining custom imports, exercise 32-to-64-pixel replacement, regenerate full-package land anchors, retain all 975 native resource payloads and unrelated archive members/file IDs, and leave field DLLs and ARM9 unchanged during artwork application. Unrelated NARC container headers may be normalized by the existing exporter; their member hashes are compared separately. The supplied Dewott PNG passed all eight pose/transparency/palette checks (12 opaque colors). Separate Black 2 and White 2 full test exports replace the four species-502 appearance keys and reopen with valid receipts. Native modules were reused, and no game emulator was run; human visual acceptance remains pending.
+
+
 ## White2Upgrade integration re-audit — 2026-10-11
 
 The approved input is SHA-256
