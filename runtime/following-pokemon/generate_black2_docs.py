@@ -44,10 +44,11 @@ def generate():
         "| ID | Steps | Expected | Result / evidence |",
         "|---|---|---|---|",
     ]
+    lines += [line for line in (HERE / "checklist-template.md").read_text().splitlines() if line.startswith("| ART")]
     lines += [f"| {identifier} | {steps} | {expected} | NOT RUN |" for identifier, steps, expected in CASES]
     lines += [
         "",
-        "Black 2 uses its own three PMC modules and binary contract. White 2 or expansion savestates do not validate this port because they retain different loaded code and addresses.",
+        "Black 2 uses its own four PMC modules and binary contract. White 2 or expansion savestates do not validate this port because they retain different loaded code and addresses.",
         "",
     ]
     (HERE / "BLACK2-CHECKLIST.md").write_text("\n".join(lines))
