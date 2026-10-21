@@ -13,10 +13,7 @@ typedef struct {void *event;uintptr_t callback;} EventToken;
 typedef struct {void *vm,*event;} VmToken;
 static struct {
  ActorSystem *sys;Actor *player;FwFollower *f;void *field,*game;
- uint32_t generation,active,recalled,previousState,pcActive,pcFade,boxPreserve;
-#ifdef FW_MOUNT
- uint32_t naturalRun;
-#endif
+ uint32_t generation,active,recalled,previousState,pcActive,pcFade,boxPreserve,naturalRun;
  void *menuRoot,*pcVm,*battleRoot,*battleSetup;void (*recall)(void);
  EventToken events[EVENT_LIMIT];VmToken vms[VM_LIMIT];
 } scene;
@@ -204,12 +201,10 @@ static void inspect_chain(void){
 }
 static int min(int a,int b){return a<b?a:b;}
 static int max(int a,int b){return a>b?a:b;}
-#ifdef FW_MOUNT
 static int near_step(int32_t next,int32_t current,uint32_t limit){
  uint32_t delta=(uint32_t)next-(uint32_t)current;
  return delta<=limit || (uint32_t)(0u-delta)<=limit;
 }
-#endif
 /* Native volume convention: width grows +X and depth grows -Z. Swept
    occupied tiles include both endpoints; separate elevations stay separate.
    This intentionally overestimates a diagonal sweep, never uses screen space. */
@@ -251,13 +246,12 @@ static void action(Actor *actor,unsigned code){
  if((uintptr_t)actor==scene.f->actor){recall(FWS_ACTOR_ID,FWE_ACTION,actor,code);return;}
  if(code<=3||(code>=0x3c&&code<=0x42)||code==0xfe||code==0xff)return;
  if(actor==scene.player){
-#ifdef FW_MOUNT
   /* The native seamless-zone event can finish between event polling and the
      next player action. A held run then begins with no live event while our
      presentation latch is still set. This is ordinary input movement, not a
-     script-owned movement command. A new event revokes the exemption. */
+     script-owned movement command. A new event revokes the exemption.
+     Base and full both keep these run codes; a live event still recalls. */
   if(!PTR(scene.game,0x18)&&code>=0x54&&code<=0x5b){scene.naturalRun=1;return;}
-#endif
   recall(FWS_PLAYER_MOVEMENT,FWE_ACTION,actor,code);return;
  }
  /* Common field-event setup sets MMDL_MOVEBIT_PAUSE_MOVE on ordinary actors.
@@ -370,9 +364,7 @@ void fws_observe(unsigned kind,void *subject,uintptr_t value){
   return;
  }
  if(kind==FWE_CALLBACK){
-#ifdef FW_MOUNT
   scene.naturalRun=0;
-#endif
   if(fwt_owns(scene.field)&&subject==PTR(scene.game,0x18))return;
   FollowingSceneDebug.event=(uintptr_t)subject;
   pause_scene();track_event(subject,value);
@@ -381,9 +373,7 @@ void fws_observe(unsigned kind,void *subject,uintptr_t value){
   return;
  }
  if(kind==FWE_OPCODE){
-#ifdef FW_MOUNT
   scene.naturalRun=0;
-#endif
   pause_scene();FollowingSceneDebug.opcode=value;FollowingSceneDebug.vm=(uintptr_t)subject;
   void *env=PTR(subject,0x2c),*param=PTR(env,0x20),*work=PTR(param,0);
   FollowingSceneDebug.script=work?*(uint16_t*)((uint8_t*)work+4):0xffff;
@@ -444,12 +434,10 @@ void fws_observe(unsigned kind,void *subject,uintptr_t value){
   Actor *actor=subject;const Vec *target=(const Vec*)value;
   if(target->x==actor->world.x&&target->y==actor->world.y&&target->z==actor->world.z)return;
   if(actor==scene.player){
-#ifdef FW_MOUNT
    if(kind==FWE_WORLD_STEP&&scene.naturalRun&&!PTR(scene.game,0x18)
       &&near_step(target->x,actor->world.x,FW_TILE)
       &&near_step(target->y,actor->world.y,FW_TILE*2)
       &&near_step(target->z,actor->world.z,FW_TILE))return;
-#endif
    recall(FWS_PLAYER_MOVEMENT,kind,subject,0);
   }
   else if((uintptr_t)actor==scene.f->actor)recall(FWS_ACTOR_ID,kind,subject,0);
@@ -486,17 +474,13 @@ unsigned fws_poll(void){
  if(!scene.sys)return 0;
  if(scene.sys->field!=scene.field||scene.f->generation!=scene.generation){fws_detach();return FWS_INVALID;}
  if(PTR(scene.game,0x18)){
-#ifdef FW_MOUNT
   scene.naturalRun=0;
-#endif
   if(!fwt_owns(scene.field))inspect_chain();
  }else if(scene.active&&!*((uint8_t*)scene.game+0x35)){
   unsigned recalled=scene.recalled;
   if(scene.boxPreserve)FollowingEventsAPI.discard();
   scene.active=scene.recalled=scene.pcActive=scene.pcFade=scene.boxPreserve=0;
-#ifdef FW_MOUNT
   scene.naturalRun=0;
-#endif
   scene.menuRoot=scene.pcVm=scene.battleRoot=scene.battleSetup=0;
   for(unsigned i=0;i<EVENT_LIMIT;++i)scene.events[i]=(EventToken){0};
   for(unsigned i=0;i<VM_LIMIT;++i)scene.vms[i]=(VmToken){0};

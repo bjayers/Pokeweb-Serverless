@@ -134,5 +134,16 @@ int main(void) {
     }
     assert(fw_object_row(0x3000,1)==1008);assert(fw_object_row(0x3001,1)==10);assert(fw_object_row(0x3000,4097)==10);
     assert(fw_descriptor_offset(2341)==65552);assert(fw_descriptor_offset(5103)==142888);
+    /* A connection jump shifts every sample and keeps the follow distance. */
+    fw_trail_clear(&t);
+    for(int i=0;i<4;i++){s=sample(i*4096,0,0,1,FW_WORLD);assert(fw_trail_push(&t,&s,&out,0)==0);}
+    uint32_t carried=t.distance;
+    assert(fw_trail_translate(&t,3*FW_TILE,FW_TILE,-2*4096));
+    assert(t.count==4&&t.distance==carried&&t.head==0);
+    assert(t.samples[0].x==3*FW_TILE&&t.samples[3].x==3*4096+3*FW_TILE);
+    assert(t.samples[0].y==FW_TILE&&t.samples[0].z==-2*4096);
+    s=sample(3*4096+3*FW_TILE+4096,FW_TILE,-2*4096,1,FW_WORLD);
+    assert(fw_trail_push(&t,&s,&out,0)==0);
+    assert(!fw_trail_translate(&t,INT32_MAX,0,0)&&t.count==0);
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

@@ -43,6 +43,11 @@ static Actor *fwfield_terrainActor;
 static void *fwfield_terrainController;
 static int16_t fwfield_terrainX,fwfield_terrainZ;
 static uint16_t fwfield_terrainZone;
+/* Last player zone whose trail samples share the current coordinate frame.
+ * Not save data. A seamless connection that jumps more than one tile
+ * translates the trail instead of clearing it. */
+static uint16_t fwfield_trailZone;
+static uint8_t fwfield_trailZoneValid;
 typedef struct {
  uint32_t reserved[2];uint16_t oldTerrain,terrain;
  uint32_t extra[2];void *controller;
@@ -90,36 +95,69 @@ static void animation_gate(Actor *a) {
  if(fw_idle_animation_enabled(fwfield_follower.state,!(a->flags&HIDDEN),fwfx_busy()))a->flags&=~PAUSE_ANM;
  else a->flags|=PAUSE_ANM;
 }
+static int coord_ok(int64_t v){return v>=INT32_MIN&&v<=INT32_MAX;}
+static int add_coord(Vec *v,int32_t dx,int32_t dy,int32_t dz){
+ int64_t x=(int64_t)v->x+dx,y=(int64_t)v->y+dy,z=(int64_t)v->z+dz;
+ if(!coord_ok(x)||!coord_ok(y)||!coord_ok(z))return 0;
+ v->x=(int32_t)x;v->y=(int32_t)y;v->z=(int32_t)z;return 1;
+}
+/* Same disconnect test as the trail: more than one tile in XZ, or two in Y. */
+static int connection_jump(int64_t dx,int64_t dy,int64_t dz){
+ int64_t ax=dx<0?-dx:dx,ay=dy<0?-dy:dy,az=dz<0?-dz:dz;
+ if(ay>2*(int64_t)FW_TILE||ax>2*(int64_t)FW_TILE||az>2*(int64_t)FW_TILE)return 1;
+ /* Match trail isqrt: a gap disconnects only once the distance exceeds one tile. */
+ int64_t limit=(int64_t)FW_TILE+1;
+ return ax*ax+az*az>=limit*limit;
+}
+/* A zone change with a large coordinate jump is a seamless connection, not a
+ * warp. Shift the recorded route (and the follower, if it is still live) by
+ * that delta. Door warps rebuild the actor system and still drop the trail. */
+static int rebase_connection(Actor *a,Vec *pose,const FwSample *sample){
+ if(!fwfield_trailZoneValid){fwfield_trailZone=fwfield_player->zone;fwfield_trailZoneValid=1;return 1;}
+ if(fwfield_player->zone==fwfield_trailZone)return 1;
+ fwfield_trailZone=fwfield_player->zone;
+ FwTrail *t=&fwfield_follower.trail;
+ if(!t->count)return 1;
+ const FwSample *last=&t->samples[(t->head+t->count-1u)%FW_TRAIL_CAPACITY];
+ int64_t dx=(int64_t)sample->x-last->x,dy=(int64_t)sample->y-last->y,dz=(int64_t)sample->z-last->z;
+ if(!connection_jump(dx,dy,dz))return 1;
+ if(!coord_ok(dx)||!coord_ok(dy)||!coord_ok(dz)){fw_trail_clear(t);return 0;}
+ Vec savedActor={0},savedPose={0};
+ if(a)savedActor=a->world;
+ if(pose)savedPose=*pose;
+ if(a&&!add_coord(&a->world,(int32_t)dx,(int32_t)dy,(int32_t)dz)){fw_trail_clear(t);return 0;}
+ if(pose&&!add_coord(pose,(int32_t)dx,(int32_t)dy,(int32_t)dz)){if(a)a->world=savedActor;fw_trail_clear(t);return 0;}
+ if(!fw_trail_translate(t,(int32_t)dx,(int32_t)dy,(int32_t)dz)){if(a)a->world=savedActor;if(pose)*pose=savedPose;return 0;}
+ if(a){
+  for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+  a->grid[0]=(int16_t)(a->world.x/FW_TILE);a->grid[1]=(int16_t)(a->world.y/FW_TILE);a->grid[2]=(int16_t)(a->world.z/FW_TILE);
+ }
+ return 1;
+}
+static void player_sample(FwSample *sample){
+ *sample=(FwSample){.x=fwfield_player->world.x,.y=fwfield_player->world.y+fwfield_player->drawOffset.y+fwfield_player->externalOffset.y,
+  .z=fwfield_player->world.z,.generation=fwfield_generation,.space=1,.rail=0,.connection=0,.direction=(uint8_t)fwfield_player->face,.kind=FW_WORLD,.duration=1};
+}
 static void move(Actor *a) {
  if ((uintptr_t)a!=fwfield_follower.actor || !fwfield_player || a->system!=fwfield_owner) return;
 #ifdef FW_MOUNT
  if(fwland_active()){fwland_follow_player(a,fwfield_player);a->flags&=~PAUSE_ANM;return;}
 #endif
- if(fwfield_follower.state==FW_INTERACTING||fwfield_follower.state==FW_EVENT_PAUSED){a->flags|=PAUSE_ANM;return;}
- FwSample sample={.x=fwfield_player->world.x,.y=fwfield_player->world.y+fwfield_player->drawOffset.y+fwfield_player->externalOffset.y,
- .z=fwfield_player->world.z,.generation=fwfield_generation,.space=1,.rail=0,.connection=0,.direction=(uint8_t)fwfield_player->face,.kind=FW_WORLD,.duration=1}, target;
+ if(fwfield_follower.state==FW_INTERACTING){a->flags|=PAUSE_ANM;return;}
+ int paused=fwfield_follower.state==FW_EVENT_PAUSED;
+ if(paused)a->flags|=PAUSE_ANM;
+ FwSample sample,target;
+ player_sample(&sample);
+ if(!rebase_connection(a,0,&sample)){a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;++FollowingDebug.resets;animation_gate(a);return;}
  int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
  if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;animation_gate(a); return; }
+ /* An event may own the sprite, but the route has to keep the player's
+  * steps or a short pause while running exceeds one tile and the trail drops. */
+ if(paused)return;
  if(fwfield_follower.state==FW_FOLLOWING && !fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
- if(result!=1)target=(FwSample){.x=a->world.x,.y=a->world.y,.z=a->world.z,
-                                .direction=(uint8_t)a->face};
- int clamped=0;
- if(fwfield_follower.state==FW_FOLLOWING&&!(a->flags&HIDDEN)&&!fwfx_busy()){
-  int64_t ox=(int64_t)a->drawOffset.x+a->externalOffset.x;
-  int64_t oy=(int64_t)a->drawOffset.y+a->externalOffset.y;
-  int64_t oz=(int64_t)a->drawOffset.z+a->externalOffset.z;
-  if(ox>=-8*4096&&ox<=8*4096&&oy>=-8*4096&&oy<=8*4096&&oz>=-8*4096&&oz<=8*4096){
-   FwPoint pose={target.x,target.y,target.z},playerPose={sample.x,sample.y,sample.z};
-   FwPoint artOffset={(int32_t)ox,(int32_t)oy,(int32_t)oz};
-   clamped=fw_clamp_dialogue_pose(&pose,&playerPose,&artOffset,fwfield_player->face,
-                                   fwfield_follower.directional_gap[fwfield_player->face]);
-   if(clamped){target.x=pose.x;target.z=pose.z;}
-  }
- }
- if(result!=1&&!clamped){animation_gate(a);return;}
+ if(result!=1){animation_gate(a);return;}
  Vec next={target.x,target.y,target.z};
  if(!fws_step_clear(a,&next)){
-  if(result!=1){animation_gate(a);return;}
   if(!(a->flags&HIDDEN))fwfx_recall(a);
   a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
   fw_trail_clear(&fwfield_follower.trail);++FollowingDebug.resets;return;
@@ -158,7 +196,7 @@ static void cleanup_impl(int keepTrail) {
  fwt_cancel();
  if(owned()) CALL(0x02166981,void(*)(Actor*))((Actor*)fwfield_follower.actor);
  fwfield_follower.actor=0; fwfield_player=0; fwfield_follower.state=FW_ABSENT;
- if(!keepTrail)fw_trail_clear(&fwfield_follower.trail);
+ if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
  fwfield_cyclePending=0;
  FollowingDebug.actor=FollowingDebug.visible=0;
@@ -254,15 +292,19 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
   }
  }
  if(opened)CALL(0x02070de1,int(*)(void*))(file);
- fwfield_follower.directional_gap[0]=fwfield_follower.directional_gap[1]=0;
  if(artX<0)artX=-artX;
  unsigned maximum=artX<10?10u-(unsigned)artX:0u;
  unsigned gap=fwfield_follower.side_gap+FW_DEFAULT_SIDE_GAP_BONUS;
- fwfield_follower.directional_gap[2]=fwfield_follower.directional_gap[3]=gap<maximum?gap:maximum;
+ if(gap>maximum)gap=maximum;
+ if(gap>FW_MAX_DIRECTIONAL_GAP)gap=FW_MAX_DIRECTIONAL_GAP;
+ for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)gap;
  if(first<end&&fallback>=FW_CODE_BASE){
   uint8_t positions[12];
   if(fwp_land(fallback-FW_CODE_BASE,fwfield_descriptorCount-FW_STOCK_ROWS,fwfield_registryCrc,positions)){
-   for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=positions[i];
+   unsigned uniform=0;
+   for(unsigned i=0;i<4;++i)if(positions[i]>uniform)uniform=positions[i];
+   if(uniform>FW_MAX_DIRECTIONAL_GAP)uniform=FW_MAX_DIRECTIONAL_GAP;
+   for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)uniform;
   }
  }
  return first<end?fallback:0;
@@ -355,10 +397,9 @@ static void cycle_follower(void *game,void *field){
 }
 static void cycle_track(void){
  if(!fwfield_cyclePending||!fwfield_player)return;
- FwSample sample={.x=fwfield_player->world.x,
-  .y=fwfield_player->world.y+fwfield_player->drawOffset.y+fwfield_player->externalOffset.y,
-  .z=fwfield_player->world.z,.generation=fwfield_generation,.space=1,
-  .direction=(uint8_t)fwfield_player->face,.kind=FW_WORLD,.duration=1},target;
+ FwSample sample,target;
+ player_sample(&sample);
+ if(!rebase_connection(0,&fwfield_cyclePose,&sample)){fwfield_cyclePending=0;return;}
  int step=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
  if(step<0){fwfield_cyclePending=0;return;}
  if(step==1){

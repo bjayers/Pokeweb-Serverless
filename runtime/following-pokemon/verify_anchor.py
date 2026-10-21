@@ -32,7 +32,7 @@ def call(face, descriptor_z=3):
     assert after[:128] == original[:128] and after[129:] == original[129:]
     return struct.unpack('b', after[128:129])[0]
 
-for face, expected in ((0, -4), (1, 9), (2, 3), (3, 3), (4, 3)):
+for face, expected in ((0, 3), (1, 3), (2, 3), (3, 3), (4, 3)):
     assert call(face) == expected, (MODULE_SUFFIX, face)
 assert call(0, -128) == -128  # Out-of-range adjustment leaves the byte intact.
 assert call(1, 127) == 127
@@ -72,4 +72,4 @@ assert lateral[4] < north[4]
 _, stair = depth(3, (0, -8 * 4096, 65536 - 9 * 4096), 65536)
 _, prior_stair = depth(1, (0, -8 * 4096, 65536 - 9 * 4096), 65536)
 assert (stair[4], stair[5]) == (prior_stair[4], prior_stair[5])
-print(f'{MODULE_SUFFIX}: packaged directional anchors, north foreground depth and unchanged stair policy passed; no game emulator run.')
+print(f'{MODULE_SUFFIX}: packaged anchors leave control Z on the descriptor, north foreground depth is unchanged, and stair flags still agree; no game emulator run.')

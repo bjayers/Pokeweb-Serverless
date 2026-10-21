@@ -25,6 +25,7 @@ class Rendering(unittest.TestCase):
   subprocess.run(['cc','-shared','-fPIC','-std=c11','-Wall','-Wextra','-Werror',str(HERE/'render_math.c'),'-o',str(lib)],check=True)
   cls.lib=c.CDLL(str(lib));cls.lib.fwr_correct.argtypes=[c.POINTER(Point),c.POINTER(Point),c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.c_uint,c.POINTER(Pose),c.POINTER(Result)]
   cls.lib.fwr_above_shadow.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_keep_behind.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
   cls.lib.fwr_player_in_front.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),Point,c.c_int32,c.c_int32,c.POINTER(Pose),c.POINTER(c.c_int32)]
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
   cls.lib.fwr_cover_feet.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
@@ -155,12 +156,29 @@ class Rendering(unittest.TestCase):
    cam=Camera(eye,Point(),0);head=Point();self.assertFalse(self.lib.fwr_head_position(c.byref(base),c.byref(cam),height,c.byref(head)))
  def test_stair_policy_does_not_depend_on_bob(self):
   cam=Camera(Point(0,760739,581835),Point(),0)
-  for y,policy in [(65536,0),(-32740,-2)]:
+  # Side-and-above used to return policy 0. It now clamps behind, independent of bob.
+  for y,policy in [(65536,-1),(-32740,-2)]:
    for bob in (0,6144):
     world=Point(65536,y,0);pose=Pose(Point(57344,y+bob,-8192),16384,16384)
     applied,out,res=self.run_case(world,pose,cam)
     self.assertEqual(res.policy,policy)
-    if not policy:self.assertEqual(bytes(out),bytes(pose))
+    if policy==-1:
+     self.assertLessEqual(res.after,-4*4096+64)
+     before=project(pose,(0,760739,581835),False);after=project(out,(0,760739,581835),False)
+     self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
+     player=Point();again=Pose()
+     self.assertFalse(self.lib.fwr_correct(c.byref(world),c.byref(player),c.byref(out),c.byref(player),c.byref(cam),1,c.byref(again),c.byref(res)))
+ def test_south_stair_clamps_follower_behind_player(self):
+  # One tile north and one tile up: the old early-out left this at policy 0.
+  cam=Camera(Point(0,760739,581835),Point(),0)
+  world=Point(0,65536,-65536)
+  pose=Pose(Point(0,65536,-65536),16384,16384)
+  for flags in (0,1):
+   applied,out,res=self.run_case(world,pose,cam,flags)
+   self.assertEqual(res.policy,-1)
+   self.assertLessEqual(res.after,-4*4096+64)
+   before=project(pose,(0,760739,581835),False);after=project(out,(0,760739,581835),False)
+   self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
  def test_north_follower_keeps_previous_foreground_depth(self):
   eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
   world=Point(0,0,65536)
@@ -227,4 +245,14 @@ class Rendering(unittest.TestCase):
    self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
    unchanged=Pose();self.assertEqual(self.lib.fwr_player_in_front(c.byref(raised),c.byref(foreground),c.byref(cam),result.axis,12*4096,32*4096,c.byref(unchanged),c.byref(final)),0)
    self.assertEqual(bytes(foreground),bytes(unchanged))
+   # The draw path no longer shoves the player. The follower quad is clamped
+   # back after the shadow push, and the player pose stays put.
+   behind=Pose();player_pose=Pose(player_draw,8192,8192)
+   self.assertEqual(self.lib.fwr_keep_behind(c.byref(raised),c.byref(player_pose),c.byref(cam),4*4096,c.byref(behind)),1)
+   kept=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(behind.position),xyz(player_pose.position),direction))/4096)
+   self.assertLessEqual(kept,-4*4096)
+   held=Pose();self.assertEqual(self.lib.fwr_keep_behind(c.byref(behind),c.byref(player_pose),c.byref(cam),4*4096,c.byref(held)),0)
+   self.assertEqual(bytes(behind),bytes(held))
+   screen_before=project(raised,eye,projection==2);screen_after=project(behind,eye,projection==2)
+   self.assertLess(max(abs(x-y)for a,b in zip(screen_before,screen_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
 if __name__=='__main__':unittest.main()

@@ -11,7 +11,10 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 #define FWR_LARGE 1u
 #define FWR_NORTH 2u
 #define FWR_NORTH_ANCHOR_Z 7
+#define FWR_SOUTH_ANCHOR_Z 6
 #define FWR_NORTH_ART_Y 2
+/* Survives native 15-bit Z quantization without a 12-unit player shove. */
+#define FWR_BEHIND_MARGIN (4 * 4096)
 #define FWR_FORCE_FRONT 4u
 #define FWR_FORCE_BACK 8u
 #define FWR_BACK_MARGIN (12 * 4096)
@@ -22,6 +25,10 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  * projected image. The shadow itself remains at the native ground anchor. */
 int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
     const FwrCamera *camera,FwrPose *output);
+/* Push only the follower quad back along the eye ray. The player quad, shadow
+ * anchor, and logical world position stay where they are. */
+int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
+    const FwrCamera *camera,int32_t margin,FwrPose *output);
 /* Camera-facing grass clears its owner, but stays behind a nearer body. */
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
     const FwrPose *other,const FwrCamera *camera,FwrPose *output);

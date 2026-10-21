@@ -273,7 +273,8 @@ for direction in (2,3):
    for i,sx in enumerate((ax,x)):uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
    assert call('fwt_reach',[F,P,A,FIELD])==1
    blocked=1;assert not call('fwt_reach',[F,P,A,FIELD]);blocked=0
-  put(A+68,x+sign*(18+side_gap)*4096);assert not call('fwt_reach',[F,P,A,FIELD])
+  put(A+68,x+sign*(18+side_gap)*4096);assert call('fwt_reach',[F,P,A,FIELD])==1
+  put(A+68,x+sign*(26+side_gap)*4096);assert not call('fwt_reach',[F,P,A,FIELD])
 # toofar.mln: the side-gap registry row is 4+6=10; the west-facing follower
 # world actor is 28 units away, one beyond the talk box, though the drawn art
 # is two units nearer. Clamp the actor and art together before native reach.
@@ -283,7 +284,8 @@ uc.mem_write(P+68,struct.pack('<iii',x,0,z));uc.mem_write(A+68,struct.pack('<iii
 uc.mem_write(A+60,struct.pack('<hhh',ax//65536,0,z//65536))
 for i,sx in enumerate((ax,x)):
  uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
-assert not call('fwt_reach',[F,P,A,FIELD])
+assert call('fwt_reach',[F,P,A,FIELD])==1
+assert u32(A+68)==x-27*4096
 pose=SNAP+0x400;visual=pose+0x10
 uc.mem_write(pose,struct.pack('<3i',ax,0,z));uc.mem_write(visual,struct.pack('<3i',8192,6144,-8192))
 assert call('fw_clamp_dialogue_pose',[pose,P+68,visual,2,10])==1
@@ -291,9 +293,8 @@ fixed=struct.unpack('<3i',uc.mem_read(pose,12));assert fixed[0]==x-27*4096
 uc.mem_write(A+68,struct.pack('<3i',*fixed))
 assert call('fwt_reach',[F,P,A,FIELD])==1
 blocked=1;assert not call('fwt_reach',[F,P,A,FIELD]);blocked=0
-# The installed actor callback must apply that cap while the player stands
-# still, moving the native actor and its billboard anchor together. Reuse the
-# same saved-frame geometry and a stationary two-sample route.
+# The talk probe applies that cap once. Movement must not tug the pose every
+# frame. Reuse the same saved-frame geometry and a stationary two-sample route.
 setup(2);uc.mem_write(F+1852,bytes((0,0,10,10)))
 uc.mem_write(P+68,struct.pack('<3i',x,0,z))
 uc.mem_write(A+68,struct.pack('<3i',ax,0,z))
@@ -304,9 +305,10 @@ for i,sx in enumerate((ax,x)):
 owner=addr('fwfield_owner');follower=addr('fwfield_follower')
 put(owner,SYS);put(addr('fwfield_player'),P);put(addr('fwfield_generation'),1)
 uc.mem_write(follower,bytes(uc.mem_read(F,1856)))
-assert not call('fwt_reach',[follower,P,A,FIELD])
-call('move',[A]);assert u32(A+68)==x-27*4096
+assert call('fwt_reach',[follower,P,A,FIELD])==1
+assert u32(A+68)==x-27*4096
 assert u32(A+80)==8192 and u32(A+68)+u32(A+80)==x-25*4096
+call('move',[A]);assert u32(A+68)==x-27*4096
 assert call('fwt_reach',[follower,P,A,FIELD])==1
 call('move',[A]);assert u32(A+68)==x-27*4096
 put(owner,0);put(addr('fwfield_player'),0)
@@ -321,7 +323,8 @@ for i,sx in enumerate((ax,x+32768)):
  uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
 put(owner,SYS);put(addr('fwfield_player'),P);put(addr('fwfield_generation'),1)
 uc.mem_write(follower,bytes(uc.mem_read(F,1856)))
-assert not call('fwt_reach',[follower,P,A,FIELD])
+assert call('fwt_reach',[follower,P,A,FIELD])==1
+assert u32(A+68)==x+32768-25*4096
 call('move',[A]);assert u32(A+68)==x+32768-25*4096
 assert call('fwt_reach',[follower,P,A,FIELD])==1
 blocked=1;assert not call('fwt_reach',[follower,P,A,FIELD]);blocked=0

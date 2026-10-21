@@ -126,6 +126,22 @@ int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *ar
     return 1;
 }
 static unsigned index_at(const FwTrail *t, unsigned at) { return (t->head + at) % FW_TRAIL_CAPACITY; }
+int fw_trail_translate(FwTrail *t, int32_t dx, int32_t dy, int32_t dz) {
+    if (!t) return 0;
+    if (!t->count || (!dx && !dy && !dz)) return 1;
+    for (unsigned i = 0; i < t->count; ++i) {
+        FwSample *s = &t->samples[index_at(t, i)];
+        int64_t x = (int64_t)s->x + dx, y = (int64_t)s->y + dy, z = (int64_t)s->z + dz;
+        if (x < INT32_MIN || x > INT32_MAX || y < INT32_MIN || y > INT32_MAX || z < INT32_MIN || z > INT32_MAX) {
+            fw_trail_clear(t); return 0;
+        }
+    }
+    for (unsigned i = 0; i < t->count; ++i) {
+        FwSample *s = &t->samples[index_at(t, i)];
+        s->x += dx; s->y += dy; s->z += dz;
+    }
+    return 1;
+}
 int fw_trail_push_directional(FwTrail *t, const FwSample *s, FwSample *out, const uint8_t gaps[4]) {
     if (!gaps || gaps[0]>FW_MAX_DIRECTIONAL_GAP||gaps[1]>FW_MAX_DIRECTIONAL_GAP||gaps[2]>FW_MAX_DIRECTIONAL_GAP||gaps[3]>FW_MAX_DIRECTIONAL_GAP||
         !s || !out || s->kind > FW_WORLD || s->direction > 3 || !s->generation) { fw_trail_clear(t); return -1; }

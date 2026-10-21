@@ -60,11 +60,11 @@ def draw():
  assert bytes(uc.mem_read(P,0x2000))==before
  assert bytes(uc.mem_read(F,7300))==trail
  return seen[-1]
-# The native control-Z byte shifts the model and its native shadow together,
-# while logical movement coordinates, other dimensions, and descriptor stay put.
+# Control Z stays on the descriptor. Facing bias is draw-only, so the shadow
+# and the other actor bytes do not change when the follower turns.
 setup();uc.mem_write(A+243,b'\x03')
 before=bytes(uc.mem_read(A,256))
-for face,expected in ((0,-4),(1,9),(2,3),(3,3)):
+for face,expected in ((0,3),(1,3),(2,3),(3,3)):
  call('fwr_anchor',[A,face]);assert read(A+128,'b')[0]==expected
  after=bytes(uc.mem_read(A,256))
  assert after[:128]==before[:128] and after[129:]==before[129:]
@@ -101,11 +101,11 @@ for eye in [(200*4096,120*4096,0),(-120*4096,210*4096,80*4096),(80*4096,200*4096
  length=math.hypot(eye[0],eye[2]);base=(int(65536*eye[2]/length),0,int(-65536*eye[0]/length))
  vec(A+68,base);vec(BILL+32,(base[0],6144,base[2]));vec(BILL+4,(0,1024,0))
  assert draw()[2][2]<=-508
-# Stair policies: upper native; lower lateral clamp; foreground stair preserved.
-for base,expected in [((65536,65536,0),0),((65536,-32740,0),-2),((0,-65536,65536),1)]:
+# Stair policies: upper eye-ray clamp; lower lateral clamp; foreground stair preserved.
+for base,expected in [((65536,65536,0),-1),((65536,-32740,0),-2),((0,-65536,65536),1)]:
  setup(64);vec(A+68,base);vec(BILL+32,(base[0],base[1]+6144,base[2]-8192))
  submitted,scales,depth=draw();assert depth[0]==expected,(base,depth)
- if expected==0:assert submitted==(base[0],base[1]+6144,base[2]-8192)
+ if expected==-1:assert depth[2]<=-4*4096+64,(base,depth)
 # The registry Y offset must affect the follower quad only. Disable the player
 # billboard for this fixture so the depth correction cannot obscure the exact
 # five-pixel delta, then verify the native effects pass sees the original pose.
@@ -134,10 +134,10 @@ n=len(seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0]==original
 # The upward artwork receives a two-pixel correction relative to the shadow;
 # downward and lateral artwork retain their existing registry Y offset.
-for face,extra in ((0,-2),(1,0),(2,0),(3,0)):
+for face,extra,zextra in ((0,-2,-7),(1,0,6),(2,0,0),(3,0,0)):
  setup();uc.mem_write(F+51,b'\xfb');half(BILL,0x400d);half(A+24,face)
  vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
- assert draw()[0]==(original[0],original[1]+(-5+extra)*4096,original[2])
+ assert draw()[0]==(original[0],original[1]+(-5+extra)*4096,original[2]+zextra*4096)
  assert read(BILL+32,'3i')==original
 # North-facing movement changed the billboard's ground-plane anchor. The
 # packaged main-pass correction must recover its former foreground depth while
@@ -146,7 +146,7 @@ setup();uc.mem_write(F+51,b'\xfa');half(A+24,2)
 vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-2*4096))
 old_depth=draw()[2][1]
 setup();uc.mem_write(F+51,b'\xfa');half(A+24,0)
-vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-9*4096))
+vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-2*4096))
 new_pose=read(BILL+32,'3i');north=draw();assert north[2][0]==1
 assert old_depth<=north[2][2]<old_depth+128,(old_depth,north[2])
 assert read(BILL+32,'3i')==new_pose
@@ -165,13 +165,13 @@ for base in ((65536,0,0),(65536,65536,0),(65536,-32740,0),(0,-65536,65536)):
 setup(64);half(P+24,1);half(A+24,1);put(A+4,0x4000)
 uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\xfb')
 vec(CAM+32,(0,760739,581835));vec(A+68,(0,0,-65536))
-vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152))
+vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152-6*4096))
 submitted,scales,depth=draw()
-assert depth[0]==-1 and depth[1]<0 and depth[2]<=-12*4096,(submitted,depth)
+assert depth[0]==-1 and depth[1]<0 and depth[2]<=-4*4096,(submitted,depth)
 axis=(3253,2488)
 player_submitted=player_seen[-1][0]
-assert (submitted[1]-player_submitted[1])*axis[0]+(submitted[2]-player_submitted[2])*axis[1]<=(-12*4096+128)*4096,(submitted,player_submitted)
-assert submitted[1]*axis[0]+(submitted[2]+40960)*axis[1]>=(6*4096-128)*4096,submitted
+assert player_submitted==read(BILL+4,'3i')
+assert (submitted[1]-player_submitted[1])*axis[0]+(submitted[2]-player_submitted[2])*axis[1]<=(-4*4096+128)*4096,(submitted,player_submitted)
 assert all(draw()==(submitted,scales,depth) for _ in range(5))
 # drawprio.mln: a south-facing Serperior occupies the tile north of a player
 # facing up. The player's own facing does not change the required depth order.
@@ -181,10 +181,10 @@ for player_face in range(4):
  uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\x00')
  vec(P+68,(5406720,0,884736));vec(A+68,(5406720,0,819200))
  vec(CAM+32,(5406720,777123,1466571));vec(CAM+56,(5406720,16384,884736))
- vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584))
+ vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584-6*4096))
  initial=bytes(uc.mem_read(BILL,56));submitted,scales,depth=draw()
- assert depth[0]==-1 and depth[2]<=-12*4096,(player_face,depth)
- assert player_seen[-1][0]!=read(BILL+4,'3i'),player_face
+ assert depth[0]==-1 and depth[2]<=-4*4096,(player_face,depth)
+ assert player_seen[-1][0]==read(BILL+4,'3i'),player_face
  assert bytes(uc.mem_read(BILL,56))==initial,player_face
  assert all(draw()==(submitted,scales,depth) for _ in range(3)),player_face
 # badprio.mln: the follower is 28 world units west of the player while an

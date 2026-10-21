@@ -5,11 +5,12 @@
 typedef struct { uint16_t geom,pad; FwPoint position; uint16_t frame; int16_t sx,sy; uint16_t rotation,flags,pad2; } Billboard;
 _Static_assert(sizeof(Billboard)==28,"billboard ABI");
 void fwr_anchor(Actor *a,unsigned face){
+ (void)face;
  if(!a)return;
- /* Native control Z is added to both the model and its attached shadow. The
-  * follower's logical world/grid position and collision remain unchanged. */
- int z=(int8_t)a->descriptor[15]+(face==0?-FWR_NORTH_ANCHOR_Z:face==1?6:0);
- if(z>=INT8_MIN&&z<=INT8_MAX)a->dimensions[4]=(uint8_t)(int8_t)z;
+ /* Control Z moves the model and its shadow together. Facing bias is applied
+  * only to the submitted quad in fwr_draw, so a turn cannot snap the logical
+  * position or the shadow. */
+ a->dimensions[4]=a->descriptor[15];
 }
 __attribute__((visibility("default"))) volatile struct {
  uint32_t magic,version,frames,actor,size,applied;int32_t policy,before,after;
@@ -94,45 +95,6 @@ static Billboard *billboard(void *system,Actor *a){
  if((b->geom>>14)!=0||!(b->flags&512))return 0;
  return b;
 }
-/* Only a follower close enough to touch the player on screen needs a player
- * depth correction. In particular, a follower trailing off to the side must
- * not change the player's ordering against unrelated NPCs. */
-static int near_player(const Actor *follower,const Actor *player){
- int32_t radius=follower->descriptor[7]==2?2*FW_TILE:3*FW_TILE/2;
- int64_t dx=(int64_t)follower->world.x-player->world.x;
- int64_t dz=(int64_t)follower->world.z-player->world.z;
- return dx>=-radius&&dx<=radius&&dz>=-radius&&dz<=radius;
-}
-/* The player's temporary foreground shift must stop before any nearby native
- * NPC that the unmodified player would be behind. An almost-tied center depth
- * is not enough for whole textured billboards: leave a visible depth budget
- * for the native NPC instead of letting the follower correction reorder it. */
-static int32_t player_advance_limit(void *system,const Billboard *player,
-                                   const Billboard *follower,FwPoint direction){
- void *scene=PTR(system,4);
- if(!scene||!PTR(scene,8))return 0;
- unsigned count=*(uint16_t*)((uint8_t*)scene+14);
- if(count>256)return 0;
- Billboard *entries=(Billboard*)PTR(scene,8);
- int32_t limit=2*FW_TILE;
- for(unsigned i=0;i<count;i++){
-  const Billboard *other=entries+i;
-  if(other==player||other==follower||(other->geom>>14)!=0||
-     !(other->flags&512)||other->sx<=0||other->sy<=0)continue;
-  int64_t dx=(int64_t)other->position.x-player->position.x;
-  int64_t dy=(int64_t)other->position.y-player->position.y;
-  int64_t dz=(int64_t)other->position.z-player->position.z;
-  if(dx < -2*FW_TILE||dx > 2*FW_TILE||
-     dz < -2*FW_TILE||dz > 2*FW_TILE||
-     dy < -2*FW_TILE||dy > 2*FW_TILE)continue;
-  int32_t depth=(int32_t)((dx*direction.x+dy*direction.y+dz*direction.z)/4096);
-  if(depth>0){
-   int32_t allowed=depth>FWR_NATIVE_FOREGROUND_GAP?depth-FWR_NATIVE_FOREGROUND_GAP:0;
-   if(allowed<limit)limit=allowed;
-  }
- }
- return limit;
-}
 #ifdef FW_STOCK
 static int ram_span(const void *pointer,unsigned bytes){
  uintptr_t at=(uintptr_t)pointer;
@@ -140,6 +102,12 @@ static int ram_span(const void *pointer,unsigned bytes){
  if(at<=0x02400000u-bytes)return 1;
  return at<=0x03000000u-bytes&&CALL(0x0207acb9,int(*)(void))()!=0;
 }
+/* One occluder answer per tile. A second caller in the same draw reuses it
+ * even when the owner tile differs, so the 288-holder walk never runs twice. */
+static struct {
+ uint32_t frame,count;void *bank;uint16_t zone;int16_t tileX,tileZ;int32_t limit;uint8_t valid;
+} propLimit;
+static uint32_t propFrame;
 /* Audited native mapper/prop-bank layouts. Borrow loaded resources only;
  * never request a chunk, change a prop, or retain a pointer across draws. */
 static int32_t prop_advance_limit(Actor *owner,const FwrPose *body,const FwrCamera *camera){
@@ -152,6 +120,10 @@ static int32_t prop_advance_limit(Actor *owner,const FwrPose *body,const FwrCame
  if(!ram_span(props,0x1468)||PTR(props,4)!=mapper)return limit;
  unsigned count=U32(props,0x224);void *bank=PTR(props,0x220);
  if(!count||count>512||!ram_span(bank,count*8))return limit;
+ if(propLimit.valid&&propLimit.frame==propFrame)return propLimit.limit;
+ int16_t tileX=(int16_t)(owner->world.x/FW_TILE),tileZ=(int16_t)(owner->world.z/FW_TILE);
+ if(propLimit.valid&&propLimit.bank==bank&&propLimit.count==count&&propLimit.zone==owner->zone
+    &&propLimit.tileX==tileX&&propLimit.tileZ==tileZ)return propLimit.limit;
  FwPoint base=*(FwPoint*)((uint8_t*)mapper+0x54);
  for(unsigned i=0;i<288;++i){
   uint8_t *holder=(uint8_t*)props+0x268+i*16;
@@ -199,11 +171,16 @@ static int32_t prop_advance_limit(Actor *owner,const FwrPose *body,const FwrCame
    int32_t cap=fwr_box_advance_limit(body,camera,corners);if(cap<limit)limit=cap;
   }
  }
+ propLimit.frame=propFrame;propLimit.count=count;propLimit.bank=bank;propLimit.zone=owner->zone;
+ propLimit.tileX=tileX;propLimit.tileZ=tileZ;propLimit.limit=limit;propLimit.valid=1;
  return limit;
 }
 #endif
 void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int sprite_y){
- Billboard *b=0,*p=0;FwrPose original={0},adjusted,playerOriginal={0};FwrResult result={0};int applied=0,changed=0,playerChanged=0,lightingChanged=0;uint16_t originalFlags=0;
+ Billboard *b=0,*p=0;FwrPose original={0},adjusted,playerOriginal={0};FwrResult result={0};int applied=0,changed=0,lightingChanged=0;uint16_t originalFlags=0;
+#ifdef FW_STOCK
+ propFrame++;
+#endif
  effectPose.actor=effectPose.player=0;
  FollowingRenderDebug.frames++;FollowingRenderDebug.applied=0;FollowingRenderDebug.actor=(uint32_t)a;
  FollowingRenderDebug.policy=FollowingRenderDebug.before=FollowingRenderDebug.after=0;
@@ -222,11 +199,18 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     b->flags=(b->flags&~FWR_LIGHT_MASK)|(p->flags&FWR_LIGHT_MASK);
     lightingChanged=b->flags!=originalFlags;
    }
+   /* Facing bias used to live in control Z, which also moves the shadow and the
+    * logical anchor. Apply it only to this quad. North is -7 Z, south is +6. */
+   int faceZ=a->face==0?-FWR_NORTH_ANCHOR_Z:a->face==1?FWR_SOUTH_ANCHOR_Z:0;
+   if(faceZ){
+    int64_t z=(int64_t)adjusted.position.z+(int64_t)faceZ*4096;
+    if(z>=INT32_MIN&&z<=INT32_MAX){adjusted.position.z=(int32_t)z;changed=1;}
+   }
    /* The descriptor Y offset also moves the game's attached shadow. Apply the
     * appearance offset only to this actor quad during synchronous submission;
     * effects and the following pass see the untouched native position. */
    /* Facing up needs two pixels less correction for the artwork than for the
-    * shadow; the latter is already moved through native control Z. */
+    * shadow. The shadow stays on the descriptor anchor. */
    int delta=sprite_y-(int8_t)a->descriptor[14]-(a->face==0?FWR_NORTH_ART_Y:0);
    int64_t y=(int64_t)adjusted.position.y+(int64_t)delta*4096;
    if(delta&&y>=INT32_MIN&&y<=INT32_MAX){adjusted.position.y=(int32_t)y;changed=1;}
@@ -257,29 +241,25 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
      adjusted=corrected;changed=1;
     }
    }
+   if(p&&result.policy==-1){
+    /* Shadow clearance can pull a trailing quad toward the camera and in
+     * front of the player. Push the follower quad back; leave the player. */
+    FwrPose behind;
+    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,FWR_BEHIND_MARGIN,&behind)){
+     adjusted=behind;changed=1;
+    }
+   }
 #ifdef FW_STOCK
    FwrPose bounded;
    if(fwr_cap_advance(&baseline,&adjusted,&cam,prop_advance_limit(a,&baseline,&cam),&bounded)){
     adjusted=bounded;changed=1;
    }
 #endif
-   if(p&&result.policy==-1&&near_player(a,player)){
-    /* The shadow clearance runs after the ordinary player/follower ordering
-     * decision. It can pull a trailing sprite past the player regardless of
-     * the player's facing. Advance only the submitted player quad so the
-     * follower remains above its shadow and both screen poses stay fixed. */
-    FwrPose corrected;
-    int32_t finalDepth=result.after;
-    int32_t limit=player_advance_limit(system,p,b,result.axis);
-#ifdef FW_STOCK
-    int32_t furniture=prop_advance_limit(player,&playerOriginal,&cam);
-    if(furniture<limit)limit=furniture;
-#endif
-    if(fwr_player_in_front(&adjusted,&playerOriginal,&cam,result.axis,FWR_BACK_MARGIN,limit,&corrected,&finalDepth)){
-     p->position=corrected.position;p->sx=(int16_t)corrected.sx;p->sy=(int16_t)corrected.sy;
-     playerChanged=1;
-    }
-    FollowingRenderDebug.after=finalDepth;
+   if(p&&result.policy){
+    int64_t dx=(int64_t)adjusted.position.x-playerOriginal.position.x;
+    int64_t dy=(int64_t)adjusted.position.y-playerOriginal.position.y;
+    int64_t dz=(int64_t)adjusted.position.z-playerOriginal.position.z;
+    FollowingRenderDebug.after=result.after=(int32_t)((dx*result.axis.x+dy*result.axis.y+dz*result.axis.z)/4096);
    }
    FollowingRenderDebug.submitted=adjusted.position;
    FollowingRenderDebug.submittedSX=adjusted.sx;
@@ -300,5 +280,4 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
   * next frame, another camera, native effects, save data, or the movement trail. */
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
- if(playerChanged){p->position=playerOriginal.position;p->sx=(int16_t)playerOriginal.sx;p->sy=(int16_t)playerOriginal.sy;}
 }

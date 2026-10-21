@@ -122,6 +122,18 @@ int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
  if(current>=target)return 0;
  return shift_depth(native,camera,direction,target-current+16,out);
 }
+int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
+                    const FwrCamera *camera,int32_t margin,FwrPose *out){
+ *out=*follower;
+ if(camera->projection>2||margin<FWR_TIE_MARGIN||margin>FW_TILE||
+    follower->sx<=0||follower->sy<=0||follower->sx>32767||follower->sy>32767)return 0;
+ FwPoint direction,relative;
+ if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction)
+    ||!delta(follower->position,player->position,&relative,8*FW_TILE))return 0;
+ int32_t current=dot(relative,direction),target=-margin;
+ if(current<=target)return 0;
+ return shift_depth(follower,camera,direction,target-current-16,out);
+}
 int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
                         const FwrCamera *camera,FwPoint direction,int32_t margin,int32_t max_advance,
                         FwrPose *out,int32_t *after){
@@ -189,8 +201,16 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
    * gap can quantize away as the rider bobs, switching their visible order. */
   target=front?4*4096:-4*4096;
  }else if(unequal){
-  if(!(flags&FWR_LARGE)||(!front&&base.y>0))return 0;
-  lower=!front;target=front?8*4096:-4*4096;
+  /* A higher follower north of the player (south stairs, south ledges) used
+   * to keep native order and then draw in front. Clamp that quad behind.
+   * Large sprites already in front, and large sprites below-and-behind,
+   * keep their previous stair targets. */
+  if(front){
+   if(!(flags&FWR_LARGE))return 0;
+   target=8*4096;
+  }else if((flags&FWR_LARGE)&&base.y<=0){
+   lower=1;target=-4*4096;
+  }else target=-FWR_BEHIND_MARGIN;
  }else if(front){
   target=FWR_TIE_MARGIN;
   if((flags&FWR_NORTH)&&h<=3*FW_TILE/2){

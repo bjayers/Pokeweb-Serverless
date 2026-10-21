@@ -72,6 +72,9 @@ void fw_trail_clear(FwTrail *trail);
  * 1 when an actual recorded pose is available. Never synthesizes a shortcut. */
 int fw_trail_push(FwTrail *trail, const FwSample *sample, FwSample *follower, unsigned side_gap);
 int fw_trail_push_directional(FwTrail *trail, const FwSample *sample, FwSample *follower, const uint8_t gaps[4]);
+/* Add a connection delta to every live sample. Distances stay valid.
+ * Returns 0 and clears the trail if any coordinate would overflow. */
+int fw_trail_translate(FwTrail *trail, int32_t dx, int32_t dy, int32_t dz);
 /* Bound a nearly-adjacent follower's world pose to the same forward reach
  * used by dialogue, without changing its route or authored gap. */
 int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *art_offset,

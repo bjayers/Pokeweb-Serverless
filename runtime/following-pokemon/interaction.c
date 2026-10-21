@@ -84,35 +84,52 @@ static int abs32(int x){return x<0?-x:x;}
 int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
  if(!f||f->state!=FW_FOLLOWING||!p||!a||(a->flags&4)||fwfx_busy()||p->face>3||f->trail.count<2)return 0;
  int gap=f->directional_gap[p->face];if(gap>(int)FW_MAX_DIRECTIONAL_GAP)return 0;
+ /* One admission pull. Walking no longer tugs the pose every frame, and a
+  * rejected probe restores the coordinates it tried. */
+ int32_t savedX=a->world.x,savedZ=a->world.z;int16_t savedGX=a->grid[0],savedGZ=a->grid[2];int clamped=0;
+ int64_t ox=(int64_t)a->drawOffset.x+a->externalOffset.x,oy=(int64_t)a->drawOffset.y+a->externalOffset.y,oz=(int64_t)a->drawOffset.z+a->externalOffset.z;
+ if(ox>=-8*4096&&ox<=8*4096&&oy>=-8*4096&&oy<=8*4096&&oz>=-8*4096&&oz<=8*4096){
+  FwPoint pose={a->world.x,a->world.y,a->world.z};
+  FwPoint playerPose={p->world.x,p->world.y+p->drawOffset.y+p->externalOffset.y,p->world.z};
+  FwPoint art={(int32_t)ox,(int32_t)oy,(int32_t)oz};
+  if(fw_clamp_dialogue_pose(&pose,&playerPose,&art,p->face,(unsigned)gap)){
+   a->world.x=pose.x;a->world.z=pose.z;a->grid[0]=(int16_t)(pose.x/FW_TILE);a->grid[2]=(int16_t)(pose.z/FW_TILE);clamped=1;
+  }
+ }
  int x=a->world.x-p->world.x,z=a->world.z-p->world.z,y=a->world.y-(p->world.y+p->drawOffset.y+p->externalOffset.y);
+ int admitted=1;
  if(abs32(x)>(int)(p->face>=2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0))||
     abs32(z)>(int)(p->face<2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0))||
-    abs32(y)>8*4096)return 0;
- unsigned controller=CALL(0x02180579,unsigned(*)(void*))(field);
+    abs32(y)>8*4096)admitted=0;
+ unsigned controller=admitted?CALL(0x02180579,unsigned(*)(void*))(field):0;
  int vx=p->face==2?-256:p->face==3?256:0,vz=p->face==0?-256:p->face==1?256:0;
- if(controller){
+ if(admitted&&controller){
   /* Rail-facing keys are relative to the curve, not world compass directions.
      Only the player owns native rail movement work; never query the follower. */
-  if(!(p->flags&8192)||!PTR(p->moveWork,0))return 0;
-  if(CALL(0x02195729,unsigned(*)(Actor*,unsigned))(p,p->face)&3)return 0;
-  Vec front;CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(PTR(field,0x94),p->face,&front);
-  vx=(front.x-p->world.x)/256;vz=(front.z-p->world.z)/256;
-  if(abs32(vx)>512||abs32(vz)>512)return 0;
+  if(!(p->flags&8192)||!PTR(p->moveWork,0))admitted=0;
+  else if(CALL(0x02195729,unsigned(*)(Actor*,unsigned))(p,p->face)&3)admitted=0;
+  else{
+   Vec front;CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(PTR(field,0x94),p->face,&front);
+   vx=(front.x-p->world.x)/256;vz=(front.z-p->world.z)/256;
+   if(abs32(vx)>512||abs32(vz)>512)admitted=0;
+  }
  }
  /* A turn leaves a follower partway across its adjacent tile, with a facing
     independent of the player's. Admit half a tile sideways regardless of
     sprite width or facing, including a rotated rail tangent. Native target
     tiles, obstructions and the bounded connected trail still constrain reach. */
  int length=vx*vx+vz*vz,px=x/256,pz=z/256,along=px*vx+pz*vz,lateral=px*vz-pz*vx;
- if(!length||along<length/2||along>length+length/8+gap*length/16||abs32(lateral)>(int)((unsigned)length/2))return 0;
+ if(admitted&&(!length||along<length/2||along>length+length/8+gap*length/16||abs32(lateral)>(int)((unsigned)length/2)))admitted=0;
  /* A bounded connected trail proves both actors occupy the same corridor.
     Use the rail tangent too, so rotated/curved paths retain normal reach. */
- for(unsigned i=0;i<f->trail.count;++i){const FwSample *s=&f->trail.samples[(f->trail.head+i)%FW_TRAIL_CAPACITY];
-  if(s->generation!=f->generation||abs32(s->y-a->world.y)>8*4096)return 0;
-  int dx=(s->x-p->world.x)/256,dz=(s->z-p->world.z)/256;
-  if(abs32(dx)>512||abs32(dz)>512||abs32(dx*vz-dz*vx)>(int)((unsigned)length/2))return 0;
+ for(unsigned i=0;admitted&&i<f->trail.count;++i){const FwSample *s=&f->trail.samples[(f->trail.head+i)%FW_TRAIL_CAPACITY];
+  if(s->generation!=f->generation||abs32(s->y-a->world.y)>8*4096)admitted=0;
+  else{
+   int dx=(s->x-p->world.x)/256,dz=(s->z-p->world.z)/256;
+   if(abs32(dx)>512||abs32(dz)>512||abs32(dx*vz-dz*vx)>(int)((unsigned)length/2))admitted=0;
+  }
  }
- if(!controller){
+ if(admitted&&!controller){
   int16_t gx,gy,gz;CALL(0x0219aacd,void(*)(void*,void*,void*,void*))(PTR(field,0x94),&gx,&gy,&gz);
   int dx=a->grid[0]-gx,dz=a->grid[2]-gz;
   /* A partial native step or draw-anchor clamp can put even a small follower
@@ -120,10 +137,11 @@ int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
      The distance and connected straight trail above still bound this case. */
   int next=((p->face==0&&dx==0&&dz==-1)||(p->face==1&&dx==0&&dz==1)||
       (p->face==2&&dx==-1&&dz==0)||(p->face==3&&dx==1&&dz==0));
-  if((dx||dz)&&!next)return 0;
-  if(CALL(0x0215e4f1,unsigned(*)(Actor*,unsigned))(p,p->face))return 0;
+  if((dx||dz)&&!next)admitted=0;
+  else if(CALL(0x0215e4f1,unsigned(*)(Actor*,unsigned))(p,p->face))admitted=0;
  }
- return 1;
+ if(!admitted&&clamped){a->world.x=savedX;a->world.z=savedZ;a->grid[0]=savedGX;a->grid[2]=savedGZ;}
+ return admitted;
 }
 static void cry(void){
  if(!talk.cryPending)return;
