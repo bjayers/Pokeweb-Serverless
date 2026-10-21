@@ -60,7 +60,7 @@ def draw():
  assert bytes(uc.mem_read(P,0x2000))==before
  assert bytes(uc.mem_read(F,7300))==trail
  return seen[-1]
-# Control Z stays on the descriptor. Facing bias is draw-only, so the shadow
+# Control Z stays on the descriptor. South bias is draw-only, so the shadow
 # and the other actor bytes do not change when the follower turns.
 setup();uc.mem_write(A+243,b'\x03')
 before=bytes(uc.mem_read(A,256))
@@ -105,7 +105,7 @@ for eye in [(200*4096,120*4096,0),(-120*4096,210*4096,80*4096),(80*4096,200*4096
 for base,expected in [((65536,65536,0),-1),((65536,-32740,0),-2),((0,-65536,65536),1)]:
  setup(64);vec(A+68,base);vec(BILL+32,(base[0],base[1]+6144,base[2]-8192))
  submitted,scales,depth=draw();assert depth[0]==expected,(base,depth)
- if expected==-1:assert depth[2]<=-4*4096+64,(base,depth)
+ if expected==-1:assert depth[2]<=-4096+64,(base,depth)
 # The registry Y offset must affect the follower quad only. Disable the player
 # billboard for this fixture so the depth correction cannot obscure the exact
 # five-pixel delta, then verify the native effects pass sees the original pose.
@@ -134,14 +134,14 @@ n=len(seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0]==original
 # The upward artwork receives a two-pixel correction relative to the shadow;
 # downward and lateral artwork retain their existing registry Y offset.
-for face,extra,zextra in ((0,-2,-7),(1,0,6),(2,0,0),(3,0,0)):
+for face,extra,zextra in ((0,-2,0),(1,0,6),(2,0,0),(3,0,0)):
  setup();uc.mem_write(F+51,b'\xfb');half(BILL,0x400d);half(A+24,face)
  vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
  assert draw()[0]==(original[0],original[1]+(-5+extra)*4096,original[2]+zextra*4096)
  assert read(BILL+32,'3i')==original
-# North-facing movement changed the billboard's ground-plane anchor. The
-# packaged main-pass correction must recover its former foreground depth while
-# preserving the new on-screen pose and leaving native effect/shadow data alone.
+# North-facing artwork is tucked two pixels down on the shadow's ground plane.
+# The packaged main-pass correction must recover its former foreground depth
+# while preserving that pose and leaving native effect/shadow data alone.
 setup();uc.mem_write(F+51,b'\xfa');half(A+24,2)
 vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-2*4096))
 old_depth=draw()[2][1]
@@ -167,11 +167,11 @@ uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\xfb')
 vec(CAM+32,(0,760739,581835));vec(A+68,(0,0,-65536))
 vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152-6*4096))
 submitted,scales,depth=draw()
-assert depth[0]==-1 and depth[1]<0 and depth[2]<=-4*4096,(submitted,depth)
+assert depth[0]==-1 and depth[1]<0 and depth[2]<=-4096,(submitted,depth)
 axis=(3253,2488)
 player_submitted=player_seen[-1][0]
 assert player_submitted==read(BILL+4,'3i')
-assert (submitted[1]-player_submitted[1])*axis[0]+(submitted[2]-player_submitted[2])*axis[1]<=(-4*4096+128)*4096,(submitted,player_submitted)
+assert (submitted[1]-player_submitted[1])*axis[0]+(submitted[2]-player_submitted[2])*axis[1]<=(-4096+128)*4096,(submitted,player_submitted)
 assert all(draw()==(submitted,scales,depth) for _ in range(5))
 # drawprio.mln: a south-facing Serperior occupies the tile north of a player
 # facing up. The player's own facing does not change the required depth order.
@@ -183,7 +183,7 @@ for player_face in range(4):
  vec(CAM+32,(5406720,777123,1466571));vec(CAM+56,(5406720,16384,884736))
  vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584-6*4096))
  initial=bytes(uc.mem_read(BILL,56));submitted,scales,depth=draw()
- assert depth[0]==-1 and depth[2]<=-4*4096,(player_face,depth)
+ assert depth[0]==-1 and depth[2]<=-4096,(player_face,depth)
  assert player_seen[-1][0]==read(BILL+4,'3i'),player_face
  assert bytes(uc.mem_read(BILL,56))==initial,player_face
  assert all(draw()==(submitted,scales,depth) for _ in range(3)),player_face
@@ -229,6 +229,35 @@ for bob in (0,6144):
  player_depth=sum((npc_seen[-1][i]-player_seen[-1][0][i])*axis[i-1] for i in (1,2))//4096
  assert player_depth>=4*4096-32,(bob,player_seen[-1],npc_seen[-1],player_depth)
  assert bytes(uc.mem_read(BILL,84))==native
+# A follower one tile up and one tile north is closer to the downward camera
+# than the player, so the behind tuck can leave its quad past the ground
+# shadow. The effect pass must bias that shadow behind the quad and restore it.
+setup(64);half(A+24,1);put(A+4,0x4000)
+vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+vec(BILL+4,(0,0,0));vec(BILL+32,(0,65536,-65536))
+submitted,scales,depth=draw()
+assert depth[0]==-1 and depth[2]<=-4096+64,(submitted,depth)
+EFF=0x02226000;ESCENE=EFF+0x100;ESLOTS=EFF+0x180;EQUAD=EFF+0x300
+uc.mem_write(EFF,bytes(0x400))
+put(EFF+4,ESCENE);put(EFF+0x18,ESLOTS);half(EFF+0x1c,2)
+put(ESLOTS,0);put(ESLOTS+40,1)
+put(ESCENE+8,EQUAD);half(ESCENE+14,2)
+half(EQUAD,13);half(EQUAD+18,4096);half(EQUAD+20,4096);half(EQUAD+24,0x021f)
+vec(EQUAD+4,(0,65536,-65536))
+half(EQUAD+28,13);half(EQUAD+28+18,4096);half(EQUAD+28+20,4096);half(EQUAD+28+24,0x021f)
+vec(EQUAD+28+4,(0,65536,65536))
+near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
+expected_args=[EFF,CAM,LIGHT]
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+biased=read(addr('FollowingRenderDebug')+84,'i')[0]
+shadow=read(addr('FollowingRenderDebug')+88,'3i')
+assert biased==1,(biased,shadow,submitted)
+axis=(3253,2488)
+assert (shadow[1]-submitted[1])*axis[0]+(shadow[2]-submitted[2])*axis[1]<=(-4096+128)*4096,(shadow,submitted)
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert read(addr('FollowingRenderDebug')+84,'i')[0]==0
+expected_args=[BL,CAM,LIGHT]
 # Invalid/stale/unsupported objects forward once without mutating the scene.
 for invalid in ('hidden','unused','lost','foreign','slot','index','mode','camera','zero-camera','scale'):
  setup();vec(BILL+32,(65536,6144,0))

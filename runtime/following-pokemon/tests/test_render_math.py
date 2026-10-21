@@ -25,7 +25,8 @@ class Rendering(unittest.TestCase):
   subprocess.run(['cc','-shared','-fPIC','-std=c11','-Wall','-Wextra','-Werror',str(HERE/'render_math.c'),'-o',str(lib)],check=True)
   cls.lib=c.CDLL(str(lib));cls.lib.fwr_correct.argtypes=[c.POINTER(Point),c.POINTER(Point),c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.c_uint,c.POINTER(Pose),c.POINTER(Result)]
   cls.lib.fwr_above_shadow.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
-  cls.lib.fwr_keep_behind.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
+  cls.lib.fwr_keep_behind.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.POINTER(Pose)]
+  cls.lib.fwr_shadow_behind.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_player_in_front.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),Point,c.c_int32,c.c_int32,c.POINTER(Pose),c.POINTER(c.c_int32)]
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
   cls.lib.fwr_cover_feet.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
@@ -163,7 +164,7 @@ class Rendering(unittest.TestCase):
     applied,out,res=self.run_case(world,pose,cam)
     self.assertEqual(res.policy,policy)
     if policy==-1:
-     self.assertLessEqual(res.after,-4*4096+64)
+     self.assertLessEqual(res.after,-4096+64)
      before=project(pose,(0,760739,581835),False);after=project(out,(0,760739,581835),False)
      self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
      player=Point();again=Pose()
@@ -176,16 +177,16 @@ class Rendering(unittest.TestCase):
   for flags in (0,1):
    applied,out,res=self.run_case(world,pose,cam,flags)
    self.assertEqual(res.policy,-1)
-   self.assertLessEqual(res.after,-4*4096+64)
+   self.assertLessEqual(res.after,-4096+64)
    before=project(pose,(0,760739,581835),False);after=project(out,(0,760739,581835),False)
    self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
  def test_north_follower_keeps_previous_foreground_depth(self):
   eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
   world=Point(0,0,65536)
-  # The new north-facing native anchor moved seven Z units, and the artwork
-  # moved two additional Y units. Restore the previous *depth*, not its pixels.
+  # North artwork is tucked two Y units and stays on the shadow's ground plane.
+  # Restore the previous *depth*, not its pixels. The old -7 Z shift is gone.
   old=Pose(Point(0,-6*4096,65536-2*4096),8192,8192)
-  current=Pose(Point(0,-8*4096,65536-9*4096),8192,8192)
+  current=Pose(Point(0,-8*4096,65536-2*4096),8192,8192)
   _,_,old_result=self.run_case(world,old,cam,0)
   applied,out,result=self.run_case(world,current,cam,2)
   self.assertTrue(applied);self.assertEqual(result.policy,1)
@@ -245,14 +246,31 @@ class Rendering(unittest.TestCase):
    self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
    unchanged=Pose();self.assertEqual(self.lib.fwr_player_in_front(c.byref(raised),c.byref(foreground),c.byref(cam),result.axis,12*4096,32*4096,c.byref(unchanged),c.byref(final)),0)
    self.assertEqual(bytes(foreground),bytes(unchanged))
-   # The draw path no longer shoves the player. The follower quad is clamped
-   # back after the shadow push, and the player pose stays put.
+   # The draw path no longer shoves the player. The follower quad is tucked
+   # one unit behind the player after the shadow push, and the player stays put.
    behind=Pose();player_pose=Pose(player_draw,8192,8192)
-   self.assertEqual(self.lib.fwr_keep_behind(c.byref(raised),c.byref(player_pose),c.byref(cam),4*4096,c.byref(behind)),1)
+   self.assertEqual(self.lib.fwr_keep_behind(c.byref(raised),c.byref(player_pose),c.byref(cam),4096,16*4096,c.byref(behind)),1)
    kept=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(behind.position),xyz(player_pose.position),direction))/4096)
-   self.assertLessEqual(kept,-4*4096)
-   held=Pose();self.assertEqual(self.lib.fwr_keep_behind(c.byref(behind),c.byref(player_pose),c.byref(cam),4*4096,c.byref(held)),0)
+   self.assertLessEqual(kept,-4096)
+   self.assertGreater(kept,-4*4096)
+   held=Pose();self.assertEqual(self.lib.fwr_keep_behind(c.byref(behind),c.byref(player_pose),c.byref(cam),4096,16*4096,c.byref(held)),0)
    self.assertEqual(bytes(behind),bytes(held))
    screen_before=project(raised,eye,projection==2);screen_after=project(behind,eye,projection==2)
    self.assertLess(max(abs(x-y)for a,b in zip(screen_before,screen_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
+   # The same tuck must not cross a wall when the pose starts far in front.
+   far=Pose(Point(*(int(v*20) for v in direction)),16384,16384)
+   capped=Pose()
+   self.assertEqual(self.lib.fwr_keep_behind(c.byref(far),c.byref(player_pose),c.byref(cam),4096,16*4096,c.byref(capped)),1)
+   moved=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(capped.position),xyz(far.position),direction))/4096)
+   self.assertGreaterEqual(moved,-16*4096-128)
+   self.assertLess(moved,-15*4096)
+   # The shadow receives that same eye-ray bias, so it stays behind the sprite
+   # without leaving its projected ground position.
+   shade=Pose(Point(*(a+b for a,b in zip(xyz(behind.position),direction))),4096,4096);tucked=Pose()
+   self.assertEqual(self.lib.fwr_shadow_behind(c.byref(shade),c.byref(behind.position),c.byref(cam),c.byref(tucked)),1)
+   shadow_depth=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(tucked.position),xyz(behind.position),direction))/4096)
+   self.assertLessEqual(shadow_depth,-4096+64)
+   shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
+   self.assertLess(max(abs(x-y)for a,b in zip(shade_before,shade_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
+   again=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again)),0)
 if __name__=='__main__':unittest.main()

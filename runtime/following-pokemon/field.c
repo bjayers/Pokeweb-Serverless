@@ -730,7 +730,7 @@ API void FollowingDraw(void *system,void *camera,void *light){
 #endif
 }
 API void FollowingEffectsDraw(void *system,void *camera,void *light){
- CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);fwfx_draw(camera,light);
+ fwr_shadow_pass(system,camera,light);fwfx_draw(camera,light);
 }
 API void FollowingTerrainDraw(void *system,void *camera,void *light){
  fwr_effects_draw(system,camera,light,owned()?(Actor*)fwfield_follower.actor:0);

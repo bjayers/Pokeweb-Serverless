@@ -13,8 +13,14 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 #define FWR_NORTH_ANCHOR_Z 7
 #define FWR_SOUTH_ANCHOR_Z 6
 #define FWR_NORTH_ART_Y 2
-/* Survives native 15-bit Z quantization without a 12-unit player shove. */
-#define FWR_BEHIND_MARGIN (4 * 4096)
+/* One world unit is one native Z step at the field camera. The old four-unit
+ * target pushed the quad through its shadow and through nearby stair walls. */
+#define FWR_SORT_BEHIND (1 * 4096)
+/* One tile covers shadow clearance and a step of height. A wilder pose stops
+ * here instead of diving through the wall behind the player. */
+#define FWR_BEHIND_CAP (16 * 4096)
+/* A biased shadow sits one unit further than the sprite it belongs to. */
+#define FWR_SHADOW_KEEP (1 * 4096)
 #define FWR_FORCE_FRONT 4u
 #define FWR_FORCE_BACK 8u
 #define FWR_BACK_MARGIN (12 * 4096)
@@ -25,10 +31,15 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  * projected image. The shadow itself remains at the native ground anchor. */
 int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
     const FwrCamera *camera,FwrPose *output);
-/* Push only the follower quad back along the eye ray. The player quad, shadow
+/* Push only the follower quad back along the eye ray until it is `margin`
+ * behind the player. `cap` limits that backward move. The player quad, shadow
  * anchor, and logical world position stay where they are. */
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
-    const FwrCamera *camera,int32_t margin,FwrPose *output);
+    const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *output);
+/* Push a camera-facing shadow along the eye ray until it sorts just behind
+ * its sprite. Screen position and size stay put. */
+int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
+    const FwrCamera *camera,FwrPose *output);
 /* Camera-facing grass clears its owner, but stays behind a nearer body. */
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
     const FwrPose *other,const FwrCamera *camera,FwrPose *output);

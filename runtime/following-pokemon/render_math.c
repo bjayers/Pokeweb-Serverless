@@ -123,16 +123,33 @@ int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
  return shift_depth(native,camera,direction,target-current+16,out);
 }
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
-                    const FwrCamera *camera,int32_t margin,FwrPose *out){
+                    const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *out){
  *out=*follower;
  if(camera->projection>2||margin<FWR_TIE_MARGIN||margin>FW_TILE||
+    cap<margin||cap>2*FW_TILE||
     follower->sx<=0||follower->sy<=0||follower->sx>32767||follower->sy>32767)return 0;
  FwPoint direction,relative;
  if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction)
     ||!delta(follower->position,player->position,&relative,8*FW_TILE))return 0;
  int32_t current=dot(relative,direction),target=-margin;
  if(current<=target)return 0;
- return shift_depth(follower,camera,direction,target-current-16,out);
+ int32_t change=target-current;
+ if(change<-cap)change=-cap;
+ return shift_depth(follower,camera,direction,change-16,out);
+}
+int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
+                      const FwrCamera *camera,FwrPose *out){
+ *out=*shadow;
+ if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
+ FwPoint direction,relative;
+ if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction)
+    ||!delta(shadow->position,*sprite,&relative,8*FW_TILE))return 0;
+ /* Positive means the shadow is closer to the camera than the sprite. */
+ int32_t ahead=dot(relative,direction),target=-FWR_SHADOW_KEEP;
+ if(ahead<=target)return 0;
+ int32_t change=target-ahead;
+ if(change<-FWR_BEHIND_CAP)change=-FWR_BEHIND_CAP;
+ return shift_depth(shadow,camera,direction,change-16,out);
 }
 int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
                         const FwrCamera *camera,FwPoint direction,int32_t margin,int32_t max_advance,
@@ -194,7 +211,7 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  int32_t horizontal_length=(int32_t)root((uint32_t)(horizontal.x*horizontal.x+horizontal.z*horizontal.z));
  if(horizontal_length<256)return 0;
  int32_t h=divide((int64_t)dot(base,horizontal)*4096,horizontal_length),target=-FWR_TIE_MARGIN;
- int front=h>FW_TILE/2,unequal=base.y>8192||base.y<-8192,lower=0;
+ int front=h>FW_TILE/2,unequal=base.y>8192||base.y<-8192,lower=0,cap_back=0;
  if(flags&(FWR_FORCE_FRONT|FWR_FORCE_BACK)){
   front=!!(flags&FWR_FORCE_FRONT);
   /* Surf's seated rider and mount have overlapping quads. A tie-sized depth
@@ -210,15 +227,14 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
    target=8*4096;
   }else if((flags&FWR_LARGE)&&base.y<=0){
    lower=1;target=-4*4096;
-  }else target=-FWR_BEHIND_MARGIN;
+  }else{target=-FWR_SORT_BEHIND;cap_back=1;}
  }else if(front){
   target=FWR_TIE_MARGIN;
   if((flags&FWR_NORTH)&&h<=3*FW_TILE/2){
-   /* The north-facing visual correction displaced the sprite by -7 Z and
-    * -2 Y. Restore its previous camera depth relative to the player by
-    * moving only the submitted quad along the eye ray. The projected sprite
-    * position remains fixed; the native shadow stays at its corrected anchor. */
-   FwPoint lost={(int32_t)0,FWR_NORTH_ART_Y*4096,FWR_NORTH_ANCHOR_Z*4096};
+   /* North artwork is tucked two pixels down and shares the shadow's ground
+    * plane. Restore the depth that tuck costs. The old -7 Z shift is not
+    * applied, so it is not added back here. */
+   FwPoint lost={(int32_t)0,FWR_NORTH_ART_Y*4096,(int32_t)0};
    int32_t previousDepth=result->before+dot(lost,direction);
    if(previousDepth>target)target=previousDepth;
   }
@@ -227,6 +243,8 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  int32_t current=result->before;
  if(lower?current>=target:(front?current>=target:current<=target))return 0;
  int32_t change=target-current;
+ /* A pose already far in front must not be driven through a nearby wall. */
+ if(cap_back&&change<-FWR_BEHIND_CAP)change=-FWR_BEHIND_CAP;
  /* Cover fixed-point normalization and translation rounding at submission. */
  change+=change<0?-16:16;
  /* A corrupt/disconnected pose must never cause a large visual teleport. */

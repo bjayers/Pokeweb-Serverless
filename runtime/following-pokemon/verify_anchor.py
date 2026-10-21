@@ -64,12 +64,12 @@ def depth(face_flags, xyz, height=0):
     return uc.reg_read(UC_ARM_REG_R0), struct.unpack('<6i', uc.mem_read(result, 24))
 
 _, old = depth(0, (0, -6 * 4096, 65536 - 2 * 4096))
-applied, north = depth(2, (0, -8 * 4096, 65536 - 9 * 4096))
+applied, north = depth(2, (0, -8 * 4096, 65536 - 2 * 4096))
 assert applied == 1 and north[5] == 1
 assert old[3] <= north[4] < old[3] + 128, (MODULE_SUFFIX, old, north)
-_, lateral = depth(0, (0, -8 * 4096, 65536 - 9 * 4096))
+_, lateral = depth(0, (0, -8 * 4096, 65536 - 2 * 4096))
 assert lateral[4] < north[4]
-_, stair = depth(3, (0, -8 * 4096, 65536 - 9 * 4096), 65536)
-_, prior_stair = depth(1, (0, -8 * 4096, 65536 - 9 * 4096), 65536)
+_, stair = depth(3, (0, -8 * 4096, 65536 - 2 * 4096), 65536)
+_, prior_stair = depth(1, (0, -8 * 4096, 65536 - 2 * 4096), 65536)
 assert (stair[4], stair[5]) == (prior_stair[4], prior_stair[5])
 print(f'{MODULE_SUFFIX}: packaged anchors leave control Z on the descriptor, north foreground depth is unchanged, and stair flags still agree; no game emulator run.')

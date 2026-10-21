@@ -7,15 +7,22 @@ _Static_assert(sizeof(Billboard)==28,"billboard ABI");
 void fwr_anchor(Actor *a,unsigned face){
  (void)face;
  if(!a)return;
- /* Control Z moves the model and its shadow together. Facing bias is applied
-  * only to the submitted quad in fwr_draw, so a turn cannot snap the logical
-  * position or the shadow. */
+ /* Control Z moves the model and its shadow together. It stays on the
+  * descriptor, so turning cannot snap either one. South's extra Z is applied
+  * only to the submitted quad. North is not shifted: a quad-only -7 Z lifts
+  * the artwork off this shadow. */
  a->dimensions[4]=a->descriptor[15];
 }
 __attribute__((visibility("default"))) volatile struct {
  uint32_t magic,version,frames,actor,size,applied;int32_t policy,before,after;
- FwPoint axis,native,submitted;int32_t nativeSX,submittedSX;
+ FwPoint axis,native,submitted; int32_t nativeSX,submittedSX,shadowChange,shadowCount;
+ FwPoint shadowAt;
 } FollowingRenderDebug={.magic=0x44525746,.version=1};
+/* The effect pass draws the shadow after this actor pass. Remember the
+ * submitted sprite so that pass can tuck the shadow behind it. */
+static struct {
+ FwPoint ground,sprite;void *actorSystem;uint8_t valid;
+} shadowTie;
 static struct {
  Actor *actor; Vec world,native; uint16_t resource;
  FwrEffectPose submitted;
@@ -95,13 +102,13 @@ static Billboard *billboard(void *system,Actor *a){
  if((b->geom>>14)!=0||!(b->flags&512))return 0;
  return b;
 }
-#ifdef FW_STOCK
 static int ram_span(const void *pointer,unsigned bytes){
  uintptr_t at=(uintptr_t)pointer;
  if((at&3u)||at<0x02000000u||bytes>0x01000000u)return 0;
  if(at<=0x02400000u-bytes)return 1;
  return at<=0x03000000u-bytes&&CALL(0x0207acb9,int(*)(void))()!=0;
 }
+#ifdef FW_STOCK
 /* One occluder answer per tile. A second caller in the same draw reuses it
  * even when the owner tile differs, so the 288-holder walk never runs twice. */
 static struct {
@@ -181,7 +188,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
 #ifdef FW_STOCK
  propFrame++;
 #endif
- effectPose.actor=effectPose.player=0;
+ effectPose.actor=effectPose.player=0;shadowTie.valid=0;
  FollowingRenderDebug.frames++;FollowingRenderDebug.applied=0;FollowingRenderDebug.actor=(uint32_t)a;
  FollowingRenderDebug.policy=FollowingRenderDebug.before=FollowingRenderDebug.after=0;
  if(system&&camera&&a&&player&&a!=player&&a->system==player->system){
@@ -199,9 +206,10 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     b->flags=(b->flags&~FWR_LIGHT_MASK)|(p->flags&FWR_LIGHT_MASK);
     lightingChanged=b->flags!=originalFlags;
    }
-   /* Facing bias used to live in control Z, which also moves the shadow and the
-    * logical anchor. Apply it only to this quad. North is -7 Z, south is +6. */
-   int faceZ=a->face==0?-FWR_NORTH_ANCHOR_Z:a->face==1?FWR_SOUTH_ANCHOR_Z:0;
+   /* South's +6 Z stays on this quad, so the shadow does not jump on a turn.
+    * North's historical -7 Z is omitted: applied only here it moves the sprite
+    * north of the shadow, and the downward camera draws that as a float. */
+   int faceZ=a->face==1?FWR_SOUTH_ANCHOR_Z:0;
    if(faceZ){
     int64_t z=(int64_t)adjusted.position.z+(int64_t)faceZ*4096;
     if(z>=INT32_MIN&&z<=INT32_MAX){adjusted.position.z=(int32_t)z;changed=1;}
@@ -229,13 +237,13 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     FollowingRenderDebug.axis=result.axis;FollowingRenderDebug.native=original.position;
     FollowingRenderDebug.nativeSX=original.sx;
    }
-   if((a->moveflags&0x4000u)&&!(a->moveflags&0x8000u)){
+   int shadowLive=(a->moveflags&0x4000u)&&!(a->moveflags&0x8000u);
+   FwPoint ground={a->world.x,a->world.y,a->world.z+(int8_t)a->dimensions[4]*4096};
+   if(shadowLive){
     /* The native shadow is submitted in the later effect pass. Some lowered
      * Pokémon quads sit behind its ground plane and are darkened by it. Move
      * only the submitted quad along the camera ray; keep the shadow, screen
      * pixels, logical position, and later effect pass where they are. */
-    FwPoint ground={a->world.x,a->world.y,
-                    a->world.z+(int8_t)a->dimensions[4]*4096};
     FwrPose corrected;
     if(fwr_above_shadow(&adjusted,&ground,&cam,&corrected)){
      adjusted=corrected;changed=1;
@@ -243,9 +251,10 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    }
    if(p&&result.policy==-1){
     /* Shadow clearance can pull a trailing quad toward the camera and in
-     * front of the player. Push the follower quad back; leave the player. */
+     * front of the player. Sit just behind the player; a fixed four-unit
+     * target crossed the shadow and nearby stair walls. Leave the player. */
     FwrPose behind;
-    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,FWR_BEHIND_MARGIN,&behind)){
+    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,FWR_SORT_BEHIND,FWR_BEHIND_CAP,&behind)){
      adjusted=behind;changed=1;
     }
    }
@@ -263,6 +272,10 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    }
    FollowingRenderDebug.submitted=adjusted.position;
    FollowingRenderDebug.submittedSX=adjusted.sx;
+   if(shadowLive){
+    shadowTie.ground=ground;shadowTie.sprite=adjusted.position;
+    shadowTie.actorSystem=system;shadowTie.valid=1;
+   }
    effectPose.world=a->world;
    effectPose.native=(Vec){original.position.x,original.position.y,original.position.z};
    effectPose.resource=*(uint16_t*)(a->descriptor+16);
@@ -280,4 +293,40 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
   * next frame, another camera, native effects, save data, or the movement trail. */
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
+}
+static int near_anchor(FwPoint point,FwPoint anchor){
+ int64_t dx=(int64_t)point.x-anchor.x,dy=(int64_t)point.y-anchor.y,dz=(int64_t)point.z-anchor.z,limit=8*4096;
+ return dx<=limit&&dx>=-limit&&dy<=limit&&dy>=-limit&&dz<=limit&&dz>=-limit;
+}
+/* Secondary/shadow pass. The actor pass already restored its billboard, so the
+ * native shadow is still at the ground anchor and can draw over a quad that
+ * was pushed back along the eye ray. Shift that shadow by the same kind of
+ * depth bias and restore it before the pass returns. */
+void fwr_shadow_pass(void *system,void *camera,void *light){
+ Billboard *changed[4],original[4];unsigned count=0;
+ FollowingRenderDebug.shadowChange=0;FollowingRenderDebug.shadowCount=0;
+ if(shadowTie.valid&&system&&camera&&system!=shadowTie.actorSystem&&ram_span(system,0x20)&&ram_span(camera,60)){
+  void *scene=PTR(system,4);uint8_t *slots=PTR(system,0x18);
+  unsigned capacity=*(uint16_t*)((uint8_t*)system+0x1c);
+  if(scene&&slots&&capacity&&capacity<=256&&ram_span(scene,16)&&ram_span(slots,capacity*40)){
+   FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
+   unsigned actors=*(uint16_t*)((uint8_t*)scene+14);Billboard *bill=PTR(scene,8);
+   for(unsigned i=0;i<capacity&&count<4;++i){
+    unsigned index=U32(slots,i*40);
+    if(index>=actors||!ram_span(bill,(index+1u)*sizeof(Billboard)))continue;
+    Billboard *b=bill+index;
+    if((b->geom>>14)||!(b->flags&512)||b->sx<=0||b->sy<=0)continue;
+    if(!near_anchor(b->position,shadowTie.ground))continue;
+    FwrPose native={b->position,b->sx,b->sy},out;
+    if(!fwr_shadow_behind(&native,&shadowTie.sprite,&cam,&out))continue;
+    changed[count]=b;original[count++]=*b;
+    b->position=out.position;b->sx=(int16_t)out.sx;b->sy=(int16_t)out.sy;
+    FollowingRenderDebug.shadowAt=out.position;FollowingRenderDebug.shadowCount=count;
+    FollowingRenderDebug.shadowChange=out.position.z-native.position.z;
+   }
+  }
+ }
+ CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
+ for(unsigned i=0;i<count;++i)*changed[i]=original[i];
+ shadowTie.valid=0;
 }
