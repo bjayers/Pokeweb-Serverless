@@ -24,7 +24,7 @@ VERSION='0.7.44-alpha' if UPGRADE else '0.6.49-alpha' if ITALY else '0.6.93-alph
 SUFFIX=('B2' if BLACK2 else 'W2I' if ITALY else 'W2')+('Base' if VARIANT=='base' else '')
 CONTRACT=HERE/('black2-contract.json' if BLACK2 else 'italy-contract.json' if ITALY else 'contract.json')
 os.environ['FOLLOWING_MODULE_SUFFIX']=SUFFIX
-def run(*args): subprocess.run([str(a) for a in args],check=True)
+def run(*args): subprocess.run([str(a) for a in args],check=True,shell=(os.name=='nt'))
 def dedupe_versions(entries):
     seen=set(); result=[]
     for entry in entries:
