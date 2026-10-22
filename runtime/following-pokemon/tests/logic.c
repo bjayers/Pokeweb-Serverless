@@ -5,6 +5,11 @@
 static FwSample sample(int x, int y, int z, unsigned gen, unsigned kind) {
     FwSample s = {0}; s.x=x;s.y=y;s.z=z;s.generation=gen;s.kind=kind;s.connection=0xffff;return s;
 }
+/* 1x1 follower and NPC, same height. Matches scene occupancy for that volume. */
+static int npc_tile(int fx, int fz, int x0, int z0, int x1, int z1) {
+    int xmin=x0<x1?x0:x1, xmax=x0>x1?x0:x1, zmin=z0<z1?z0:z1, zmax=z0>z1?z0:z1;
+    return xmin<=fx && xmax>=fx && zmin<=fz && zmax>=fz;
+}
 int main(void) {
     FwPokemon party[6] = {{0}};
     assert(fw_select(0, 0) == -1 && fw_select(party, 0) == -1 && fw_select(party, 7) == -1);
@@ -232,11 +237,61 @@ int main(void) {
     assert(fw_swap_mirror(&follower,&origin,&origin,&mid)==0&&mid.x==follower.x&&mid.y==follower.y&&mid.z==follower.z);
     FwSample start=sample(origin.x,origin.y,origin.z,1,FW_WORLD);start.direction=2;
     FwSample end=sample(follower.x,follower.y,follower.z,1,FW_WORLD);end.direction=2;
-    assert(fw_trail_reseed(&t,&start,&end,&out)==1&&out.x==start.x);
+    const uint8_t nogap[4]={0,0,0,0};
+    assert(fw_trail_reseed(&t,&start,&end,nogap,&out)==1&&out.x==start.x);
     assert(fw_trail_push(&t,&end,&out,0)==0&&out.x==start.x);
     end.x-=4096;
     int32_t rested=out.x;
     assert(fw_trail_push(&t,&end,&out,0)==1);
     assert(out.x<=rested&&rested-out.x<=4096);
+    /* Post-swap rest matches a fresh load for walk and run steps. The occupied
+     * tile is that pose: an NPC step onto it hits, and the player tile does not. */
+    const int32_t home=8*(int32_t)FW_TILE+(int32_t)FW_TILE/2;
+    for(unsigned gap=0;gap<=6;gap+=6) for(int speed=1;speed<=2;++speed) for(int sign=-1;sign<=1;sign+=2){
+        uint8_t gaps[4]={(uint8_t)gap,(uint8_t)gap,(uint8_t)gap,(uint8_t)gap};
+        unsigned face=sign>0?3u:2u;
+        int32_t goal=home;
+        FwTrail fresh,swapped;FwSample pose,after;
+        fw_trail_clear(&fresh);
+        int32_t x=sign>0?0:16*(int32_t)FW_TILE;
+        for(;;){
+            s=sample(x,0,0,1,FW_WORLD);s.direction=(uint8_t)face;
+            assert(fw_trail_push_directional(&fresh,&s,&pose,gaps)>=0);
+            if(x==goal)break;
+            int32_t next=x+sign*speed*4096;
+            if((sign>0&&next>goal)||(sign<0&&next<goal))next=goal;
+            x=next;
+        }
+        assert(fw_tile(pose.x)!=fw_tile(goal));
+        int32_t gap_behind=sign>0?goal-pose.x:pose.x-goal;
+        if(gap==0)assert(gap_behind==(int32_t)FW_TILE);
+        else assert(gap_behind>(int32_t)FW_TILE);
+        FwSample far=sample(sign>0?goal-(int32_t)FW_TILE:goal+(int32_t)FW_TILE,0,0,1,FW_WORLD);
+        FwSample at=sample(goal,0,0,1,FW_WORLD);
+        far.direction=at.direction=(uint8_t)face;
+        assert(fw_trail_reseed(&swapped,&far,&at,gaps,&after)==1);
+        assert(after.x-pose.x<64&&pose.x-after.x<64);
+        assert(fw_tile(after.x)==fw_tile(pose.x)&&fw_tile(after.x)!=fw_tile(goal));
+        int fx=fw_tile(pose.x),px=fw_tile(goal);
+        assert(npc_tile(fx,0,fx,-1,fx,0)&&npc_tile(fx,0,fx,0,fx,0));
+        assert(!npc_tile(fx,0,px,0,px,0)&&!npc_tile(fx,0,fx,2,fx,2));
+        assert(npc_tile(fw_tile(after.x),0,fw_tile(after.x),-1,fw_tile(after.x),0));
+        assert(!npc_tile(fw_tile(after.x),0,px,0,px,0));
+        for(int n=1;n<=24;++n){
+            int32_t step_x=goal+sign*n*speed*4096;
+            s=sample(step_x,0,0,1,FW_WORLD);s.direction=(uint8_t)face;
+            assert(fw_trail_push_directional(&fresh,&s,&pose,gaps)==1);
+            assert(fw_trail_push_directional(&swapped,&s,&after,gaps)==1);
+            assert(after.x-pose.x<64&&pose.x-after.x<64);
+            assert(fw_tile(after.x)==fw_tile(pose.x)&&fw_tile(after.x)!=fw_tile(step_x));
+            int32_t behind=sign>0?step_x-after.x:after.x-step_x;
+            if(gap==0)assert(behind>(int32_t)FW_TILE-64&&behind<(int32_t)FW_TILE+64);
+            else assert(behind>(int32_t)FW_TILE);
+            int tile=fw_tile(after.x),player_tile=fw_tile(step_x);
+            assert(npc_tile(tile,0,tile,0,tile,0));
+            assert(!npc_tile(tile,0,player_tile,0,player_tile,0));
+            assert(!npc_tile(tile,0,tile+2,0,tile+2,0));
+        }
+    }
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

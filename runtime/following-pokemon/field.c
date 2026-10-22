@@ -80,7 +80,7 @@ API volatile struct { uint32_t magic,version,active,face,progress,blocked; } Fol
 static struct { uint8_t active,departed; uint16_t savedFace; FwPoint follower,origin; } swapOn;
 static Vec settled;
 static uint8_t haveSettled;
-static void clear_swap(void){swapOn.active=swapOn.departed=0;FollowingSwapDebug.active=0;}
+static void clear_swap(void){swapOn.active=swapOn.departed=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
 static void cleanup(void);
 static void clear_restore(void){
  fwfield_restore.magic=0;fwfield_restore.player=(Vec){0,0,0};fwfield_restore.follower=(Vec){0,0,0};
@@ -171,14 +171,18 @@ static void recall_blocked(Actor *a){
 }
 static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  unsigned face=fwfield_player->face;
- bind_pose(a,swapOn.origin.x,swapOn.origin.y,swapOn.origin.z,face);
- FwSample start=*sample,end=*sample,ignored;
+ FwSample start=*sample,end=*sample,pose;
  start.x=swapOn.origin.x;start.y=swapOn.origin.y;start.z=swapOn.origin.z;start.direction=(uint8_t)face;
  end.x=player->x;end.y=player->y;end.z=player->z;end.direction=(uint8_t)face;
- if(!fw_trail_reseed(&fwfield_follower.trail,&start,&end,&ignored))fw_trail_clear(&fwfield_follower.trail);
- FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&swapOn.origin);
- FollowingSwapDebug.active=0;FollowingSwapDebug.face=face;
- swapOn.active=swapOn.departed=0;
+ if(fw_trail_reseed(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose))
+  bind_pose(a,pose.x,pose.y,pose.z,face);
+ else{
+  fw_trail_clear(&fwfield_follower.trail);
+  bind_pose(a,swapOn.origin.x,swapOn.origin.y,swapOn.origin.z,face);
+ }
+ /* The mid-swap tile is no longer occupied. Only the rest tile matches a fresh load. */
+ for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+ clear_swap();FollowingSwapDebug.face=face;
  settled=fwfield_player->world;haveSettled=centered(&settled)?1:0;
  if(!fwfx_hides_actor())a->flags&=~HIDDEN;
  fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);

@@ -225,6 +225,12 @@ static int near_step(int32_t next,int32_t current,uint32_t limit){
 /* Native volume convention: width grows +X and depth grows -Z. Swept
    occupied tiles include both endpoints; separate elevations stay separate.
    This intentionally overestimates a diagonal sweep, never uses screen space. */
+static int overlaps(int fx,int fz,int fy,int span_w,int span_d,const Vec *from,const Vec *to,unsigned width,unsigned depth){
+ int x0=from->x/FW_TILE,x1=to->x/FW_TILE,z0=from->z/FW_TILE,z1=to->z/FW_TILE;
+ if(fy<min(from->y/FW_TILE,to->y/FW_TILE)||fy>max(from->y/FW_TILE,to->y/FW_TILE))return 0;
+ return min(x0,x1)<=fx+span_w-1&&max(x0,x1)+(int)width-1>=fx
+  &&min(z0,z1)-(int)depth+1<=fz&&max(z0,z1)>=fz-span_d+1;
+}
 static int intersects(const Vec *from,const Vec *to,unsigned width,unsigned depth){
 #ifdef FW_MOUNT
  /* A mounted follower shares the player's tile; native player collision
@@ -232,12 +238,13 @@ static int intersects(const Vec *from,const Vec *to,unsigned width,unsigned dept
  if(fwland_active())return 0;
 #endif
  Actor *f=(Actor*)scene.f->actor;if(!f)return 0;
- int fx=f->grid[0],fz=f->grid[2],fw=max(f->dimensions[0],1),fd=max(f->dimensions[1],1);
- int x0=from->x/FW_TILE,x1=to->x/FW_TILE,z0=from->z/FW_TILE,z1=to->z/FW_TILE;
- int fy=f->grid[1];
- if(fy<min(from->y/FW_TILE,to->y/FW_TILE)||fy>max(from->y/FW_TILE,to->y/FW_TILE))return 0;
- return min(x0,x1)<=fx+fw-1&&max(x0,x1)+(int)width-1>=fx
-  &&min(z0,z1)-(int)depth+1<=fz&&max(z0,z1)>=fz-fd+1;
+ int span_w=max(f->dimensions[0],1),span_d=max(f->dimensions[1],1);
+ if(overlaps(f->grid[0],f->grid[2],f->grid[1],span_w,span_d,from,to,width,depth))return 1;
+ /* Same volume on the pose tile. Identical while grid matches the pose, so a
+  * standing follower still occupies only its real tile. */
+ int wx=f->world.x/FW_TILE,wy=f->world.y/FW_TILE,wz=f->world.z/FW_TILE;
+ if(wx==f->grid[0]&&wy==f->grid[1]&&wz==f->grid[2])return 0;
+ return overlaps(wx,wz,wy,span_w,span_d,from,to,width,depth);
 }
 /* Replay one rail step using a private copy of the verified 124-byte native
    rail cursor. This uses native switches, connections and curve evaluation,

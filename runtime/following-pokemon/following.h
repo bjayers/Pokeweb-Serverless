@@ -87,10 +87,13 @@ int fw_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *
  * follower's walk from `follower` back to `origin`. Returns 1 at the far
  * end, 0 while still on the segment, -1 if the player left it. */
 int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out);
-/* Replace the trail with the straight walk from `follower` to `player`.
- * Both samples keep `player`'s direction, so the next step does not reuse
- * the facing from before the turnaround. */
-int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player, FwSample *out);
+/* Replace the trail with a unit-step walk that ends on `player` and uses
+ * `gaps`. The pose is one metric tile behind, which is the fresh-load rest,
+ * and later steps keep that distance. `follower` supplies the far height.
+ * Samples take `player`'s direction, so the next step does not reuse the
+ * facing from before the turnaround. */
+int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player,
+                    const uint8_t gaps[4], FwSample *out);
 /* Bound a nearly-adjacent follower's world pose to the same forward reach
  * used by dialogue, without changing its route or authored gap. */
 int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *art_offset,

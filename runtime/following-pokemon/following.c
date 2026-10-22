@@ -285,19 +285,41 @@ int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint
     out->z = follower->z + mul_div((int32_t)rz, (int32_t)clamped, (int32_t)span);
     return clamped == span;
 }
-int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player, FwSample *out) {
-    if (!trail || !follower || !player || !out || player->direction > 3) return 0;
-    fw_trail_clear(trail);
-    FwSample step = *follower;
-    step.direction = player->direction;
-    if (fw_trail_push(trail, &step, out, 0) < 0) return 0;
-    for (int i = 1; i <= 16; ++i) {
-        step = *player;
-        step.x = follower->x + mul_div(player->x - follower->x, i, 16);
-        step.y = follower->y + mul_div(player->y - follower->y, i, 16);
-        step.z = follower->z + mul_div(player->z - follower->z, i, 16);
-        step.direction = player->direction;
-        if (fw_trail_push(trail, &step, out, 0) < 0) return 0;
+int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player,
+                    const uint8_t gaps[4], FwSample *out) {
+    /* Forty units covers a gap of 12 (about 28 units to one metric tile)
+     * and stays inside the 64-sample trail. Unit steps match a walked load. */
+    enum { units = 40 };
+    if (!trail || !follower || !player || !gaps || !out || player->direction > 3 || !player->generation) return 0;
+    if (gaps[0] > FW_MAX_DIRECTIONAL_GAP || gaps[1] > FW_MAX_DIRECTIONAL_GAP ||
+        gaps[2] > FW_MAX_DIRECTIONAL_GAP || gaps[3] > FW_MAX_DIRECTIONAL_GAP) return 0;
+    int64_t dy64 = (int64_t)player->y - follower->y;
+    if (dy64 > INT32_MAX || dy64 < INT32_MIN) return 0;
+    int32_t dy = (int32_t)dy64;
+    int64_t back = (int64_t)units * 4096;
+    int32_t x = player->x, z = player->z, dx = 0, dz = 0;
+    if (player->direction == 0) {
+        if ((int64_t)z + back > INT32_MAX) return 0;
+        z += (int32_t)back; dz = -4096;
+    } else if (player->direction == 1) {
+        if ((int64_t)z - back < INT32_MIN) return 0;
+        z -= (int32_t)back; dz = 4096;
+    } else if (player->direction == 2) {
+        if ((int64_t)x + back > INT32_MAX) return 0;
+        x += (int32_t)back; dx = -4096;
+    } else {
+        if ((int64_t)x - back < INT32_MIN) return 0;
+        x -= (int32_t)back; dx = 4096;
     }
-    return 1;
+    fw_trail_clear(trail);
+    int ready = 0;
+    for (int i = 0; i <= units; ++i) {
+        FwSample step = *player;
+        step.x = x + dx * i; step.z = z + dz * i;
+        step.y = follower->y + mul_div(dy, i, units);
+        step.direction = player->direction;
+        ready = fw_trail_push_directional(trail, &step, out, gaps);
+        if (ready < 0) return 0;
+    }
+    return ready == 1;
 }
