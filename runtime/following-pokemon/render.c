@@ -219,7 +219,7 @@ static int32_t prop_advance_limit(Actor *owner,const FwrPose *body,const FwrCame
 }
 #endif
 void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int sprite_y){
- Billboard *b=0,*p=0;FwrPose original={0},adjusted,playerOriginal={0};FwrResult result={0};int applied=0,changed=0,lightingChanged=0;uint16_t originalFlags=0;
+ Billboard *b=0,*p=0;FwrPose original={0},adjusted,playerOriginal={0},playerSaved={0};FwrResult result={0};int applied=0,changed=0,playerMoved=0,lightingChanged=0;uint16_t originalFlags=0;
 #ifdef FW_STOCK
  propFrame++;
 #endif
@@ -290,9 +290,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     FollowingRenderDebug.axis=result.axis;FollowingRenderDebug.native=original.position;
     FollowingRenderDebug.nativeSX=original.sx;
    }
-   /* Foot height before shadow clearance. A later eye-ray tuck must not sink
-    * the quad through this plane; the floor then covers the body and the
-    * ground oval draws over it. Changing the shadow's keep cannot undo that. */
+   /* Anchor height before shadow clearance. A backward eye-ray tuck may drop
+    * back down to this, and no further: past it the floor covers the body. */
    int32_t footY=adjusted.position.y;
    int shadowLive=(a->moveflags&0x4000u)&&!(a->moveflags&0x8000u);
    FwPoint ground={a->world.x,a->world.y,a->world.z+(int8_t)a->dimensions[4]*4096};
@@ -322,7 +321,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     * A swap and the close pose after it already use the deeper target and
     * give it back on the same smoothstep as the spacing. Stairs keep the
     * height policy. The one-tile cap still stops the quad at a nearby wall.
-    * Leave the player. */
+    * On flat ground the follower tuck stops at the feet. Any sort gap still
+    * missing is taken by sliding the player toward the camera on the same ray. */
    int blend=ease_s<65536u;
    int flat=rise<=FWR_SHADOW_FLAT&&rise>=-FWR_SHADOW_FLAT;
    int32_t clear=fwr_clear_front(&cam);
@@ -330,10 +330,26 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    int tuckBehind=p&&b!=p&&fwr_follow_tuck(result.policy,depthRel,clear,blend,overlap,flat);
    FollowingRenderDebug.sortMargin=tuckBehind?useMargin:margin;
    int tucked=0;
-   if(tuckBehind){
+   int limitGround=flat&&(blend||useMargin>margin);
+   if(tuckBehind&&!limitGround){
     FwrPose behind;
     if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,useMargin,FWR_BEHIND_CAP,&behind)){
      adjusted=behind;changed=1;tucked=1;
+    }
+   }else if(tuckBehind){
+    int32_t room=fwr_ground_back(&adjusted,&cam,footY);
+    if(room>512)room-=512;else room=0;
+    int32_t need=depthRel>-useMargin?depthRel+useMargin:0;
+    int32_t step=need<room?need:room;
+    int32_t marginEff=step-depthRel;
+    if(marginEff>(int32_t)FW_TILE)marginEff=(int32_t)FW_TILE;
+    if(step>=FWR_TIE_MARGIN&&marginEff>=FWR_TIE_MARGIN){
+     int32_t cap=marginEff>step?marginEff:step;
+     if(cap>2*(int32_t)FW_TILE)cap=2*(int32_t)FW_TILE;
+     FwrPose behind;
+     if(cap>=marginEff&&fwr_keep_behind(&adjusted,&playerOriginal,&cam,marginEff,cap,&behind)){
+      adjusted=behind;changed=1;tucked=1;
+     }
     }
    }
 #ifdef FW_STOCK
@@ -342,12 +358,24 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     adjusted=bounded;changed=1;
    }
 #endif
-   FwrPose planted;
-   if(fwr_plant_feet(&adjusted,&cam,footY,&planted)){adjusted=planted;changed=1;}
+   if(limitGround&&tuckBehind&&p&&b!=p&&(result.axis.x||result.axis.y||result.axis.z)){
+    int32_t gap=fwr_view_gap(&adjusted.position,&playerOriginal.position,&cam);
+    int32_t deficit=gap>-useMargin?gap+useMargin:0;
+    int32_t strong=fwr_sort_margin(&cam,0);
+    if(deficit>strong)deficit=strong;
+    FwrPose advanced;int32_t afterGap=0;
+    if(deficit>0&&useMargin>=FWR_TIE_MARGIN&&useMargin<=(int32_t)FW_TILE&&
+       fwr_player_in_front(&adjusted,&playerOriginal,&cam,result.axis,useMargin,deficit,&advanced,&afterGap)){
+     playerSaved=playerOriginal;
+     p->position=advanced.position;p->sx=(int16_t)advanced.sx;p->sy=(int16_t)advanced.sy;
+     playerMoved=1;
+    }
+   }
    if(p&&result.policy){
-    int64_t dx=(int64_t)adjusted.position.x-playerOriginal.position.x;
-    int64_t dy=(int64_t)adjusted.position.y-playerOriginal.position.y;
-    int64_t dz=(int64_t)adjusted.position.z-playerOriginal.position.z;
+    FwPoint pref=playerMoved?p->position:playerOriginal.position;
+    int64_t dx=(int64_t)adjusted.position.x-pref.x;
+    int64_t dy=(int64_t)adjusted.position.y-pref.y;
+    int64_t dz=(int64_t)adjusted.position.z-pref.z;
     FollowingRenderDebug.after=result.after=(int32_t)((dx*result.axis.x+dy*result.axis.y+dz*result.axis.z)/4096);
    }
    FollowingRenderDebug.submitted=adjusted.position;
@@ -376,6 +404,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  /* Drawing consumes the quad synchronously. Never leave a correction for the
   * next frame, another camera, native effects, save data, or the movement trail. */
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
+ if(playerMoved&&p){p->position=playerSaved.position;p->sx=(int16_t)playerSaved.sx;p->sy=(int16_t)playerSaved.sy;}
  if(lightingChanged)b->flags=originalFlags;
 }
 /* The player's own oval sits on the player. Six units rejects that oval

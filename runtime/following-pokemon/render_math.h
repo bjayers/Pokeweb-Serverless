@@ -48,9 +48,9 @@ int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
  * anchor, and logical world position stay where they are. */
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
     const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *output);
-/* A backward eye-ray tuck sinks into the floor. Lift the anchor back to
- * `foot_y` and pay that view depth back along the horizontal away axis. */
-int fwr_plant_feet(const FwrPose *pose,const FwrCamera *camera,int32_t foot_y,FwrPose *output);
+/* How far, in view depth, the anchor can move backward along the eye ray
+ * before its Y crosses `foot_y`. The ray points down, so this is the clip limit. */
+int32_t fwr_ground_back(const FwrPose *pose,const FwrCamera *camera,int32_t foot_y);
 /* Eye-to-target length in 20.12. 0 when the camera has no separation. */
 uint32_t fwr_view_distance(const FwrCamera *camera);
 /* Margin for fwr_keep_behind. `ease_s` is a smoothstep in 0..65536: 0 while

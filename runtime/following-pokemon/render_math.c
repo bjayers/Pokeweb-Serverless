@@ -272,29 +272,25 @@ int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
  if(change<-cap)change=-cap;
  return shift_depth(follower,camera,direction,change-16,out);
 }
-int fwr_plant_feet(const FwrPose *pose,const FwrCamera *camera,int32_t foot_y,FwrPose *out){
- *out=*pose;
- if(!pose||!camera||pose->position.y>=foot_y)return 0;
- int32_t lift=foot_y-pose->position.y;
+int32_t fwr_ground_back(const FwrPose *pose,const FwrCamera *camera,int32_t foot_y){
+ if(!pose||!camera||camera->projection>2)return 0;
+ if(pose->position.y<=foot_y)return 0;
  FwPoint view;
- if(camera->projection>2||!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view)){
-  out->position.y=foot_y;return 1;
+ if(!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
+ int32_t drop=pose->position.y-foot_y,limit;
+ if(camera->projection==2){
+  if(view.y<=0)return 2*(int32_t)FW_TILE;
+  limit=divide((int64_t)drop<<12,view.y);
+ }else{
+  FwPoint ray;
+  if(!delta(camera->eye,pose->position,&ray,1<<27)||ray.y<=0)return 2*(int32_t)FW_TILE;
+  int32_t distance=dot(ray,view);
+  if(distance<4*(int32_t)FW_TILE)return 0;
+  limit=divide((int64_t)drop*distance,ray.y);
  }
- /* The eye sits above the field, so the ray tuck's Y drop is most of its
-  * depth. Put the feet back and slide that depth out horizontally. */
- int32_t rise=dot((FwPoint){0,lift,0},view);
- FwPoint away={-view.x,0,-view.z};
- away.x*=4096;away.z*=4096;
- int32_t slope=0;
- if(rise>0&&axis(away,&away))slope=dot(away,view);
- out->position.y=foot_y;
- if(slope>=-64)return 1;
- int32_t slide=divide((int64_t)rise<<12,-slope);
- if(slide<0)slide=-slide;
- if(slide>2*(int32_t)FW_TILE)slide=2*(int32_t)FW_TILE;
- out->position.x+=divide((int64_t)away.x*slide,4096);
- out->position.z+=divide((int64_t)away.z*slide,4096);
- return 1;
+ if(limit<0)return 0;
+ if(limit>2*(int32_t)FW_TILE)return 2*(int32_t)FW_TILE;
+ return limit;
 }
 int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
                     const FwrCamera *camera,FwrPose *out){
