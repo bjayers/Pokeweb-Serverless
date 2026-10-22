@@ -278,6 +278,84 @@ static void ease_floor(void) {
         assert(sawFirst && recorded && traveled >= FW_EASE_TRAVEL);
     }
 }
+/* One metric tile along a bend is a shorter Euclidean chord than the straight
+ * rest. The pose stays on the recorded route: one tile back along the new
+ * leg, and the leftover of the old leg beside it. */
+static uint32_t chord_of(int32_t x, int32_t z) {
+    int64_t a = x < 0 ? -(int64_t)x : x, b = z < 0 ? -(int64_t)z : z;
+    uint64_t n = (uint64_t)a * (uint64_t)a + (uint64_t)b * (uint64_t)b;
+    uint64_t bit = (uint64_t)1 << 62, result = 0;
+    while (bit > n) bit >>= 2;
+    while (bit) {
+        if (n >= result + bit) { n -= result + bit; result = (result >> 1) + bit; }
+        else result >>= 1;
+        bit >>= 2;
+    }
+    return (uint32_t)result;
+}
+static void corner_spacing(void) {
+    const uint8_t gaps[4] = {6, 6, 6, 6};
+    const int legs[8][4] = {
+        {1, 0, 0, 1}, {1, 0, 0, -1}, {-1, 0, 0, 1}, {-1, 0, 0, -1},
+        {0, 1, 1, 0}, {0, 1, -1, 0}, {0, -1, 1, 0}, {0, -1, -1, 0},
+    };
+    for (int leg = 0; leg < 8; ++leg) {
+        int dx = legs[leg][0], dz = legs[leg][1], tx = legs[leg][2], tz = legs[leg][3];
+        FwTrail trail;
+        FwSample pose;
+        fw_trail_clear(&trail);
+        int x = 0, z = 0;
+        unsigned dir = dx > 0 ? 3u : dx < 0 ? 2u : dz > 0 ? 1u : 0u;
+        for (int i = 0; i < 6 * 16; ++i) {
+            FwSample s = sample(x, 0, z, 1, FW_WORLD);
+            s.direction = (uint8_t)dir;
+            assert(fw_trail_push_directional(&trail, &s, &pose, gaps) >= 0);
+            x += dx * 4096;
+            z += dz * 4096;
+        }
+        x -= dx * 4096;
+        z -= dz * 4096;
+        unsigned turn = tx > 0 ? 3u : tx < 0 ? 2u : tz > 0 ? 1u : 0u;
+        int32_t midX = 0, midZ = 0, endX = 0, endZ = 0;
+        for (int i = 1; i <= 16; ++i) {
+            int px = x + tx * 4096 * i, pz = z + tz * 4096 * i;
+            FwSample s = sample(px, 0, pz, 1, FW_WORLD);
+            s.direction = (uint8_t)turn;
+            assert(fw_trail_push_directional(&trail, &s, &pose, gaps) == 1);
+            int32_t rx = pose.x - px, rz = pose.z - pz;
+            int32_t alongOld = dx * rx + dz * rz, alongNew = tx * rx + tz * rz;
+            uint32_t chord = chord_of(rx, rz);
+            if (i == 8) {
+                midX = alongOld; midZ = alongNew;
+                assert(alongOld == -57342 && alongNew == -32768 && chord == 66044u);
+                FwSample frozen = pose;
+                assert(fw_trail_push_directional(&trail, &s, &pose, gaps) == 0);
+                assert(pose.x == frozen.x && pose.y == frozen.y && pose.z == frozen.z);
+            }
+            if (i == 16) {
+                endX = alongOld; endZ = alongNew;
+                assert(alongOld == -24574 && alongNew == -65536 && chord == 69991u);
+            }
+            (void)chord;
+        }
+        FwSample held = pose;
+        FwSample stop = sample(x + tx * 65536, 0, z + tz * 65536, 1, FW_WORLD);
+        stop.direction = (uint8_t)turn;
+        assert(fw_trail_push_directional(&trail, &stop, &pose, gaps) == 0);
+        assert(pose.x == held.x && pose.y == held.y && pose.z == held.z);
+        assert(midX == -57342 && midZ == -32768);
+        assert(endX == -24574 && endZ == -65536);
+    }
+    FwTrail straight;
+    FwSample pose;
+    fw_trail_clear(&straight);
+    for (int i = 0; i <= 8 * 16; ++i) {
+        FwSample s = sample(i * 4096, 0, 0, 1, FW_WORLD);
+        s.direction = 3;
+        assert(fw_trail_push_directional(&straight, &s, &pose, gaps) >= 0);
+    }
+    assert(pose.x - 8 * 16 * 4096 == -90110 && pose.z == 0);
+}
 static void check_ease(void) {
     assert(FW_EASE_START_KEEP == FW_TILE * 5u / 8u && FW_EASE_START_KEEP < FW_TILE);
     assert(fw_ease_smoothstep(0, FW_EASE_TRAVEL) == 0);
@@ -688,5 +766,6 @@ int main(void) {
     assert(fw_follower_form(493,9)==0&&fw_follower_form(493,0)==0&&fw_follower_form(493,16)==0);
     assert(fw_follower_form(25,1)==1&&fw_follower_form(200,0)==0&&fw_follower_form(494,1)==1);
     check_ease();
+    corner_spacing();
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

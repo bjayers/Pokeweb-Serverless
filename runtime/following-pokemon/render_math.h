@@ -56,12 +56,35 @@ uint32_t fwr_view_distance(const FwrCamera *camera);
  * eased frame matches an idle draw. Farther than FWR_CAMERA_REF, both ends
  * scale by (distance/ref)^2 and stay within one tile. */
 int32_t fwr_sort_margin(const FwrCamera *camera, uint32_t ease_s);
+/* View depth of `point` minus `origin`, in 20.12. Positive is nearer the
+ * camera. 0 when the camera or the span is unusable. */
+int32_t fwr_view_gap(const FwPoint *point, const FwPoint *origin, const FwrCamera *camera);
+/* 1 when the two camera-facing quads overlap on screen. Extents are the
+ * native sprite footprint, +/-8*sx and 0..16*sy from each foot anchor. */
+int fwr_sprites_overlap(const FwrPose *a, const FwrPose *b, const FwrCamera *camera);
+/* Margin for an overlapping pair on flat ground. Idle draws upgrade to the
+ * swap margin when the follower is not clearly nearer. A swap or ease keeps
+ * its own blend, and a height change (stairs, slopes) keeps that blend too. */
+int32_t fwr_follow_margin(const FwrCamera *camera, uint32_t ease_s, int32_t depth_rel, int overlap, int flat);
+/* 1 when the follower quad should be pushed behind the player. `policy` is
+ * fwr_correct's order. Clearly nearer stays in front. A front policy that is
+ * already nearer, even inside the clear-front band, is not pulled back while
+ * idle. Horizontal-behind order still tucks, which is the corner step. */
+int fwr_follow_tuck(int policy, int32_t depth_rel, int32_t clear, int easing, int overlap, int flat);
 /* View depth, in 20.12, that counts as clearly nearer the camera. */
 int32_t fwr_clear_front(const FwrCamera *camera);
 /* Push a camera-facing shadow along the eye ray until it sorts just behind
  * its sprite. Screen position and size stay put. */
 int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
     const FwrCamera *camera,FwrPose *output);
+/* Same bias, with an explicit keep. `keep` is the follower's sort margin:
+ * one unit at rest, and the swap margin while a tuck has pulled the sprite
+ * back through the oval. The shadow is not moved on screen. */
+int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
+    const FwrCamera *camera,int32_t keep,FwrPose *output);
+/* Feet check from fwr_shadow_on_feet, then fwr_shadow_tuck. */
+int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
+    const FwPoint *sprite,const FwrCamera *camera,int32_t keep,FwrPose *output);
 /* Depth-bias the native shadow behind the sprite. The shadow is not moved
  * onto `feet`: that point only has to be near the oval. Screen position stays
  * on the native ground sample. Returns 1 when the bias runs. */

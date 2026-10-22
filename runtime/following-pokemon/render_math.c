@@ -185,6 +185,78 @@ int32_t fwr_clear_front(const FwrCamera *camera){
  if(clear>(int32_t)(FW_TILE/2))clear=(int32_t)(FW_TILE/2);
  return clear;
 }
+static int view_axis(const FwrCamera *camera,FwPoint *view){
+ if(!camera||!delta(camera->eye,camera->target,view,1<<27)||!axis(*view,view))return 0;
+ return 1;
+}
+int32_t fwr_view_gap(const FwPoint *point,const FwPoint *origin,const FwrCamera *camera){
+ FwPoint view,relative;
+ if(!point||!origin||!view_axis(camera,&view)||!delta(*point,*origin,&relative,8*(int32_t)FW_TILE))return 0;
+ return dot(relative,view);
+}
+/* Camera basis. `view` points toward the eye. `right` and `up` span the
+ * camera plane, matching the head-attachment basis. */
+static int camera_plane(const FwrCamera *camera,FwPoint *view,FwPoint *right,FwPoint *up){
+ FwPoint flat;
+ if(!view_axis(camera,view))return 0;
+ flat=(FwPoint){view->z,0,-view->x};
+ flat.x*=4096;flat.z*=4096;
+ if(!axis(flat,right))return 0;
+ flat=(FwPoint){view->y*right->z,view->z*right->x-view->x*right->z,-view->y*right->x};
+ return axis(flat,up);
+}
+/* Screen interval of one camera-facing quad, in 16.16. Orthographic values
+ * stay in 20.12, which is the same comparison space for both sprites. */
+static int screen_span(const FwrPose *pose,const FwrCamera *camera,FwPoint view,FwPoint right,FwPoint up,
+                       int32_t *x0,int32_t *x1,int32_t *y0,int32_t *y1){
+ FwPoint fromEye;
+ if(!pose||pose->sx<=0||pose->sy<=0||pose->sx>32767||pose->sy>32767)return 0;
+ if(!delta(pose->position,camera->eye,&fromEye,1<<27))return 0;
+ int32_t forward=-dot(fromEye,view);
+ if(forward<4*(int32_t)FW_TILE)return 0;
+ int32_t rx=dot(fromEye,right),uy=dot(fromEye,up);
+ int32_t half=pose->sx*8,tall=pose->sy*16;
+ int32_t left=rx-half,rightEdge=rx+half,bottom=uy,top=uy+tall;
+ if(camera->projection==2){*x0=left;*x1=rightEdge;*y0=bottom;*y1=top;return 1;}
+ *x0=divide((int64_t)left<<16,forward);
+ *x1=divide((int64_t)rightEdge<<16,forward);
+ *y0=divide((int64_t)bottom<<16,forward);
+ *y1=divide((int64_t)top<<16,forward);
+ return 1;
+}
+static int span_hits(int32_t a0,int32_t a1,int32_t b0,int32_t b1){
+ if(a0>a1){int32_t t=a0;a0=a1;a1=t;}
+ if(b0>b1){int32_t t=b0;b0=b1;b1=t;}
+ return a0<=b1&&b0<=a1;
+}
+int fwr_sprites_overlap(const FwrPose *a,const FwrPose *b,const FwrCamera *camera){
+ FwPoint view,right,up;
+ int32_t ax0,ax1,ay0,ay1,bx0,bx1,by0,by1;
+ if(!a||!b||!camera||camera->projection>2)return 0;
+ if(!camera_plane(camera,&view,&right,&up))return 0;
+ if(!screen_span(a,camera,view,right,up,&ax0,&ax1,&ay0,&ay1))return 0;
+ if(!screen_span(b,camera,view,right,up,&bx0,&bx1,&by0,&by1))return 0;
+ return span_hits(ax0,ax1,bx0,bx1)&&span_hits(ay0,ay1,by0,by1);
+}
+int32_t fwr_follow_margin(const FwrCamera *camera,uint32_t ease_s,int32_t depth_rel,int overlap,int flat){
+ int32_t margin=fwr_sort_margin(camera,ease_s);
+ /* The ease already blends this gap. Stairs keep the height policy. An idle
+  * overlap that is not clearly in front needs the swap-sized gap: a corner
+  * step can sit a unit toward the camera after shadow clearance and still
+  * lose the Z test. */
+ if(ease_s<65536u||!flat||!overlap||depth_rel>fwr_clear_front(camera))return margin;
+ int32_t strong=fwr_sort_margin(camera,0);
+ return strong>margin?strong:margin;
+}
+int fwr_follow_tuck(int policy,int32_t depth_rel,int32_t clear,int easing,int overlap,int flat){
+ if(policy==-1)return 1;
+ if(depth_rel>clear)return 0;
+ if(easing&&policy==1)return 1;
+ /* Idle overlap adds a tuck only when the follower is behind or tied. A
+  * front-ordered quad that is already nearer stays there, so the north
+  * foreground restore is not pulled back through the player. */
+ return flat&&overlap&&depth_rel<=0&&policy!=-2;
+}
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
                     const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *out){
  *out=*follower;
@@ -232,22 +304,42 @@ int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
  *out=shifted;
  return moved;
 }
+int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
+                    const FwrCamera *camera,int32_t keep,FwrPose *out){
+ if(!shadow||!sprite||!camera||!out)return 0;
+ *out=*shadow;
+ if(keep<FWR_SHADOW_KEEP)keep=FWR_SHADOW_KEEP;
+ if(keep>(int32_t)FW_TILE)keep=(int32_t)FW_TILE;
+ if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
+ FwPoint direction;
+ if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction))return 0;
+ /* The one-unit keep is a single step, capped like the old bias. A swap or
+  * corner tuck has to be able to follow the sprite back through that oval,
+  * so the larger keep may use the whole eye-ray shift. */
+ int32_t cap=keep<=FWR_SHADOW_KEEP?FWR_BEHIND_CAP:(int32_t)(2*FW_TILE-64);
+ FwrPose cursor=*shadow;
+ int moved=0;
+ for(int step=0;step<3;++step){
+  FwPoint relative;
+  if(!delta(cursor.position,*sprite,&relative,8*(int32_t)FW_TILE))break;
+  int32_t ahead=dot(relative,direction);
+  if(ahead<=-keep)break;
+  int32_t change=-keep-ahead;
+  if(change<-cap)change=-cap;
+  FwrPose next;
+  if(!shift_depth(&cursor,camera,direction,change-16,&next))break;
+  cursor=next;moved=1;
+  if(keep<=FWR_SHADOW_KEEP)break;
+ }
+ *out=cursor;
+ return moved;
+}
 int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
                       const FwrCamera *camera,FwrPose *out){
- *out=*shadow;
- if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
- FwPoint direction,relative;
- if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction)
-    ||!delta(shadow->position,*sprite,&relative,8*FW_TILE))return 0;
- /* Positive means the shadow is closer to the camera than the sprite. */
- int32_t ahead=dot(relative,direction),target=-FWR_SHADOW_KEEP;
- if(ahead<=target)return 0;
- int32_t change=target-ahead;
- if(change<-FWR_BEHIND_CAP)change=-FWR_BEHIND_CAP;
- return shift_depth(shadow,camera,direction,change-16,out);
+ return fwr_shadow_tuck(shadow,sprite,camera,FWR_SHADOW_KEEP,out);
 }
-int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
-                       const FwPoint *sprite,const FwrCamera *camera,FwrPose *out){
+int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
+                     const FwPoint *sprite,const FwrCamera *camera,int32_t keep,FwrPose *out){
  *out=*shadow;
  if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
  FwPoint relative;
@@ -256,7 +348,11 @@ int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
   * rail curve. Pulling it onto the sprite copied the sprite's extra drop.
   * `feet` only rejects a shadow that is not this follower's. */
  (void)relative;
- return fwr_shadow_behind(shadow,sprite,camera,out);
+ return fwr_shadow_tuck(shadow,sprite,camera,keep,out);
+}
+int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
+                       const FwPoint *sprite,const FwrCamera *camera,FwrPose *out){
+ return fwr_shadow_match(shadow,feet,sprite,camera,FWR_SHADOW_KEEP,out);
 }
 int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
                         const FwrCamera *camera,FwPoint direction,int32_t margin,int32_t max_advance,

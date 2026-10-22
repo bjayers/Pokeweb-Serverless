@@ -49,7 +49,7 @@ __attribute__((visibility("default"))) volatile FwrDebug FollowingRenderDebug={.
 /* The effect pass draws the shadow after this actor pass. Remember the
  * submitted sprite so that pass can tuck the shadow behind it. */
 static struct {
- FwPoint ground,sprite,player;void *actorSystem;uint8_t valid,hasPlayer;
+ FwPoint ground,sprite,player;int32_t keep;void *actorSystem;uint8_t valid,hasPlayer;
 } shadowTie;
 /* A rail camera yaws well off world +Z. Ordinary maps look north: the eye
  * sits south of the target, so horizontal X is only camera sway. */
@@ -303,26 +303,33 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     }
    }
    int32_t depthRel=0;
-   if(p&&b!=p&&result.policy){
-    int64_t dx=(int64_t)adjusted.position.x-playerOriginal.position.x;
-    int64_t dy=(int64_t)adjusted.position.y-playerOriginal.position.y;
-    int64_t dz=(int64_t)adjusted.position.z-playerOriginal.position.z;
-    depthRel=(int32_t)((dx*result.axis.x+dy*result.axis.y+dz*result.axis.z)/4096);
+   int overlap=0;
+   if(p&&b!=p){
+    depthRel=fwr_view_gap(&adjusted.position,&playerOriginal.position,&cam);
+    overlap=fwr_sprites_overlap(&adjusted,&playerOriginal,&cam);
    }
    FollowingRenderDebug.depthRel=depthRel;
    /* Shadow clearance can pull a trailing quad toward the camera and in
     * front of the player. Sit just behind the player. Idle draws keep the
-    * one-unit target, scaled only past the ordinary field camera. A swap
-    * and the close pose after it use a deeper target and give it back on
-    * the same smoothstep as the spacing, so the two finish together. A
-    * follower who is clearly nearer the camera stays in front. The one-tile
-    * cap still stops the quad at a nearby wall. Leave the player. */
+    * one-unit target, scaled only past the ordinary field camera, unless the
+    * quads overlap on flat ground and the follower is behind along the eye
+    * ray: that pair gets the same distance-scaled margin as a swap. Someone
+    * already in front keeps their place, and clearly nearer stays in front.
+    * A swap and the close pose after it already use the deeper target and
+    * give it back on the same smoothstep as the spacing. Stairs keep the
+    * height policy. The one-tile cap still stops the quad at a nearby wall.
+    * Leave the player. */
    int blend=ease_s<65536u;
-   int tuckBehind=result.policy==-1||(blend&&result.policy==1&&depthRel<=fwr_clear_front(&cam));
-   if(p&&tuckBehind){
+   int flat=rise<=FWR_SHADOW_FLAT&&rise>=-FWR_SHADOW_FLAT;
+   int32_t clear=fwr_clear_front(&cam);
+   int32_t useMargin=fwr_follow_margin(&cam,ease_s,depthRel,overlap,flat);
+   int tuckBehind=p&&b!=p&&fwr_follow_tuck(result.policy,depthRel,clear,blend,overlap,flat);
+   FollowingRenderDebug.sortMargin=tuckBehind?useMargin:margin;
+   int tucked=0;
+   if(tuckBehind){
     FwrPose behind;
-    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,margin,FWR_BEHIND_CAP,&behind)){
-     adjusted=behind;changed=1;
+    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,useMargin,FWR_BEHIND_CAP,&behind)){
+     adjusted=behind;changed=1;tucked=1;
     }
    }
 #ifdef FW_STOCK
@@ -341,6 +348,9 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.submittedSX=adjusted.sx;
    if(shadowLive){
     shadowTie.ground=ground;shadowTie.sprite=adjusted.position;
+    /* A tuck that pulls the sprite back has to take the oval with it.
+     * One unit is enough when the sprite was not moved past the shadow. */
+    shadowTie.keep=tucked?useMargin:FWR_SHADOW_KEEP;
     shadowTie.player=(FwPoint){player->world.x,playerY,player->world.z};
     shadowTie.actorSystem=system;shadowTie.hasPlayer=1;shadowTie.valid=1;
    }
@@ -408,7 +418,7 @@ void fwr_shadow_pass(void *system,void *camera,void *light){
     }
     if(why)continue;
     FwrPose native={b->position,b->sx,b->sy},out;
-    int code=fwr_shadow_on_feet(&native,&feet,&shadowTie.sprite,&cam,&out);
+    int code=fwr_shadow_match(&native,&feet,&shadowTie.sprite,&cam,shadowTie.keep,&out);
     FollowingRenderDebug.shadowNativeY=native.position.y;
     FollowingRenderDebug.gap=native.position.y-feet.y;
     if(!code){if(close&&dist==nearest&&!FollowingRenderDebug.snap)FollowingRenderDebug.nearWhy=4;continue;}
@@ -422,5 +432,5 @@ void fwr_shadow_pass(void *system,void *camera,void *light){
  }
  CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
  for(unsigned i=0;i<count;++i)*changed[i]=original[i];
- shadowTie.valid=shadowTie.hasPlayer=0;
+ shadowTie.valid=shadowTie.hasPlayer=0;shadowTie.keep=FWR_SHADOW_KEEP;
 }
