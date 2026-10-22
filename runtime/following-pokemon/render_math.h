@@ -43,9 +43,9 @@ int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
  * its sprite. Screen position and size stay put. */
 int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
     const FwrCamera *camera,FwrPose *output);
-/* On flat ground the native shadow is already at the feet, so only the depth
- * bias runs. On a stair, move the shadow onto the follower's own feet first,
- * then bias it so that projected center stays on those feet. */
+/* Depth-bias the native shadow behind the sprite. The shadow is not moved
+ * onto `feet`: that point only has to be near the oval. Screen position stays
+ * on the native ground sample. Returns 1 when the bias runs. */
 int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
     const FwPoint *sprite,const FwrCamera *camera,FwrPose *output);
 /* Camera-facing grass clears its owner, but stays behind a nearer body. */

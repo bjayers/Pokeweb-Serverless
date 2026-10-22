@@ -157,15 +157,11 @@ int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
  if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
  FwPoint relative;
  if(!delta(shadow->position,*feet,&relative,4*FW_TILE))return 0;
- FwrPose placed=*shadow;
- /* Flat ground keeps the native lift. A stair's shadow is sampled on a
-  * different step than the interpolated feet, so put it on those feet
-  * before the eye-ray bias. The bias then preserves that foot projection. */
- if(relative.y>FWR_SHADOW_FLAT||relative.y<-FWR_SHADOW_FLAT)placed.position=*feet;
- if(fwr_shadow_behind(&placed,sprite,camera,out))return 1;
- *out=placed;
- return placed.position.x!=shadow->position.x||placed.position.y!=shadow->position.y
-     ||placed.position.z!=shadow->position.z;
+ /* The native oval stays where it was sampled, including a stair step or a
+  * rail curve. Pulling it onto the sprite copied the sprite's extra drop.
+  * `feet` only rejects a shadow that is not this follower's. */
+ (void)relative;
+ return fwr_shadow_behind(shadow,sprite,camera,out);
 }
 int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
                         const FwrCamera *camera,FwPoint direction,int32_t margin,int32_t max_advance,

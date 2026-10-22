@@ -191,10 +191,16 @@ assert step(7, 4)[0] == 6
 assert step(5, 4)[0] == 4
 assert step(5, 6)[1] == 1
 assert step(5, 7, staged=1)[1] == 0
-assert step(4, 3, x=200, y=150)[1] == 1
-assert step(4, 3, x=130, y=150, staged=1)[1] == 0
-assert step(4, 3, x=200, y=126, object_y=12)[1] == 1
-assert step(4, 3, x=200, y=150, object_y=12)[1] == 0
+assert step(4, 3, x=200, y=168)[1] == 1
+assert step(4, 3, x=130, y=168, staged=1)[1] == 0
+assert step(4, 3, x=200, y=150)[1] == 0
+assert step(4, 3, x=200, y=156)[1] == 1
+assert step(4, 3, x=200, y=179)[1] == 1
+assert step(4, 3, x=200, y=180)[1] == 0
+assert step(4, 3, x=200, y=126, object_y=12)[1] == 0
+assert step(4, 3, x=200, y=144, object_y=12)[1] == 1
+assert step(4, 3, x=200, y=155, object_y=12)[1] == 1
+assert step(4, 3, x=200, y=156, object_y=12)[1] == 0
 assert calls and len(saved) == 2
 
 # Copy the complete native row art, then style its palette after scrolling.

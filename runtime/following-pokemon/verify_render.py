@@ -139,6 +139,21 @@ for face,extra,zextra in ((0,-2,0),(1,0,6),(2,0,0),(3,0,0)):
  vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
  assert draw()[0]==(original[0],original[1]+(-5+extra)*4096,original[2]+zextra*4096)
  assert read(BILL+32,'3i')==original
+ assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
+# A stair and a yawed rail camera share the shadow's ground. South +6 Z and
+# the north 2px tuck would drop the sprite; neither is applied. Flat north
+# above still has the tuck.
+for face,world in ((1,(0,65536,-65536)),(0,(0,65536,-65536))):
+ setup();half(A+24,face);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
+ vec(A+68,world);vec(P+68,(0,0,0));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+ vec(BILL+32,(world[0],0,world[2]))
+ assert draw()[0]==(world[0],0,world[2]),face
+ assert read(addr('FollowingRenderDebug')+128,'i')[0]==1
+setup();half(A+24,1);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
+vec(A+68,(0,0,-65536));vec(P+68,(0,0,0));vec(CAM+32,(581835,760739,0));vec(CAM+56,(0,0,0))
+vec(BILL+32,(0,0,-65536))
+assert draw()[0]==(0,0,-65536)
+assert read(addr('FollowingRenderDebug')+128,'i')[0]==1
 # North-facing artwork is tucked two pixels down on the shadow's ground plane.
 # The packaged main-pass correction must recover its former foreground depth
 # while preserving that pose and leaving native effect/shadow data alone.
@@ -251,7 +266,9 @@ expected_args=[EFF,CAM,LIGHT]
 call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
 biased=read(addr('FollowingRenderDebug')+84,'i')[0]
 shadow=read(addr('FollowingRenderDebug')+88,'3i')
-assert biased==1,(biased,shadow,submitted)
+native_y,ground_y,gap,snap=read(addr('FollowingRenderDebug')+100,'4i')
+hold=read(addr('FollowingRenderDebug')+128,'i')[0]
+assert biased==1 and snap==1 and hold==1 and native_y==65536 and ground_y==65536 and gap==0,(biased,shadow,submitted,native_y,ground_y,gap,snap,hold)
 axis=(3253,2488)
 assert (shadow[1]-submitted[1])*axis[0]+(shadow[2]-submitted[2])*axis[1]<=(-4096+128)*4096,(shadow,submitted)
 assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far

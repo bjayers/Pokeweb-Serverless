@@ -37,9 +37,10 @@ int main(void) {
     for(int i=0;i<300;i++) fw_leave(&f,FW_SCRIPT);
     assert(fw_suppressed(&f));
     FwTrail t;FwSample out;fw_trail_clear(&t);
-    for(int i=0;i<=32;i++){FwSample s=sample(i*4096,0,0,1,FW_GRID);int r=fw_trail_push(&t,&s,&out,6);if(i>=22){assert(r==1);assert(out.x==(i-22)*4096);}else assert(r==0);}
-    /* Reverse along the recorded route; no seek-to-player shortcut. */
-    for(int i=31;i>=16;i--){FwSample s=sample(i*4096,0,0,1,FW_GRID);assert(fw_trail_push(&t,&s,&out,6)==1);assert(out.x==(42-i)*4096);}
+    for(int i=0;i<=32;i++){FwSample s=sample(i*4096,0,0,1,FW_GRID);int r=fw_trail_push(&t,&s,&out,6);if(i>=22){assert(r==1);assert(out.x==(i-22)*4096+2);}else assert(r==0);}
+    /* Reverse along the recorded route; no seek-to-player shortcut.
+       The +2 is the truncated metric remainder on this one-unit gap-6 step. */
+    for(int i=31;i>=16;i--){FwSample s=sample(i*4096,0,0,1,FW_GRID);assert(fw_trail_push(&t,&s,&out,6)==1);assert(out.x==(42-i)*4096+2);}
     FwSample s=sample(16*4096,0,0,2,FW_GRID);assert(fw_trail_push(&t,&s,&out,6)==-1&&t.count==0);
     assert(fw_trail_push(&t,&s,&out,6)==0);s.x+=FW_TILE*2;assert(fw_trail_push(&t,&s,&out,6)==-1);
     fw_trail_clear(&t);s=sample(0,0,0,1,FW_RAIL);s.rail=1;assert(fw_trail_push(&t,&s,&out,6)==0);
@@ -60,12 +61,41 @@ int main(void) {
             s=sample(axis?0:sign*i*4096,0,axis?sign*i*4096:0,1,FW_WORLD);
             int r=fw_trail_push(&t,&s,&out,gap_value);
             assert(r==(i>=gap));
-            if(r)assert((axis?out.z:out.x)==sign*(i-gap-(i-gap)%speed)*4096);
+            if(r){
+                int32_t sampleAt=sign*(i-gap-(i-gap)%speed)*4096;
+                int32_t coord=axis?out.z:out.x;
+                int32_t toward=sampleAt+sign*speed*4096;
+                if(sign>0)assert(coord>=sampleAt&&coord<=toward);
+                else assert(coord<=sampleAt&&coord>=toward);
+                /* A one-unit step only has metric rounding left. A two-unit
+                 * step may be pulled forward by the extra unit of lag. */
+                if(speed==1)assert(coord-sampleAt<64&&sampleAt-coord<64);
+            }
         }
         FwSample old=out;unsigned count=t.count,head=t.head;uint32_t dist=t.distance;
         s.direction=2;for(int idle=0;idle<60;idle++)assert(!fw_trail_push(&t,&s,&out,gap_value));
         assert(t.count==count&&t.head==head&&t.distance==dist&&!memcmp(&old,&out,sizeof(out)));
     }
+    /* Run steps of three units and walk steps of one unit rest on the same
+       point, one tile behind the player. Walking on from the run does not
+       jump by the leftover run step. */
+    fw_trail_clear(&t);
+    for(int i=0;i<=48;i+=3){s=sample(i*4096,0,0,1,FW_WORLD);assert(fw_trail_push(&t,&s,&out,0)>=0);}
+    assert(out.x==48*4096-(int)FW_TILE);
+    int runRest=out.x;
+    fw_trail_clear(&t);
+    for(int i=0;i<=48;i++){s=sample(i*4096,0,0,1,FW_WORLD);assert(fw_trail_push(&t,&s,&out,0)>=0);}
+    assert(out.x==runRest);
+    fw_trail_clear(&t);
+    for(int i=0;i<=48;i+=3){s=sample(i*4096,0,0,1,FW_WORLD);fw_trail_push(&t,&s,&out,0);}
+    int prev=out.x;
+    for(int i=49;i<=64;i++){
+        s=sample(i*4096,0,0,1,FW_WORLD);
+        assert(fw_trail_push(&t,&s,&out,0)==1);
+        assert(out.x>=prev&&out.x-prev<=4096);
+        prev=out.x;
+    }
+    assert(out.x==64*4096-(int)FW_TILE);
     /* Each facing gets its own offset; a prior direction's gap never leaks. */
     const uint8_t directional[4]={1,2,11,12};
     for(int direction=0;direction<4;direction++){
@@ -76,7 +106,12 @@ int main(void) {
             s.direction=(uint8_t)direction;
             int r=fw_trail_push_directional(&t,&s,&out,directional);
             assert(r==(i>=spacing));
-            if(r)assert((axis?out.z:out.x)==sign*(i-spacing)*4096);
+            if(r){
+                int32_t expect=sign*(i-spacing)*4096;
+                int32_t coord=axis?out.z:out.x;
+                if(sign>0)assert(coord>=expect&&coord<expect+4096);
+                else assert(coord<=expect&&coord>expect-4096);
+            }
         }
     }
     /* toofar.mln: the actor is 28 units west at a ten-unit side gap, while
@@ -113,15 +148,21 @@ int main(void) {
     actorPose=(FwPoint){playerPose.x-28*4096,0,playerPose.z};
     assert(fw_clamp_dialogue_pose(&actorPose,&playerPose,&artOffset,2,8));
     assert(actorPose.x==playerPose.x-25*4096);
-    /* Repeated L bends and heights: every result is an actual earlier pose,
-       advances monotonically through history, and never snaps a six-unit gap. */
+    /* Repeated L bends and heights: the head sample advances monotonically
+       through history. The emitted point stays on that sample's segment, so a
+       long step cannot leave extra lag and a six-unit gap is not collapsed. */
     FwSample route[800];fw_trail_clear(&t);int x=0,z=0,last_index=-1;
     for(int i=0;i<800;i++){
         if(i){if((i/40)%2)x+=4096;else z+=4096;}
         route[i]=sample(x,(i%13)*512,z,1,FW_WORLD);route[i].duration=(uint16_t)i;
         int r=fw_trail_push(&t,&route[i],&out,6);assert(r>=0);
-        if(r){int at=out.duration;assert(at<=i&&at>=last_index);
-            assert(!memcmp(&out,&route[at],sizeof(out)));
+        if(r){int at=out.duration;assert(at<i&&at>=last_index);
+            assert(out.kind==route[at].kind&&out.direction==route[at].direction&&out.duration==route[at].duration);
+            const FwSample *seg=&route[at],*next=&route[at+1];
+            int32_t x0=seg->x<next->x?seg->x:next->x,x1=seg->x>next->x?seg->x:next->x;
+            int32_t y0=seg->y<next->y?seg->y:next->y,y1=seg->y>next->y?seg->y:next->y;
+            int32_t z0=seg->z<next->z?seg->z:next->z,z1=seg->z>next->z?seg->z:next->z;
+            assert(out.x>=x0&&out.x<=x1&&out.y>=y0&&out.y<=y1&&out.z>=z0&&out.z<=z1);
             if(last_index>=0)assert(at-last_index<=2);
             last_index=at;
         }

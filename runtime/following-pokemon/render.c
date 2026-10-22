@@ -13,16 +13,41 @@ void fwr_anchor(Actor *a,unsigned face){
   * the artwork off this shadow. */
  a->dimensions[4]=a->descriptor[15];
 }
-__attribute__((visibility("default"))) volatile struct {
+/* shadowCount is +84 and shadowAt is +88. Version 2 appends:
+ * +100 shadowNativeY  billboard Y before the depth bias
+ * +104 groundY        follower ground the sprite is anchored to
+ * +108 gap            shadowNativeY - groundY
+ * +112 snap           0 no quad, 1 depth bias only (shadow is not moved)
+ * +116 nearY +120 nearGeom +124 nearWhy
+ *     nearest shadow-system quad within four tiles:
+ *     0 used, 1 not a shadow quad, 2 too far, 3 player's oval, 4 bias declined
+ * +128 hold           1 sprite kept on that ground (slope or yawed camera);
+ *     0 standard flat camera, south +6 Z and the north 2px tuck still apply
+ */
+typedef struct {
  uint32_t magic,version,frames,actor,size,applied;int32_t policy,before,after;
  FwPoint axis,native,submitted; int32_t nativeSX,submittedSX,shadowChange,shadowCount;
  FwPoint shadowAt;
-} FollowingRenderDebug={.magic=0x44525746,.version=1};
+ int32_t shadowNativeY,groundY,gap,snap,nearY,nearGeom,nearWhy,hold;
+} FwrDebug;
+_Static_assert(offsetof(FwrDebug,shadowCount)==84,"shadow count");
+_Static_assert(offsetof(FwrDebug,shadowAt)==88,"shadow position");
+_Static_assert(offsetof(FwrDebug,shadowNativeY)==100,"native shadow Y");
+_Static_assert(offsetof(FwrDebug,snap)==112,"shadow snap");
+_Static_assert(offsetof(FwrDebug,hold)==128,"sprite hold");
+__attribute__((visibility("default"))) volatile FwrDebug FollowingRenderDebug={.magic=0x44525746,.version=2};
 /* The effect pass draws the shadow after this actor pass. Remember the
  * submitted sprite so that pass can tuck the shadow behind it. */
 static struct {
  FwPoint ground,sprite,player;void *actorSystem;uint8_t valid,hasPlayer;
 } shadowTie;
+/* A rail camera yaws well off world +Z. Ordinary maps look north: the eye
+ * sits south of the target, so horizontal X is only camera sway. */
+static int standard_view(const FwrCamera *cam){
+ int64_t dx=(int64_t)cam->eye.x-cam->target.x,dz=(int64_t)cam->eye.z-cam->target.z;
+ int64_t ax=dx<0?-dx:dx,az=dz<0?-dz:dz;
+ return dz>0&&az>4096&&az>=ax*8;
+}
 static struct {
  Actor *actor; Vec world,native; uint16_t resource;
  FwrEffectPose submitted;
@@ -191,6 +216,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  effectPose.actor=effectPose.player=0;shadowTie.valid=shadowTie.hasPlayer=0;
  FollowingRenderDebug.frames++;FollowingRenderDebug.applied=0;FollowingRenderDebug.actor=(uint32_t)a;
  FollowingRenderDebug.policy=FollowingRenderDebug.before=FollowingRenderDebug.after=0;
+ FollowingRenderDebug.hold=0;
  if(system&&camera&&a&&player&&a!=player&&a->system==player->system){
   b=billboard(system,a);p=billboard(system,player);
   if(b){
@@ -206,30 +232,36 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     b->flags=(b->flags&~FWR_LIGHT_MASK)|(p->flags&FWR_LIGHT_MASK);
     lightingChanged=b->flags!=originalFlags;
    }
-   /* South's +6 Z stays on this quad, so the shadow does not jump on a turn.
-    * North's historical -7 Z is omitted: applied only here it moves the sprite
-    * north of the shadow, and the downward camera draws that as a float. */
-   int faceZ=a->face==1?FWR_SOUTH_ANCHOR_Z:0;
+   /* The native shadow is the ground point. South's +6 world Z and the north
+    * 2px tuck move only this quad, so on a yawed rail camera or a stair they
+    * draw the sprite below that shadow. Keep both on an ordinary flat map,
+    * where +Z is toward the camera and the tuck sits the north artwork down
+    * on the oval. A slope or a yawed view leaves the quad on the shadow. */
+   FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
+   int64_t py=(int64_t)player->world.y+player->drawOffset.y+player->externalOffset.y;
+   int32_t playerY=py<INT32_MIN||py>INT32_MAX?player->world.y:(int32_t)py;
+   int64_t rise=(int64_t)a->world.y-playerY;
+   int hold=rise>FWR_SHADOW_FLAT||rise<-FWR_SHADOW_FLAT||!standard_view(&cam);
+   FollowingRenderDebug.hold=hold;
+   int faceZ=!hold&&a->face==1?FWR_SOUTH_ANCHOR_Z:0;
    if(faceZ){
     int64_t z=(int64_t)adjusted.position.z+(int64_t)faceZ*4096;
     if(z>=INT32_MIN&&z<=INT32_MAX){adjusted.position.z=(int32_t)z;changed=1;}
    }
-   /* The descriptor Y offset also moves the game's attached shadow. Apply the
-    * appearance offset only to this actor quad during synchronous submission;
-    * effects and the following pass see the untouched native position. */
-   /* Facing up needs two pixels less correction for the artwork than for the
-    * shadow. The shadow stays on the descriptor anchor. */
-   int delta=sprite_y-(int8_t)a->descriptor[14]-(a->face==0?FWR_NORTH_ART_Y:0);
+   /* Descriptor Y moves the attached shadow. The registry offset replaces it
+    * on this quad only. The extra north tuck is the flat-camera case above. */
+   int delta=sprite_y-(int8_t)a->descriptor[14]-( !hold&&a->face==0?FWR_NORTH_ART_Y:0);
    int64_t y=(int64_t)adjusted.position.y+(int64_t)delta*4096;
    if(delta&&y>=INT32_MIN&&y<=INT32_MAX){adjusted.position.y=(int32_t)y;changed=1;}
-   FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
 #ifdef FW_STOCK
    FwrPose baseline=adjusted;
 #endif
    if(p&&b!=p){
     FwrPose corrected;
     FwPoint world={a->world.x,a->world.y,a->world.z},pw={player->world.x,player->world.y,player->world.z};
-    unsigned flags=(a->descriptor[7]==2?FWR_LARGE:0)|(a->face==0?FWR_NORTH:0);
+    /* The north depth restore pays back the 2px tuck. Skip it when the tuck
+     * was not applied, or the quad is pushed off the shadow it just joined. */
+    unsigned flags=(a->descriptor[7]==2?FWR_LARGE:0)|(!hold&&a->face==0?FWR_NORTH:0);
     applied=fwr_correct(&world,&pw,&adjusted,&p->position,&cam,flags,&corrected,&result);
     if(applied){adjusted=corrected;changed=1;}
     FollowingRenderDebug.size=a->descriptor[7];FollowingRenderDebug.applied=applied;
@@ -274,7 +306,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.submittedSX=adjusted.sx;
    if(shadowLive){
     shadowTie.ground=ground;shadowTie.sprite=adjusted.position;
-    shadowTie.player=(FwPoint){player->world.x,player->world.y,player->world.z};
+    shadowTie.player=(FwPoint){player->world.x,playerY,player->world.z};
     shadowTie.actorSystem=system;shadowTie.hasPlayer=1;shadowTie.valid=1;
    }
    effectPose.world=a->world;
@@ -295,43 +327,61 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
 }
-/* One tile of XZ keeps the player's shadow out of a normal follow gap. Two
- * tiles of Y reach a shadow sampled on the next stair step. A billboard
- * closer to the player than to these feet is the player's. */
+/* The player's own oval sits on the player. Six units rejects that oval
+ * without also rejecting a follower shadow that rests on the step between
+ * them. One tile of XZ and two of Y still bound the follower's quad. */
+#define FWR_SHADOW_PLAYER (6 * 4096)
+/* 0 accept, 2 outside the follower window, 3 player's oval. */
 static int follower_shadow(FwPoint point){
  int64_t dx=(int64_t)point.x-shadowTie.ground.x,dy=(int64_t)point.y-shadowTie.ground.y,dz=(int64_t)point.z-shadowTie.ground.z;
- if(dx>FW_TILE||dx<-FW_TILE||dz>FW_TILE||dz<-FW_TILE||dy>2*FW_TILE||dy<-2*FW_TILE)return 0;
+ if(dx>FW_TILE||dx<-FW_TILE||dz>FW_TILE||dz<-FW_TILE||dy>2*FW_TILE||dy<-2*FW_TILE)return 2;
  if(shadowTie.hasPlayer){
   int64_t px=(int64_t)point.x-shadowTie.player.x,pz=(int64_t)point.z-shadowTie.player.z;
-  if(px*px+pz*pz<dx*dx+dz*dz)return 0;
+  if(px*px+pz*pz<(int64_t)FWR_SHADOW_PLAYER*FWR_SHADOW_PLAYER)return 3;
  }
- return 1;
+ return 0;
 }
-/* Secondary/shadow pass. The actor pass already restored its billboard, so the
- * native shadow is still at the ground anchor and can draw over a quad that
- * was pushed back along the eye ray. Shift that shadow by the same kind of
- * depth bias and restore it before the pass returns. */
+/* Secondary/shadow pass. The native oval is already on the ground. Bias it
+ * behind the sprite along the eye ray, which keeps its screen position, and
+ * restore the billboard before returning. Do not move it onto the sprite:
+ * on stairs and rails the sprite was the quad sitting too low. */
 void fwr_shadow_pass(void *system,void *camera,void *light){
  Billboard *changed[4],original[4];unsigned count=0;
  FollowingRenderDebug.shadowChange=0;FollowingRenderDebug.shadowCount=0;
+ FollowingRenderDebug.shadowNativeY=0;FollowingRenderDebug.groundY=shadowTie.ground.y;FollowingRenderDebug.gap=0;
+ FollowingRenderDebug.snap=0;FollowingRenderDebug.nearY=0;FollowingRenderDebug.nearGeom=-1;FollowingRenderDebug.nearWhy=0;
  if(shadowTie.valid&&system&&camera&&system!=shadowTie.actorSystem&&ram_span(system,0x20)&&ram_span(camera,60)){
+  FwPoint feet=shadowTie.ground;
+  FollowingRenderDebug.groundY=feet.y;
   void *scene=PTR(system,4);uint8_t *slots=PTR(system,0x18);
   unsigned capacity=*(uint16_t*)((uint8_t*)system+0x1c);
   if(scene&&slots&&capacity&&capacity<=256&&ram_span(scene,16)&&ram_span(slots,capacity*40)){
    FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
    unsigned actors=*(uint16_t*)((uint8_t*)scene+14);Billboard *bill=PTR(scene,8);
+   int64_t nearest=(int64_t)1<<62;
    for(unsigned i=0;i<capacity&&count<4;++i){
     unsigned index=U32(slots,i*40);
     if(index>=actors||!ram_span(bill,(index+1u)*sizeof(Billboard)))continue;
     Billboard *b=bill+index;
-    if((b->geom>>14)||!(b->flags&512)||b->sx<=0||b->sy<=0)continue;
-    if(!follower_shadow(b->position))continue;
+    int64_t dx=(int64_t)b->position.x-shadowTie.ground.x,dz=(int64_t)b->position.z-shadowTie.ground.z;
+    int close=dx<=4*(int64_t)FW_TILE&&dx>=-4*(int64_t)FW_TILE&&dz<=4*(int64_t)FW_TILE&&dz>=-4*(int64_t)FW_TILE;
+    int64_t dist=close?dx*dx+dz*dz:nearest;
+    unsigned kind=b->geom>>14;
+    int why=kind>1||!(b->flags&512)||b->sx<=0||b->sy<=0?1:follower_shadow(b->position);
+    if(close&&dist<nearest){
+     nearest=dist;FollowingRenderDebug.nearY=b->position.y;FollowingRenderDebug.nearGeom=b->geom;FollowingRenderDebug.nearWhy=why;
+    }
+    if(why)continue;
     FwrPose native={b->position,b->sx,b->sy},out;
-    if(!fwr_shadow_on_feet(&native,&shadowTie.ground,&shadowTie.sprite,&cam,&out))continue;
+    int code=fwr_shadow_on_feet(&native,&feet,&shadowTie.sprite,&cam,&out);
+    FollowingRenderDebug.shadowNativeY=native.position.y;
+    FollowingRenderDebug.gap=native.position.y-feet.y;
+    if(!code){if(close&&dist==nearest&&!FollowingRenderDebug.snap)FollowingRenderDebug.nearWhy=4;continue;}
     changed[count]=b;original[count++]=*b;
     b->position=out.position;b->sx=(int16_t)out.sx;b->sy=(int16_t)out.sy;
     FollowingRenderDebug.shadowAt=out.position;FollowingRenderDebug.shadowCount=count;
     FollowingRenderDebug.shadowChange=out.position.z-native.position.z;
+    FollowingRenderDebug.snap=code;
    }
   }
  }

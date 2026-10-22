@@ -126,6 +126,20 @@ int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *ar
     return 1;
 }
 static unsigned index_at(const FwTrail *t, unsigned at) { return (t->head + at) % FW_TRAIL_CAPACITY; }
+/* (delta * over) / span without a 64-bit libcall. The field module only
+ * provides __aeabi_lmul; a compiler divide would be an extra import. */
+static int32_t scale_step(int32_t delta, uint32_t over, uint32_t span) {
+    if (!span || !over || !delta) return 0;
+    int neg = delta < 0;
+    uint64_t n = (uint64_t)(neg ? (uint64_t)(-(int64_t)delta) : (uint64_t)delta) * over;
+    uint64_t q = 0, r = 0;
+    for (unsigned bit = 0; bit < 64; ++bit) {
+        r = (r << 1) | (n >> 63); n <<= 1; q <<= 1;
+        if (r >= span) { r -= span; q |= 1; }
+    }
+    if (q > 2147483647u) q = 2147483647u;
+    return neg ? -(int32_t)q : (int32_t)q;
+}
 int fw_trail_translate(FwTrail *t, int32_t dx, int32_t dy, int32_t dz) {
     if (!t) return 0;
     if (!t->count || (!dx && !dy && !dz)) return 1;
@@ -165,7 +179,22 @@ int fw_trail_push_directional(FwTrail *t, const FwSample *s, FwSample *out, cons
         if (t->distance - step < FW_TILE) break;
         t->distance -= step; t->head = (t->head + 1) % FW_TRAIL_CAPACITY; --t->count;
     }
+    /* Sitting on the older sample leaves up to one whole step of lag. A run
+     * step is long enough to rest outside the talk box, and the next walk
+     * step then drops that sample and the follower jumps forward. The point
+     * `over` along this segment is exactly one tile of follow metric. */
     *out = t->samples[t->head];
+    if (t->count > 1 && t->distance > FW_TILE) {
+        const FwSample *next = &t->samples[index_at(t, 1)];
+        uint32_t span = trail_distance(&t->samples[t->head], next, gaps);
+        uint32_t over = t->distance - FW_TILE;
+        if (span && over) {
+            if (over > span) over = span;
+            out->x += scale_step(next->x - out->x, over, span);
+            out->y += scale_step(next->y - out->y, over, span);
+            out->z += scale_step(next->z - out->z, over, span);
+        }
+    }
     return 1;
 }
 int fw_trail_push(FwTrail *t, const FwSample *s, FwSample *out, unsigned gap) {

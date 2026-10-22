@@ -69,7 +69,9 @@ int fw_interact(FwFollower *f);
 void fw_end_interaction(FwFollower *f);
 void fw_trail_clear(FwTrail *trail);
 /* Returns -1 on discontinuity/overflow (caller must recall); 0 while seeding;
- * 1 when an actual recorded pose is available. Never synthesizes a shortcut. */
+ * 1 when a pose on the recorded segment is ready. That pose is the point one
+ * tile of follow metric behind the player, so a long run step does not rest
+ * farther back than a walk. It is never a shortcut off the recorded route. */
 int fw_trail_push(FwTrail *trail, const FwSample *sample, FwSample *follower, unsigned side_gap);
 int fw_trail_push_directional(FwTrail *trail, const FwSample *sample, FwSample *follower, const uint8_t gaps[4]);
 /* Add a connection delta to every live sample. Distances stay valid.

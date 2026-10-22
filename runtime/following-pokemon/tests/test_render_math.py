@@ -274,25 +274,20 @@ class Rendering(unittest.TestCase):
    shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
    self.assertLess(max(abs(x-y)for a,b in zip(shade_before,shade_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
    again=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again)),0)
- def test_slope_shadow_sits_on_the_follower_feet(self):
-  # Field camera, follower one tile north and one tile up. A shadow sampled
-  # on the other step projects through the body; flat ground must not move.
+ def test_shadow_stays_on_its_native_ground(self):
+  # The oval is the ground sample. A sprite drawn a step low must not drag
+  # the shadow with it; the bias keeps the oval's projected image.
   eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
   feet=Point(0,65536,-65536);sprite=Point(0,65536,-65536)
-  def depth(pose):
-   axis=[eye[i] for i in range(3)];length=math.sqrt(dot(axis,axis));axis=[v/length*4096 for v in axis]
-   return math.trunc(sum((a-b)*n for a,b,n in zip(xyz(pose.position),xyz(sprite),axis))/4096)
-  for dy in (-65536,65536):
-   shade=Pose(Point(feet.x,feet.y+dy,feet.z),4096,4096);out=Pose()
-   self.assertEqual(self.lib.fwr_shadow_on_feet(c.byref(shade),c.byref(feet),c.byref(sprite),c.byref(cam),c.byref(out)),1)
-   feet_pose=Pose(feet,4096,4096)
-   before=project(feet_pose,eye,False);after=project(out,eye,False)
+  feet_screen=project(Pose(feet,4096,4096),eye,False)
+  for dz,dy in ((0,-65536),(0,65536),(6*4096,0),(0,4096)):
+   shade=Pose(Point(feet.x,feet.y+dy,feet.z+dz),4096,4096);out=Pose()
+   code=self.lib.fwr_shadow_on_feet(c.byref(shade),c.byref(feet),c.byref(sprite),c.byref(cam),c.byref(out))
+   self.assertIn(code,(0,1))
+   before=project(shade,eye,False);after=project(out,eye,False)
    self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
-   self.assertLessEqual(depth(out),-4096+64)
-  flat=Pose(Point(feet.x,feet.y+4096,feet.z),4096,4096);kept=Pose()
-  self.assertEqual(self.lib.fwr_shadow_on_feet(c.byref(flat),c.byref(feet),c.byref(sprite),c.byref(cam),c.byref(kept)),1)
-  before=project(flat,eye,False);after=project(kept,eye,False)
-  self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
-  self.assertLess(abs(kept.position.y-flat.position.y),8*4096)
-  self.assertLessEqual(depth(kept),-4096+64)
+   if abs(dy)>2*4096 or abs(dz)>2*4096:
+    # Projection units are 1/256 of a pixel at this camera. A step away from
+    # the feet must stay visibly off the feet; the bias does not pull it there.
+    self.assertGreater(max(abs(x-y)for a,b in zip(feet_screen,after)for x,y in zip(a,b)),1/256)
 if __name__=='__main__':unittest.main()
