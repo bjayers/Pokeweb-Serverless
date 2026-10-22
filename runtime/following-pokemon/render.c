@@ -290,6 +290,10 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     FollowingRenderDebug.axis=result.axis;FollowingRenderDebug.native=original.position;
     FollowingRenderDebug.nativeSX=original.sx;
    }
+   /* Foot height before shadow clearance. A later eye-ray tuck must not sink
+    * the quad through this plane; the floor then covers the body and the
+    * ground oval draws over it. Changing the shadow's keep cannot undo that. */
+   int32_t footY=adjusted.position.y;
    int shadowLive=(a->moveflags&0x4000u)&&!(a->moveflags&0x8000u);
    FwPoint ground={a->world.x,a->world.y,a->world.z+(int8_t)a->dimensions[4]*4096};
    if(shadowLive){
@@ -338,6 +342,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
     adjusted=bounded;changed=1;
    }
 #endif
+   FwrPose planted;
+   if(fwr_plant_feet(&adjusted,&cam,footY,&planted)){adjusted=planted;changed=1;}
    if(p&&result.policy){
     int64_t dx=(int64_t)adjusted.position.x-playerOriginal.position.x;
     int64_t dy=(int64_t)adjusted.position.y-playerOriginal.position.y;
