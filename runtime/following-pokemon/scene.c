@@ -201,6 +201,23 @@ static void inspect_chain(void){
 }
 static int min(int a,int b){return a<b?a:b;}
 static int max(int a,int b){return a>b?a:b;}
+/* Sidewalk crowds use the wall-walk families. Their direction bases are one
+ * above a multiple of four, unlike the compass walks. Jump families cover
+ * two or three tiles; the walks themselves are one. */
+static int pedestrian(unsigned code,unsigned *direction,unsigned *distance){
+ if(code<0x69||code>0x98)return 0;
+ *direction=(code-1u)&3u;
+ *distance=(code>=0x75&&code<=0x78)?3u:(code>=0x85&&code<=0x90)?2u:1u;
+ return 1;
+}
+/* A write longer than the longest audited step is a relocate: traffic
+ * respawn, despawn, or an offscreen slot reuse. Test the destination only.
+ * A real step still sweeps every tile it crosses. */
+static int relocating(const Vec *from,const Vec *to){
+ int32_t dx=from->x-to->x;if(dx<0)dx=-dx;
+ int32_t dz=from->z-to->z;if(dz<0)dz=-dz;
+ return dx>3*FW_TILE||dz>3*FW_TILE;
+}
 static int near_step(int32_t next,int32_t current,uint32_t limit){
  uint32_t delta=(uint32_t)next-(uint32_t)current;
  return delta<=limit || (uint32_t)(0u-delta)<=limit;
@@ -267,29 +284,33 @@ static void action(Actor *actor,unsigned code){
   return;
  }
  unsigned distance=1,direction=code&3u;
- int walking=(code>=4&&code<=0x17)||(code>=0x4c&&code<=0x53)||(code>=0x60&&code<=0x63)||(code>=0x9b&&code<=0x9e)||(code>=0xa7&&code<=0xaa);
+ int walking=(code>=4&&code<=0x17)||(code>=0x4c&&code<=0x5b)||(code>=0x60&&code<=0x63)||(code>=0x9b&&code<=0x9e)||(code>=0xa7&&code<=0xaa);
+ if(pedestrian(code,&direction,&distance))walking=1;
  if(code>=0x34&&code<=0x3b)distance=code>=0x38?2:1;
  else if(!walking){recall(FWS_UNKNOWN_MOVEMENT,FWE_ACTION,actor,code);return;}
  if(code>=0x9b&&code<=0x9e)direction=code-0x9b;
  if(code>=0xa7&&code<=0xaa)direction=code-0xa7;
  if(actor->flags&8192){
   /* The four rail walk rates 16/8/4/2 are implemented natively. Other
-     rail action profiles need a separate audit, including rail jumps. */
-  if(code<8||code>0x17){recall(FWS_UNKNOWN_MOVEMENT,FWE_ACTION,actor,code);return;}
+     rail action profiles need a separate audit, including rail jumps.
+     Sidewalk codes are real steps: a probe that cannot run is not a hit. */
+  int crowd=code>=0x69&&code<=0x98;
+  if((code<8||code>0x17)&&!crowd){recall(FWS_UNKNOWN_MOVEMENT,FWE_ACTION,actor,code);return;}
   int clear=rail_clear(actor,direction);
-  if(clear!=1)recall(clear<0?FWS_UNKNOWN_MOVEMENT:FWS_COLLISION,FWE_ACTION,actor,code);
+  if(clear==0)recall(FWS_COLLISION,FWE_ACTION,actor,code);
+  else if(clear<0&&!crowd)recall(FWS_UNKNOWN_MOVEMENT,FWE_ACTION,actor,code);
   return;
  }
- unsigned controller=CALL(0x02180579,unsigned(*)(void*))(scene.field);
- if(controller!=0){recall(FWS_UNKNOWN_MOVEMENT,FWE_ACTION,actor,code);return;}
+ /* A rail map reports a movement controller for the player. Grid crowds on
+    that map still take ordinary steps; the controller is not itself a
+    collision. A failed height query is not one either. The world write
+    below recalls if the step that actually happens enters the follower. */
  Vec previous=actor->world,target=previous;
  for(unsigned step=0;step<distance;++step){
   if(direction<2)target.z+=(direction?1:-1)*FW_TILE;
   else target.x+=(direction==3?1:-1)*FW_TILE;
   int32_t height;
-  if(!CALL(0x0215e909,int(*)(Actor*,const Vec*,int32_t*))(actor,&target,&height)){
-   recall(FWS_UNKNOWN_MOVEMENT,FWE_ACTION,actor,code);return;
-  }
+  if(!CALL(0x0215e909,int(*)(Actor*,const Vec*,int32_t*))(actor,&target,&height))return;
   target.y=height;
   if(intersects(&previous,&target,max(actor->dimensions[0],1),max(actor->dimensions[1],1))){recall(FWS_COLLISION,FWE_ACTION,actor,code);return;}
   previous=target;
@@ -332,7 +353,9 @@ int fws_step_clear(Actor *f,const Vec *target){
   Actor *a=&scene.sys->actors[i];
   if(a==f||a==scene.player||a->id==0xff||(a->flags&(1|4|128))!=1)continue;
   if(a->flags&8192){
-   uint32_t *unit=PTR(a,148);if(!unit||!unit[30])return 0;
+   /* A crowd actor flagged as rail before its cursor exists is not standing
+    * on this tile. A live cursor is still a real occupancy. */
+   uint32_t *unit=PTR(a,148);if(!unit||!unit[30])continue;
    void *mapper=PTR(scene.sys,60),*manager=mapper?PTR(mapper,0):0;
    if(!manager)return 0;
    int radius=CALL(0x021b0625,int32_t(*)(void*))(manager)/4;
@@ -407,7 +430,9 @@ void fws_observe(unsigned kind,void *subject,uintptr_t value){
   if(entity[0]==((Actor*)scene.f->actor)->id){recall(FWS_ACTOR_ID,kind,subject,entity[0]);return;}
   if(!free){recall(FWS_POOL,kind,subject,entity[0]);return;}
   if(!scene.active)return;
-  if(U32(entity,24)||entity[1]==0xb9){recall(FWS_UNKNOWN_MOVEMENT,kind,subject,entity[0]);return;}
+  /* Rail and placeholder-sprite spawns do not carry a grid destination.
+     Allocating one is not a collision; the position write is. */
+  if(U32(entity,24)||entity[1]==0xb9)return;
   Vec target={(int16_t)entity[14]*FW_TILE+FW_TILE/2,(int32_t)U32(entity,32),(int16_t)entity[15]*FW_TILE+FW_TILE/2};
   /* All pinned stock descriptors fit 3 x 2 tiles; use that conservative
      bound until the new actor's descriptor has been initialized. */
@@ -424,7 +449,10 @@ void fws_observe(unsigned kind,void *subject,uintptr_t value){
     void *mapper=PTR(scene.sys,60),*manager=mapper?PTR(mapper,0):0;
     int radius=manager?CALL(0x021b0625,int32_t(*)(void*))(manager)/4:FW_TILE/4;
     hit=sphere_overlap(target,&((Actor*)scene.f->actor)->world,radius);
-   }else hit=intersects(kind==FWE_WORLD_STEP?&actor->world:target,target,max(actor->dimensions[0],1),max(actor->dimensions[1],1));
+   }else{
+    const Vec *from=kind==FWE_WORLD_STEP&&!relocating(&actor->world,target)?&actor->world:target;
+    hit=intersects(from,target,max(actor->dimensions[0],1),max(actor->dimensions[1],1));
+   }
    if(hit)recall(FWS_COLLISION,kind,subject,0);
   }
  }
@@ -441,7 +469,10 @@ void fws_observe(unsigned kind,void *subject,uintptr_t value){
    recall(FWS_PLAYER_MOVEMENT,kind,subject,0);
   }
   else if((uintptr_t)actor==scene.f->actor)recall(FWS_ACTOR_ID,kind,subject,0);
-  else if(intersects(kind==FWE_WORLD_STEP?&actor->world:target,target,max(actor->dimensions[0],1),max(actor->dimensions[1],1)))recall(FWS_COLLISION,kind,subject,0);
+  else{
+   const Vec *from=kind==FWE_WORLD_STEP&&!relocating(&actor->world,target)?&actor->world:target;
+   if(intersects(from,target,max(actor->dimensions[0],1),max(actor->dimensions[1],1)))recall(FWS_COLLISION,kind,subject,0);
+  }
  }
  if(kind==FWE_DELETE&&(uintptr_t)subject==scene.f->actor)recall(FWS_ACTOR_LOST,kind,subject,0);
 }

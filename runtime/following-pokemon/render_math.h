@@ -21,6 +21,9 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 #define FWR_BEHIND_CAP (16 * 4096)
 /* A biased shadow sits one unit further than the sprite it belongs to. */
 #define FWR_SHADOW_KEEP (1 * 4096)
+/* Native flat shadows sit about one unit above the ground anchor. A larger
+ * gap is a stair step, not that lift. */
+#define FWR_SHADOW_FLAT (2 * 4096)
 #define FWR_FORCE_FRONT 4u
 #define FWR_FORCE_BACK 8u
 #define FWR_BACK_MARGIN (12 * 4096)
@@ -40,6 +43,11 @@ int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
  * its sprite. Screen position and size stay put. */
 int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
     const FwrCamera *camera,FwrPose *output);
+/* On flat ground the native shadow is already at the feet, so only the depth
+ * bias runs. On a stair, move the shadow onto the follower's own feet first,
+ * then bias it so that projected center stays on those feet. */
+int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
+    const FwPoint *sprite,const FwrCamera *camera,FwrPose *output);
 /* Camera-facing grass clears its owner, but stays behind a nearer body. */
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
     const FwrPose *other,const FwrCamera *camera,FwrPose *output);

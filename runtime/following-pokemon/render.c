@@ -21,7 +21,7 @@ __attribute__((visibility("default"))) volatile struct {
 /* The effect pass draws the shadow after this actor pass. Remember the
  * submitted sprite so that pass can tuck the shadow behind it. */
 static struct {
- FwPoint ground,sprite;void *actorSystem;uint8_t valid;
+ FwPoint ground,sprite,player;void *actorSystem;uint8_t valid,hasPlayer;
 } shadowTie;
 static struct {
  Actor *actor; Vec world,native; uint16_t resource;
@@ -188,7 +188,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
 #ifdef FW_STOCK
  propFrame++;
 #endif
- effectPose.actor=effectPose.player=0;shadowTie.valid=0;
+ effectPose.actor=effectPose.player=0;shadowTie.valid=shadowTie.hasPlayer=0;
  FollowingRenderDebug.frames++;FollowingRenderDebug.applied=0;FollowingRenderDebug.actor=(uint32_t)a;
  FollowingRenderDebug.policy=FollowingRenderDebug.before=FollowingRenderDebug.after=0;
  if(system&&camera&&a&&player&&a!=player&&a->system==player->system){
@@ -274,7 +274,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.submittedSX=adjusted.sx;
    if(shadowLive){
     shadowTie.ground=ground;shadowTie.sprite=adjusted.position;
-    shadowTie.actorSystem=system;shadowTie.valid=1;
+    shadowTie.player=(FwPoint){player->world.x,player->world.y,player->world.z};
+    shadowTie.actorSystem=system;shadowTie.hasPlayer=1;shadowTie.valid=1;
    }
    effectPose.world=a->world;
    effectPose.native=(Vec){original.position.x,original.position.y,original.position.z};
@@ -294,9 +295,17 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
 }
-static int near_anchor(FwPoint point,FwPoint anchor){
- int64_t dx=(int64_t)point.x-anchor.x,dy=(int64_t)point.y-anchor.y,dz=(int64_t)point.z-anchor.z,limit=8*4096;
- return dx<=limit&&dx>=-limit&&dy<=limit&&dy>=-limit&&dz<=limit&&dz>=-limit;
+/* One tile of XZ keeps the player's shadow out of a normal follow gap. Two
+ * tiles of Y reach a shadow sampled on the next stair step. A billboard
+ * closer to the player than to these feet is the player's. */
+static int follower_shadow(FwPoint point){
+ int64_t dx=(int64_t)point.x-shadowTie.ground.x,dy=(int64_t)point.y-shadowTie.ground.y,dz=(int64_t)point.z-shadowTie.ground.z;
+ if(dx>FW_TILE||dx<-FW_TILE||dz>FW_TILE||dz<-FW_TILE||dy>2*FW_TILE||dy<-2*FW_TILE)return 0;
+ if(shadowTie.hasPlayer){
+  int64_t px=(int64_t)point.x-shadowTie.player.x,pz=(int64_t)point.z-shadowTie.player.z;
+  if(px*px+pz*pz<dx*dx+dz*dz)return 0;
+ }
+ return 1;
 }
 /* Secondary/shadow pass. The actor pass already restored its billboard, so the
  * native shadow is still at the ground anchor and can draw over a quad that
@@ -316,9 +325,9 @@ void fwr_shadow_pass(void *system,void *camera,void *light){
     if(index>=actors||!ram_span(bill,(index+1u)*sizeof(Billboard)))continue;
     Billboard *b=bill+index;
     if((b->geom>>14)||!(b->flags&512)||b->sx<=0||b->sy<=0)continue;
-    if(!near_anchor(b->position,shadowTie.ground))continue;
+    if(!follower_shadow(b->position))continue;
     FwrPose native={b->position,b->sx,b->sy},out;
-    if(!fwr_shadow_behind(&native,&shadowTie.sprite,&cam,&out))continue;
+    if(!fwr_shadow_on_feet(&native,&shadowTie.ground,&shadowTie.sprite,&cam,&out))continue;
     changed[count]=b;original[count++]=*b;
     b->position=out.position;b->sx=(int16_t)out.sx;b->sy=(int16_t)out.sy;
     FollowingRenderDebug.shadowAt=out.position;FollowingRenderDebug.shadowCount=count;
@@ -328,5 +337,5 @@ void fwr_shadow_pass(void *system,void *camera,void *light){
  }
  CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
  for(unsigned i=0;i<count;++i)*changed[i]=original[i];
- shadowTie.valid=0;
+ shadowTie.valid=shadowTie.hasPlayer=0;
 }

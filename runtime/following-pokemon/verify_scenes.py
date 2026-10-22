@@ -462,6 +462,16 @@ h.call(0x02166ec8,[h.P,0x58])
 uc.mem_write(VEC,struct.pack('<iii',11*65536,0,10*65536))
 h.call(0x02167c0c,[h.P,VEC,0]);recalled(3) # direct placement
 setup();event();h.call(0x02166ec8,[NPC,0xc0]);recalled(7)
+# Castelia is a rail map, and its sidewalk crowds use wall-walk codes. Neither
+# the map controller nor a far sidewalk step is a collision. A step onto the
+# follower still is. Rail and placeholder spawns wait for the real position.
+for code in (4,0x69,0x6a,0x71,0x54):
+ snap=setup();event();h.controller=1;actor_pos(20,20);h.call(0x02166ec8,[NPC,code]);kept(snap)
+snap=setup();event();h.controller=1;actor_pos(10,8);h.call(0x02166ec8,[NPC,0x6a]);recalled(4)
+snap=setup();event();h.put(ENTITY+24,1);h.call(ex[symbol_hash('FollowingEventAllocate')],[h.SYS,ENTITY]);kept(snap)
+snap=setup();event();h.half(ENTITY+2,0xb9);h.call(ex[symbol_hash('FollowingEventAllocate')],[h.SYS,ENTITY]);kept(snap)
+snap=setup();event();h.controller=1;h.put(NPC,1|8192);h.put(NPC+148,0);actor_pos(20,20)
+h.call(0x02166ec8,[NPC,0x69]);kept(snap)
 
 # Common field-event setup pauses autonomous actor movement. A dormant queued
 # route from a random mover must not recall the follower during NPC, sign, or

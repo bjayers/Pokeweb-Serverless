@@ -27,6 +27,7 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_above_shadow.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_keep_behind.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.POINTER(Pose)]
   cls.lib.fwr_shadow_behind.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_shadow_on_feet.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_player_in_front.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),Point,c.c_int32,c.c_int32,c.POINTER(Pose),c.POINTER(c.c_int32)]
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
   cls.lib.fwr_cover_feet.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
@@ -273,4 +274,25 @@ class Rendering(unittest.TestCase):
    shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
    self.assertLess(max(abs(x-y)for a,b in zip(shade_before,shade_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
    again=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again)),0)
+ def test_slope_shadow_sits_on_the_follower_feet(self):
+  # Field camera, follower one tile north and one tile up. A shadow sampled
+  # on the other step projects through the body; flat ground must not move.
+  eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
+  feet=Point(0,65536,-65536);sprite=Point(0,65536,-65536)
+  def depth(pose):
+   axis=[eye[i] for i in range(3)];length=math.sqrt(dot(axis,axis));axis=[v/length*4096 for v in axis]
+   return math.trunc(sum((a-b)*n for a,b,n in zip(xyz(pose.position),xyz(sprite),axis))/4096)
+  for dy in (-65536,65536):
+   shade=Pose(Point(feet.x,feet.y+dy,feet.z),4096,4096);out=Pose()
+   self.assertEqual(self.lib.fwr_shadow_on_feet(c.byref(shade),c.byref(feet),c.byref(sprite),c.byref(cam),c.byref(out)),1)
+   feet_pose=Pose(feet,4096,4096)
+   before=project(feet_pose,eye,False);after=project(out,eye,False)
+   self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
+   self.assertLessEqual(depth(out),-4096+64)
+  flat=Pose(Point(feet.x,feet.y+4096,feet.z),4096,4096);kept=Pose()
+  self.assertEqual(self.lib.fwr_shadow_on_feet(c.byref(flat),c.byref(feet),c.byref(sprite),c.byref(cam),c.byref(kept)),1)
+  before=project(flat,eye,False);after=project(kept,eye,False)
+  self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
+  self.assertLess(abs(kept.position.y-flat.position.y),8*4096)
+  self.assertLessEqual(depth(kept),-4096+64)
 if __name__=='__main__':unittest.main()
