@@ -77,6 +77,20 @@ int fw_trail_push_directional(FwTrail *trail, const FwSample *sample, FwSample *
 /* Add a connection delta to every live sample. Distances stay valid.
  * Returns 0 and clears the trail if any coordinate would overflow. */
 int fw_trail_translate(FwTrail *trail, int32_t dx, int32_t dy, int32_t dz);
+/* Floor tile index. World centers sit at tile*FW_TILE + FW_TILE/2. */
+int32_t fw_tile(int32_t coord);
+/* 1 when `follower` stands one cardinal tile from `origin`, `face` points
+ * from origin onto that tile, the height gap is at most two tiles, and the
+ * trail's next tile is origin. That is a step back onto the follower. */
+int fw_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin, unsigned face);
+/* Mirror `player`'s progress from `origin` toward `follower` onto the
+ * follower's walk from `follower` back to `origin`. Returns 1 at the far
+ * end, 0 while still on the segment, -1 if the player left it. */
+int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out);
+/* Replace the trail with the straight walk from `follower` to `player`.
+ * Both samples keep `player`'s direction, so the next step does not reuse
+ * the facing from before the turnaround. */
+int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player, FwSample *out);
 /* Bound a nearly-adjacent follower's world pose to the same forward reach
  * used by dialogue, without changing its route or authored gap. */
 int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *art_offset,

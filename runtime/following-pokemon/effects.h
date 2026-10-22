@@ -14,6 +14,8 @@ int fwfx_busy(void);
 int fwfx_recalling(void);
 int fwfx_available(void);
 void fwfx_draw(void *camera,void *light);
+/* Player used only to keep a reaction bubble behind someone standing in front. */
+void fwfx_set_player(Actor *player);
 /* Private reaction emotes; frame resources never alias a native actor palette. */
 int fwfx_emote_begin(Actor *actor,unsigned member);
 void fwfx_emote_frame(Actor *actor,unsigned frame);

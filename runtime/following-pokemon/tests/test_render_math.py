@@ -30,6 +30,8 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_shadow_on_feet.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_player_in_front.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),Point,c.c_int32,c.c_int32,c.POINTER(Pose),c.POINTER(c.c_int32)]
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
+  cls.lib.fwr_emote_place.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_emote_place.restype=c.c_int
   cls.lib.fwr_cover_feet.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_box_advance_limit.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Point)]
   cls.lib.fwr_box_advance_limit.restype=c.c_int32
@@ -156,6 +158,26 @@ class Rendering(unittest.TestCase):
      self.assertLess(abs(diff[0]*eye[2]-diff[2]*eye[0])/math.hypot(eye[0],eye[2]),256)
   for eye,height in ((Point(),34*4096),(Point(0,240*4096,0),34*4096),(Point(0,240*4096,240*4096),-1)):
    cam=Camera(eye,Point(),0);head=Point();self.assertFalse(self.lib.fwr_head_position(c.byref(base),c.byref(cam),height,c.byref(head)))
+ def test_emote_clears_overhang_without_covering_the_player(self):
+  eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
+  bubble=Pose(Point(),8192,8192);placed=Pose()
+  self.assertTrue(self.lib.fwr_emote_place(c.byref(bubble),None,c.byref(cam),c.byref(placed)))
+  n=[v/math.sqrt(dot(eye,eye)) for v in eye]
+  closer=dot(xyz(placed.position),n)-dot(xyz(bubble.position),n)
+  self.assertGreater(closer,4*65536)
+  before=project(bubble,eye,False);after=project(placed,eye,False)
+  self.assertLess(max(abs(x-y) for a,b in zip(before,after) for x,y in zip(a,b)),0.002/256)
+  player=Point(*(int(v*24*4096) for v in n))
+  held=Pose();self.assertTrue(self.lib.fwr_emote_place(c.byref(bubble),c.byref(player),c.byref(cam),c.byref(held)))
+  depth=dot((held.position.x-player.x,held.position.y-player.y,held.position.z-player.z),n)
+  self.assertLessEqual(depth,-4096+256)
+  after=project(held,eye,False)
+  self.assertLess(max(abs(x-y) for a,b in zip(before,after) for x,y in zip(a,b)),0.002/256)
+  # Beside the follower: the canopy clearance stays, the bubble is not pulled back.
+  right=(n[2],0,-n[0]);length=math.sqrt(dot(right,right));right=[v/length for v in right]
+  beside=Point(*(int(right[i]*2*65536) for i in range(3)))
+  side=Pose();self.assertTrue(self.lib.fwr_emote_place(c.byref(bubble),c.byref(beside),c.byref(cam),c.byref(side)))
+  self.assertGreater(dot(xyz(side.position),n),4*65536)
  def test_stair_policy_does_not_depend_on_bob(self):
   cam=Camera(Point(0,760739,581835),Point(),0)
   # Side-and-above used to return policy 0. It now clamps behind, independent of bob.

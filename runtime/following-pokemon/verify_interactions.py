@@ -165,7 +165,8 @@ def native(u,pc,size,user):
   actor=u32(r0+8);flags=struct.unpack('<H',u.mem_read(actor+24,2))[0]
   assert flags&0x0200 and flags&0xf000==0x1000,'Emote lost visibility or map lighting'
   assert not flags&0x0c00,'Emote must not inherit the follower texture mirror'
-  assert struct.unpack('<2h',u.mem_read(actor+18,4))==(8192,8192),'32px emote was drawn at half size'
+  sx,sy=struct.unpack('<2h',u.mem_read(actor+18,4))
+  assert sx==sy and 4096<sx<=8192,'32px emote was drawn at half size or stretched'
   emote_draws+=1
  if pc in (0x0218151c,0x02181aa0):result=provider
  u.reg_write(UC_ARM_REG_R0,result);u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))

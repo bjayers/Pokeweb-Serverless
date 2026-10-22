@@ -137,6 +137,38 @@ int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
  if(change<-cap)change=-cap;
  return shift_depth(follower,camera,direction,change-16,out);
 }
+int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
+                    const FwrCamera *camera,FwrPose *out){
+ *out=*bubble;
+ if(!bubble||!camera||bubble->sx<=0||bubble->sy<=0||bubble->sx>32767||bubble->sy>32767)return 0;
+ FwPoint view;
+ if(camera->projection>2||!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
+ /* Three tile-pair pushes clear a canopy that overhangs toward the camera.
+  * Each step stays inside shift_depth's limit and keeps the screen pixels. */
+ FwrPose shifted=*bubble;
+ int moved=0;
+ for(int i=0;i<3;++i){
+  FwrPose next;
+  if(!shift_depth(&shifted,camera,view,2*(int32_t)FW_TILE,&next))break;
+  shifted=next;moved=1;
+ }
+ /* Only a player who is actually in front of the unpushed bubble gives that
+  * clearance back. Someone beside the follower must not undo it. */
+ if(player){
+  FwPoint relative;
+  if(delta(*player,bubble->position,&relative,8*(int32_t)FW_TILE)&&dot(relative,view)>FW_TILE/2){
+   FwrPose playerPose={{player->x,player->y,player->z},8192,8192};
+   for(int i=0;i<4;++i){
+    FwrPose behind;
+    /* cap stops one unit short of shift_depth's limit; that helper subtracts 16. */
+    if(!fwr_keep_behind(&shifted,&playerPose,camera,FWR_SORT_BEHIND,2*(int32_t)FW_TILE-16,&behind))break;
+    shifted=behind;moved=1;
+   }
+  }
+ }
+ *out=shifted;
+ return moved;
+}
 int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
                       const FwrCamera *camera,FwrPose *out){
  *out=*shadow;

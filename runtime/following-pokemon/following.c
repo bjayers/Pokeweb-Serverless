@@ -202,3 +202,102 @@ int fw_trail_push(FwTrail *t, const FwSample *s, FwSample *out, unsigned gap) {
     const uint8_t gaps[4]={0,0,(uint8_t)gap,(uint8_t)gap};
     return fw_trail_push_directional(t,s,out,gaps);
 }
+int32_t fw_tile(int32_t v) {
+    int32_t q = v / (int32_t)FW_TILE;
+    if (v % (int32_t)FW_TILE < 0) q -= 1;
+    return q;
+}
+/* (delta * num) / den. Signs are applied after the unsigned divider so a
+ * reverse step does not import __aeabi_ldivmod. */
+static int32_t mul_div(int32_t delta, int32_t num, int32_t den) {
+    if (!den || !num || !delta) return 0;
+    int neg = (delta < 0) ^ (num < 0) ^ (den < 0);
+    uint64_t ad = delta < 0 ? (uint64_t)-(int64_t)delta : (uint64_t)delta;
+    uint64_t an = num < 0 ? (uint64_t)-(int64_t)num : (uint64_t)num;
+    uint32_t span = den < 0 ? (uint32_t)-(int64_t)den : (uint32_t)den;
+    uint64_t n = ad * an, q = 0, r = 0;
+    for (unsigned bit = 0; bit < 64; ++bit) {
+        r = (r << 1) | (n >> 63); n <<= 1; q <<= 1;
+        if (r >= span) { r -= span; q |= 1; }
+    }
+    if (q > 2147483647u) q = 2147483647u;
+    return neg ? -(int32_t)q : (int32_t)q;
+}
+static const FwSample *trail_sample(const FwTrail *t, unsigned at) {
+    return &t->samples[(t->head + at) % FW_TRAIL_CAPACITY];
+}
+/* 1 when the first tile ahead of the follower, walking the recorded route
+ * toward the player, is `origin`. A head sample still on the previous tile
+ * counts when the trail then ends on `origin`. */
+static int ahead_is_origin(const FwTrail *t, const FwPoint *follower, const FwPoint *origin) {
+    if (!t || t->count < 2) return 0;
+    int32_t fx = fw_tile(follower->x), fz = fw_tile(follower->z);
+    int32_t ox = fw_tile(origin->x), oz = fw_tile(origin->z);
+    int seen = 0;
+    for (unsigned i = 0; i < t->count; ++i) {
+        const FwSample *s = trail_sample(t, i);
+        int32_t tx = fw_tile(s->x), tz = fw_tile(s->z);
+        if (tx == fx && tz == fz) { seen = 1; continue; }
+        if (seen) return tx == ox && tz == oz;
+    }
+    if (seen) return 0;
+    const FwSample *head = trail_sample(t, 0), *last = trail_sample(t, t->count - 1);
+    if (fw_tile(last->x) != ox || fw_tile(last->z) != oz) return 0;
+    int32_t hx = fw_tile(head->x), hz = fw_tile(head->z);
+    for (unsigned i = 1; i < t->count; ++i) {
+        const FwSample *s = trail_sample(t, i);
+        int32_t tx = fw_tile(s->x), tz = fw_tile(s->z);
+        if (tx != hx || tz != hz) return tx == ox && tz == oz;
+    }
+    return 0;
+}
+int fw_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin, unsigned face) {
+    if (!trail || !follower || !origin || face > 3) return 0;
+    int64_t dy = (int64_t)follower->y - origin->y;
+    if (dy > 2 * (int64_t)FW_TILE || dy < -2 * (int64_t)FW_TILE) return 0;
+    int32_t tx = fw_tile(follower->x) - fw_tile(origin->x);
+    int32_t tz = fw_tile(follower->z) - fw_tile(origin->z);
+    int cardinal = (face == 0 && tx == 0 && tz == -1) || (face == 1 && tx == 0 && tz == 1) ||
+        (face == 2 && tx == -1 && tz == 0) || (face == 3 && tx == 1 && tz == 0);
+    return cardinal && ahead_is_origin(trail, follower, origin);
+}
+int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out) {
+    if (!follower || !origin || !player || !out) return -1;
+    *out = *follower;
+    int64_t dx = (int64_t)follower->x - origin->x, dz = (int64_t)follower->z - origin->z;
+    int64_t ax = dx < 0 ? -dx : dx, az = dz < 0 ? -dz : dz;
+    int64_t span = ax >= az ? dx : dz;
+    if (!span || span > INT32_MAX || span <= INT32_MIN) return -1;
+    int64_t rx = (int64_t)origin->x - follower->x, ry = (int64_t)origin->y - follower->y, rz = (int64_t)origin->z - follower->z;
+    if (rx > INT32_MAX || rx < INT32_MIN || ry > INT32_MAX || ry < INT32_MIN || rz > INT32_MAX || rz < INT32_MIN) return -1;
+    int64_t py = (int64_t)player->y - origin->y;
+    if (py > 2 * (int64_t)FW_TILE || py < -2 * (int64_t)FW_TILE) return -1;
+    int alongX = ax >= az;
+    int64_t moved = alongX ? (int64_t)player->x - origin->x : (int64_t)player->z - origin->z;
+    int64_t lateral = alongX ? (int64_t)player->z - origin->z : (int64_t)player->x - origin->x;
+    if (lateral > 4096 || lateral < -4096) return -1;
+    if ((span > 0 && moved < 0) || (span < 0 && moved > 0)) return -1;
+    int64_t clamped = moved;
+    if (span > 0) { if (clamped > span) clamped = span; }
+    else if (clamped < span) clamped = span;
+    out->x = follower->x + mul_div((int32_t)rx, (int32_t)clamped, (int32_t)span);
+    out->y = follower->y + mul_div((int32_t)ry, (int32_t)clamped, (int32_t)span);
+    out->z = follower->z + mul_div((int32_t)rz, (int32_t)clamped, (int32_t)span);
+    return clamped == span;
+}
+int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player, FwSample *out) {
+    if (!trail || !follower || !player || !out || player->direction > 3) return 0;
+    fw_trail_clear(trail);
+    FwSample step = *follower;
+    step.direction = player->direction;
+    if (fw_trail_push(trail, &step, out, 0) < 0) return 0;
+    for (int i = 1; i <= 16; ++i) {
+        step = *player;
+        step.x = follower->x + mul_div(player->x - follower->x, i, 16);
+        step.y = follower->y + mul_div(player->y - follower->y, i, 16);
+        step.z = follower->z + mul_div(player->z - follower->z, i, 16);
+        step.direction = player->direction;
+        if (fw_trail_push(trail, &step, out, 0) < 0) return 0;
+    }
+    return 1;
+}

@@ -55,6 +55,13 @@ int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
  * and depth even with a perspective camera. Height is in world 20.12 units. */
 int fwr_head_position(const FwPoint *base,const FwrCamera *camera,
     int32_t height,FwPoint *output);
+/* Pull a head-attached bubble toward the camera along the eye ray so map
+ * geometry behind the follower cannot depth-test it away. Screen position
+ * stays put. When `player` is at least half a tile closer than the bubble,
+ * the bubble stops one unit behind that player instead of covering them.
+ * `player` may be null. */
+int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
+    const FwrCamera *camera,FwrPose *output);
 /* Preserve the player's foreground after follower shadow clearance without
  * putting the follower behind its own shadow or moving either image on screen. */
 int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,

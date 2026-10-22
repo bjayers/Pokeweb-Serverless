@@ -186,5 +186,57 @@ int main(void) {
     s=sample(3*4096+3*FW_TILE+4096,FW_TILE,-2*4096,1,FW_WORLD);
     assert(fw_trail_push(&t,&s,&out,0)==0);
     assert(!fw_trail_translate(&t,INT32_MAX,0,0)&&t.count==0);
+    /* Reverse step: one cardinal tile, trail ahead is the vacated tile. */
+    assert(fw_tile(FW_TILE/2)==0&&fw_tile(FW_TILE)==1);
+    assert(fw_tile(-1)==-1&&fw_tile(-FW_TILE)==-1&&fw_tile(-FW_TILE-1)==-2);
+    const int32_t center=4*(int32_t)FW_TILE+FW_TILE/2;
+    for(unsigned face=0;face<4;++face){
+        fw_trail_clear(&t);t.count=2;
+        int32_t fx=center,fz=center,ox=center,oz=center;
+        if(face==0)fz-=FW_TILE;else if(face==1)fz+=FW_TILE;else if(face==2)fx-=FW_TILE;else fx+=FW_TILE;
+        t.samples[0]=sample(fx,0,fz,1,FW_WORLD);t.samples[1]=sample(ox,0,oz,1,FW_WORLD);
+        FwPoint follower={fx,0,fz},origin={ox,0,oz};
+        assert(fw_swap_match(&t,&follower,&origin,face)==1);
+        assert(fw_swap_match(&t,&follower,&origin,face^1)==0);
+    }
+    fw_trail_clear(&t);
+    for(int i=0;i<=32;++i){s=sample(i*4096+FW_TILE/2,0,center,1,FW_WORLD);s.direction=3;assert(fw_trail_push(&t,&s,&out,0)>=0);}
+    FwPoint origin={32*4096+FW_TILE/2,0,center},follower={out.x,out.y,out.z};
+    assert(origin.x-follower.x==(int32_t)FW_TILE);
+    assert(fw_swap_match(&t,&follower,&origin,2)==1);
+    assert(fw_swap_match(&t,&follower,&origin,3)==0);
+    FwPoint diagonal=follower;diagonal.z+=FW_TILE;
+    assert(!fw_swap_match(&t,&diagonal,&origin,2));
+    FwPoint high=follower;high.y=3*(int32_t)FW_TILE;
+    assert(!fw_swap_match(&t,&high,&origin,2));
+    /* Head still on the tile behind the interpolated follower. */
+    fw_trail_clear(&t);t.count=2;
+    t.samples[0]=sample(center-2*(int32_t)FW_TILE,0,center,1,FW_WORLD);
+    t.samples[1]=sample(center,0,center,1,FW_WORLD);
+    follower=(FwPoint){center-(int32_t)FW_TILE,0,center};origin=(FwPoint){center,0,center};
+    assert(fw_swap_match(&t,&follower,&origin,2)==1);
+    FwPoint mid;
+    assert(fw_swap_mirror(&follower,&origin,&origin,&mid)==0&&mid.x==follower.x&&mid.z==follower.z);
+    FwPoint half=origin;half.x=origin.x+(follower.x-origin.x)/2;
+    assert(fw_swap_mirror(&follower,&origin,&half,&mid)==0);
+    assert(mid.x==follower.x+(origin.x-follower.x)/2&&mid.z==origin.z);
+    assert(fw_swap_mirror(&follower,&origin,&follower,&mid)==1&&mid.x==origin.x&&mid.y==origin.y&&mid.z==origin.z);
+    FwPoint past=follower;past.x-=4096;
+    assert(fw_swap_mirror(&follower,&origin,&past,&mid)==1&&mid.x==origin.x);
+    FwPoint side=half;side.z+=4097;
+    assert(fw_swap_mirror(&follower,&origin,&side,&mid)==-1);
+    FwPoint back=origin;back.x+=4096;
+    assert(fw_swap_mirror(&follower,&origin,&back,&mid)==-1);
+    FwPoint ledge=half;ledge.y=3*(int32_t)FW_TILE;
+    assert(fw_swap_mirror(&follower,&origin,&ledge,&mid)==-1);
+    assert(fw_swap_mirror(&follower,&origin,&origin,&mid)==0&&mid.x==follower.x&&mid.y==follower.y&&mid.z==follower.z);
+    FwSample start=sample(origin.x,origin.y,origin.z,1,FW_WORLD);start.direction=2;
+    FwSample end=sample(follower.x,follower.y,follower.z,1,FW_WORLD);end.direction=2;
+    assert(fw_trail_reseed(&t,&start,&end,&out)==1&&out.x==start.x);
+    assert(fw_trail_push(&t,&end,&out,0)==0&&out.x==start.x);
+    end.x-=4096;
+    int32_t rested=out.x;
+    assert(fw_trail_push(&t,&end,&out,0)==1);
+    assert(out.x<=rested&&rested-out.x<=4096);
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }
