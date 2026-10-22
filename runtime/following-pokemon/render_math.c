@@ -333,6 +333,19 @@ int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
  if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
  FwPoint direction;
  if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction))return 0;
+ /* Flat oval: the camera-side rim is closer than the center. Clear that rim,
+  * not just the center, or the near half still wins against the sprite. */
+ {
+  int32_t half=shadow->sx>shadow->sy?shadow->sx:shadow->sy;
+  if(half<1)half=1;
+  half*=8;
+  if(half>(int32_t)FW_TILE)half=(int32_t)FW_TILE;
+  uint32_t horiz=isqrt((uint64_t)direction.x*(uint64_t)direction.x+(uint64_t)direction.z*(uint64_t)direction.z);
+  int32_t rim=divide((int64_t)half*(int32_t)horiz,4096);
+  int32_t cover=rim+FWR_SHADOW_KEEP;
+  if(cover>(int32_t)FW_TILE)cover=(int32_t)FW_TILE;
+  if(keep<cover)keep=cover;
+ }
  /* The one-unit keep is a single step, capped like the old bias. A swap or
   * corner tuck has to be able to follow the sprite back through that oval,
   * so the larger keep may use the whole eye-ray shift. */

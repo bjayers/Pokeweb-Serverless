@@ -329,12 +329,11 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    int32_t useMargin=fwr_follow_margin(&cam,ease_s,depthRel,overlap,flat);
    int tuckBehind=p&&b!=p&&fwr_follow_tuck(result.policy,depthRel,clear,blend,overlap,flat);
    FollowingRenderDebug.sortMargin=tuckBehind?useMargin:margin;
-   int tucked=0;
    int limitGround=flat&&(blend||useMargin>margin);
    if(tuckBehind&&!limitGround){
     FwrPose behind;
     if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,useMargin,FWR_BEHIND_CAP,&behind)){
-     adjusted=behind;changed=1;tucked=1;
+     adjusted=behind;changed=1;
     }
    }else if(tuckBehind){
     int32_t room=fwr_ground_back(&adjusted,&cam,footY);
@@ -348,7 +347,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
      if(cap>2*(int32_t)FW_TILE)cap=2*(int32_t)FW_TILE;
      FwrPose behind;
      if(cap>=marginEff&&fwr_keep_behind(&adjusted,&playerOriginal,&cam,marginEff,cap,&behind)){
-      adjusted=behind;changed=1;tucked=1;
+      adjusted=behind;changed=1;
      }
     }
    }
@@ -382,9 +381,9 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.submittedSX=adjusted.sx;
    if(shadowLive){
     shadowTie.ground=ground;shadowTie.sprite=adjusted.position;
-    /* A tuck that pulls the sprite back has to take the oval with it.
-     * One unit is enough when the sprite was not moved past the shadow. */
-    shadowTie.keep=tucked?useMargin:FWR_SHADOW_KEEP;
+    /* Final submitted anchor, after the ground cap. The oval tuck clears its
+     * near rim from this point even when the follower itself did not move. */
+    shadowTie.keep=tuckBehind?useMargin:FWR_SHADOW_KEEP;
     shadowTie.player=(FwPoint){player->world.x,playerY,player->world.z};
     shadowTie.actorSystem=system;shadowTie.hasPlayer=1;shadowTie.valid=1;
    }
@@ -417,7 +416,9 @@ static int follower_shadow(FwPoint point){
  if(dx>FW_TILE||dx<-FW_TILE||dz>FW_TILE||dz<-FW_TILE||dy>2*FW_TILE||dy<-2*FW_TILE)return 2;
  if(shadowTie.hasPlayer){
   int64_t px=(int64_t)point.x-shadowTie.player.x,pz=(int64_t)point.z-shadowTie.player.z;
-  if(px*px+pz*pz<(int64_t)FWR_SHADOW_PLAYER*FWR_SHADOW_PLAYER)return 3;
+  int64_t nearPlayer=px*px+pz*pz,nearFeet=dx*dx+dz*dz;
+  /* Reject the player's oval, not the follower's, when the two stand together. */
+  if(nearPlayer<nearFeet&&nearPlayer<(int64_t)FWR_SHADOW_PLAYER*FWR_SHADOW_PLAYER)return 3;
  }
  return 0;
 }
