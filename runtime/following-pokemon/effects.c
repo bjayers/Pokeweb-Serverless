@@ -22,6 +22,7 @@ static struct {
  Scene scene; Billboard billboard; Material material,whiteMaterial;
  Transform transform;
 } fwfx;
+static Actor *fwfx_player;
 /* Set only from the validated installed registry. The retail archive has 975
  * members, but imported follower appearances extend it. */
 static uint16_t fwfx_resourceCount;
@@ -78,7 +79,7 @@ void fwfx_set_resource_count(unsigned count){
  fwfx_resourceCount=(uint16_t)count;
 }
 void fwfx_destroy(void){
- fwfx_emote_end();
+ fwfx_player=0;fwfx_emote_end();
  fwfx_cancel();free_white();
  for(unsigned i=0;i<2;++i)if(fwfx.actors[i]){CALL(0x02049961,void(*)(void*))(fwfx.actors[i]);fwfx.actors[i]=0;}
  if(fwfx.animation){CALL(0x020498b5,void(*)(void*))(fwfx.animation);fwfx.animation=0;}
@@ -208,6 +209,7 @@ void fwfx_draw(void *camera,void *light){
 }
 
 static struct {void *resources[2];Scene scene;Billboard billboard;Material material[2];int active;unsigned frame;Actor *actor;uint8_t bottomInset[2];} fwemote;
+void fwfx_set_player(Actor *player){fwfx_player=player;}
 void fwfx_emote_end(void){
  fwemote.active=0;fwemote.actor=0;
  for(unsigned i=0;i<2;++i)if(fwemote.resources[i]){CALL(0x02049561,int(*)(void*))(fwemote.resources[i]);CALL(0x02049431,void(*)(void*))(fwemote.resources[i]);fwemote.resources[i]=0;}
@@ -274,6 +276,18 @@ static void draw_emote(void *camera,void *light){
  int32_t height=(int32_t)(size-top+1)*(large?pose.sy/4:pose.sy/2)
   -(int32_t)fwemote.bottomInset[fwemote.frame&1]*(fwemote.billboard.sy/2);
  if(pose.sy<=0||!fwr_head_position(&base,&view,height,&head))return;
+ /* Stay in this 3D pass, after the map. A later text window still covers the
+  * bubble. The eye-ray push clears overhanging foliage without moving pixels. */
+ FwrPose bubble={{head.x,head.y,head.z},fwemote.billboard.sx,fwemote.billboard.sy},placed;
+ FwPoint playerPoint,*playerNear=0;
+ if(fwfx_player&&!(fwfx_player->flags&4u)){
+  playerPoint=(FwPoint){fwfx_player->world.x,fwfx_player->world.y,fwfx_player->world.z};
+  playerNear=&playerPoint;
+ }
+ if(fwr_emote_place(&bubble,playerNear,&view,&placed)){
+  head=placed.position;
+  fwemote.billboard.sx=(int16_t)placed.sx;fwemote.billboard.sy=(int16_t)placed.sy;
+ }
  fwemote.billboard.pos=(Vec){head.x,head.y,head.z};
  CALL(0x0204ebdd,void(*)(void*,void*,void*))(&fwemote.scene,camera,light);
 }

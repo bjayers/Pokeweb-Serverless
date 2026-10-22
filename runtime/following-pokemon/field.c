@@ -43,6 +43,11 @@ static Actor *fwfield_terrainActor;
 static void *fwfield_terrainController;
 static int16_t fwfield_terrainX,fwfield_terrainZ;
 static uint16_t fwfield_terrainZone;
+/* Last player zone whose trail samples share the current coordinate frame.
+ * Not save data. A seamless connection that jumps more than one tile
+ * translates the trail instead of clearing it. */
+static uint16_t fwfield_trailZone;
+static uint8_t fwfield_trailZoneValid;
 typedef struct {
  uint32_t reserved[2];uint16_t oldTerrain,terrain;
  uint32_t extra[2];void *controller;
@@ -69,6 +74,24 @@ API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads
 /* Searchable emulator diagnostics; values never become save data. */
 API volatile struct { uint32_t magic,version,ticks,spawns,deletes,reason,species,fwfield_code,actor,fwfield_player,visible,resets,system,systemFlags,field,cameraYaw,cameraPitch,depthClass,depthX,depthY,depthZ,modelSize; } FollowingDebug={.magic=0x47445746,.version=2};
 API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags,actorFlags; } FollowingShadowDebug={.magic=0x48535746,.version=1};
+/* FWSW: active during a reverse step, face applied this frame, progress along
+ * the vacated tile, blocked when that tile was not enterable. */
+API volatile struct { uint32_t magic,version,active,face,progress,blocked; } FollowingSwapDebug={.magic=0x57535746,.version=1};
+static struct { uint8_t active,departed,rail; uint16_t savedFace; FwPoint follower,origin,player; } swapOn;
+/* Post-swap gap. Not sidecar state: the 1856-byte follower is fixed, and a
+ * reload drops this with the overlay. `close_keep` is the metric of the pose
+ * the swap actually reached; travel grows it to one tile. */
+static struct { uint8_t active; uint32_t traveled, close_keep; FwPoint last; } ease;
+static Vec settled;
+static uint8_t haveSettled,haveLast;
+static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
+static void clear_ease(void){ease.active=0;ease.traveled=ease.close_keep=0;}
+void fw_depth_query(int *swapping,int *easing,uint32_t *traveled){
+ if(swapping)*swapping=swapOn.active?1:0;
+ if(easing)*easing=ease.active?1:0;
+ if(traveled)*traveled=ease.active?ease.traveled:0;
+}
+static void drop_settled(void){haveSettled=0;haveLast=0;}
 static void cleanup(void);
 static void clear_restore(void){
  fwfield_restore.magic=0;fwfield_restore.player=(Vec){0,0,0};fwfield_restore.follower=(Vec){0,0,0};
@@ -81,7 +104,7 @@ static void removed(Actor *a) {
 #ifdef FW_MOUNT
  if ((uintptr_t)a==fwfield_follower.actor) fwland_end();
 #endif
- if ((uintptr_t)a==fwfield_follower.actor) { fwfield_follower.actor=0; fwfield_follower.state=FW_ABSENT; if(!fwfield_cyclePending)fw_trail_clear(&fwfield_follower.trail); FollowingDebug.actor=0; FollowingDebug.visible=0; ++FollowingDebug.deletes; }
+ if ((uintptr_t)a==fwfield_follower.actor) { fwfield_follower.actor=0; fwfield_follower.state=FW_ABSENT; if(!fwfield_cyclePending)fw_trail_clear(&fwfield_follower.trail); clear_ease(); FollowingDebug.actor=0; FollowingDebug.visible=0; ++FollowingDebug.deletes; }
 }
 /* The actor renderer advances the imported directional animation itself.  Its
  * pause flag belongs to presentation only: never advance it while an owned
@@ -90,39 +113,263 @@ static void animation_gate(Actor *a) {
  if(fw_idle_animation_enabled(fwfield_follower.state,!(a->flags&HIDDEN),fwfx_busy()))a->flags&=~PAUSE_ANM;
  else a->flags|=PAUSE_ANM;
 }
+static int coord_ok(int64_t v){return v>=INT32_MIN&&v<=INT32_MAX;}
+static int add_coord(Vec *v,int32_t dx,int32_t dy,int32_t dz){
+ int64_t x=(int64_t)v->x+dx,y=(int64_t)v->y+dy,z=(int64_t)v->z+dz;
+ if(!coord_ok(x)||!coord_ok(y)||!coord_ok(z))return 0;
+ v->x=(int32_t)x;v->y=(int32_t)y;v->z=(int32_t)z;return 1;
+}
+/* Same disconnect test as the trail: more than one tile in XZ, or two in Y. */
+static int connection_jump(int64_t dx,int64_t dy,int64_t dz){
+ int64_t ax=dx<0?-dx:dx,ay=dy<0?-dy:dy,az=dz<0?-dz:dz;
+ if(ay>2*(int64_t)FW_TILE||ax>2*(int64_t)FW_TILE||az>2*(int64_t)FW_TILE)return 1;
+ /* Match trail isqrt: a gap disconnects only once the distance exceeds one tile. */
+ int64_t limit=(int64_t)FW_TILE+1;
+ return ax*ax+az*az>=limit*limit;
+}
+/* A zone change with a large coordinate jump is a seamless connection, not a
+ * warp. Shift the recorded route (and the follower, if it is still live) by
+ * that delta. Door warps rebuild the actor system and still drop the trail. */
+static int rebase_connection(Actor *a,Vec *pose,const FwSample *sample){
+ if(!fwfield_trailZoneValid){fwfield_trailZone=fwfield_player->zone;fwfield_trailZoneValid=1;return 1;}
+ if(fwfield_player->zone==fwfield_trailZone)return 1;
+ fwfield_trailZone=fwfield_player->zone;
+ FwTrail *t=&fwfield_follower.trail;
+ if(!t->count)return 1;
+ const FwSample *last=&t->samples[(t->head+t->count-1u)%FW_TRAIL_CAPACITY];
+ int64_t dx=(int64_t)sample->x-last->x,dy=(int64_t)sample->y-last->y,dz=(int64_t)sample->z-last->z;
+ if(!connection_jump(dx,dy,dz))return 1;
+ if(!coord_ok(dx)||!coord_ok(dy)||!coord_ok(dz)){fw_trail_clear(t);return 0;}
+ Vec savedActor={0},savedPose={0};
+ if(a)savedActor=a->world;
+ if(pose)savedPose=*pose;
+ if(a&&!add_coord(&a->world,(int32_t)dx,(int32_t)dy,(int32_t)dz)){fw_trail_clear(t);return 0;}
+ if(pose&&!add_coord(pose,(int32_t)dx,(int32_t)dy,(int32_t)dz)){if(a)a->world=savedActor;fw_trail_clear(t);return 0;}
+ if(!fw_trail_translate(t,(int32_t)dx,(int32_t)dy,(int32_t)dz)){if(a)a->world=savedActor;if(pose)*pose=savedPose;return 0;}
+ if(a){
+  for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+  a->grid[0]=(int16_t)(a->world.x/FW_TILE);a->grid[1]=(int16_t)(a->world.y/FW_TILE);a->grid[2]=(int16_t)(a->world.z/FW_TILE);
+ }
+ return 1;
+}
+static void player_sample(FwSample *sample){
+ *sample=(FwSample){.x=fwfield_player->world.x,.y=fwfield_player->world.y+fwfield_player->drawOffset.y+fwfield_player->externalOffset.y,
+  .z=fwfield_player->world.z,.generation=fwfield_generation,.space=1,.rail=0,.connection=0,.direction=(uint8_t)fwfield_player->face,.kind=FW_WORLD,.duration=1};
+}
+static int centered(const Vec *v){return ((uint32_t)v->x&0xffffu)==0x8000u&&((uint32_t)v->z&0xffffu)==0x8000u;}
+static int same_tile(int32_t x,int32_t z,int32_t ox,int32_t oz){return fw_tile(x)==fw_tile(ox)&&fw_tile(z)==fw_tile(oz);}
+static int on_rail(void){return (fwfield_player->flags&8192)&&PTR(fwfield_player->moveWork,0);}
+/* Grid centers still settle immediately. A rail point is almost never a
+ * tile center, so the previous frame's rail position is the step origin.
+ * The first frame only records that a position exists. */
+static void note_settled(void){
+ if(swapOn.active)return;
+ if(centered(&fwfield_player->world)){settled=fwfield_player->world;haveSettled=1;}
+ else if(on_rail()&&haveLast){settled=fwfield_player->world;haveSettled=1;}
+ haveLast=1;
+}
+static uint32_t swap_progress(const FwPoint *from,const FwPoint *to){
+ int64_t dx=(int64_t)to->x-from->x,dz=(int64_t)to->z-from->z;
+ if(dx<0)dx=-dx;
+ if(dz<0)dz=-dz;
+ uint64_t p=(uint64_t)dx+(uint64_t)dz;return p>0xffffffffu?0xffffffffu:(uint32_t)p;
+}
+static void bind_pose(Actor *a,int32_t x,int32_t y,int32_t z,unsigned face){
+ a->world=(Vec){x,y,z};
+ for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+ a->grid[0]=(int16_t)(x/(int32_t)FW_TILE);a->grid[1]=(int16_t)(y/(int32_t)FW_TILE);a->grid[2]=(int16_t)(z/(int32_t)FW_TILE);
+ CALL(0x02167099,void(*)(Actor*,uint32_t))(a,face);
+ fwr_anchor(a,face);
+ a->moveflags&=~(2048u|4096u);
+ FollowingSwapDebug.face=face;
+}
+static void recall_blocked(Actor *a){
+ if(!(a->flags&HIDDEN))fwfx_recall(a);
+ a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
+ fw_trail_clear(&fwfield_follower.trail);++FollowingDebug.resets;
+ clear_swap();clear_ease();drop_settled();FollowingSwapDebug.blocked=1;
+}
+/* 1 when `natural` is strictly closer than a fresh load, along the reseeded
+ * trail. The follower turns in place on that pose, or on the start floor when
+ * the mirrored end is closer than that. The next walk eases from there. */
+static int ease_from(const FwPoint *natural,const FwPoint *player,FwSample *start){
+ uint32_t close=fw_trail_metric_to_point(&fwfield_follower.trail,fwfield_follower.directional_gap,natural->x,natural->z);
+ if(!close||close>=FW_TILE){clear_ease();return 0;}
+ if(close<FW_EASE_START_KEEP)close=FW_EASE_START_KEEP;
+ if(!fw_trail_pose_behind(&fwfield_follower.trail,fwfield_follower.directional_gap,close,start)){clear_ease();return 0;}
+ ease.active=1;ease.traveled=0;ease.close_keep=close;ease.last=*player;return 1;
+}
+static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,const FwPoint *natural){
+ int rail=swapOn.rail;
+ /* Grid keeps the compass the player is walking. A rail facing is the line
+  * frame (0 +side, 1 -side, 2 +front, 3 -front); copy it, and reseed every
+  * sample with it before this function returns. move() does not push the
+  * trail on this frame, so the pre-turn head cannot replace the turn.
+  * The reseed pose is the fresh-load rest. Binding it here is the snap.
+  * Keep the mirrored end when it is already past the start floor. A closer
+  * end starts from that floor, still on the trail, and eases out from there. */
+ unsigned face=rail?fw_rail_swap_turn(fwfield_player->face,player->x-swapOn.origin.x,player->z-swapOn.origin.z):fwfield_player->face;
+ FwSample start=*sample,end=*sample,pose,eased;
+ start.x=swapOn.origin.x;start.y=swapOn.origin.y;start.z=swapOn.origin.z;start.direction=(uint8_t)face;
+ end.x=player->x;end.y=player->y;end.z=player->z;end.direction=(uint8_t)face;
+ int seeded=rail?fw_trail_reseed_along(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose)
+  :fw_trail_reseed(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose);
+ if(seeded&&ease_from(natural,player,&eased))
+  bind_pose(a,eased.x,eased.y,eased.z,face);
+ else if(seeded)
+  bind_pose(a,pose.x,pose.y,pose.z,face);
+ else{
+  fw_trail_clear(&fwfield_follower.trail);clear_ease();
+  bind_pose(a,swapOn.origin.x,swapOn.origin.y,swapOn.origin.z,face);
+ }
+ /* Drop the tile left behind by the swap. Grid matches the pose just bound. */
+ for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+ clear_swap();FollowingSwapDebug.face=face;
+ settled=fwfield_player->world;haveSettled=centered(&settled)?1:0;
+ if(!fwfx_hides_actor())a->flags&=~HIDDEN;
+ fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);
+ animation_gate(a);
+}
+static int near_origin(const FwPoint *p){
+ int64_t dx=(int64_t)p->x-swapOn.origin.x,dy=(int64_t)p->y-swapOn.origin.y,dz=(int64_t)p->z-swapOn.origin.z;
+ if(dy>4096||dy<-4096)return 0;
+ return dx*dx+dz*dz<=(int64_t)4096*4096;
+}
+/* Tile centers are not rail knots. A knot shorter than the follow gap never
+ * reaches the follower's world pose, so the travel facing would stay applied. */
+static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ FwPoint mirrored;
+ int dx=player->x-swapOn.player.x,dz=player->z-swapOn.player.z;
+ if(dx<0)dx=-dx;
+ if(dz<0)dz=-dz;
+ /* A finished knot sits still. A sub-unit bob must not keep the travel
+  * facing applied; a real step moves far more than this between frames. */
+ int stepSettled=swapOn.departed&&dx<=256&&dz<=256;
+ int mirror=fw_rail_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored,stepSettled);
+ if(mirror<0){clear_swap();return 0;}
+ Vec vacated={swapOn.origin.x,swapOn.origin.y,swapOn.origin.z};
+ if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
+ if(mirror==1){finish_swap(a,sample,player,&mirrored);return 1;}
+ if(near_origin(player)&&mirror==0&&swapOn.departed){
+  bind_pose(a,swapOn.follower.x,swapOn.follower.y,swapOn.follower.z,swapOn.savedFace);
+  clear_swap();settled=fwfield_player->world;haveSettled=1;animation_gate(a);return 1;
+ }
+ if(!near_origin(player))swapOn.departed=1;
+ swapOn.player=*player;
+ bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fw_swap_face(fwfield_player->face,1));
+ FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
+ FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
+ if(fwfield_follower.state==FW_FOLLOWING&&!fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
+ animation_gate(a);return 1;
+}
+/* Returns 1 when this frame belongs to the swap. A -1 mirror falls through
+ * so the untouched trail becomes authoritative again. */
+static int drive_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ if(swapOn.rail)return drive_rail_swap(a,sample,player);
+ FwPoint mirrored;
+ int mirror=fw_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored);
+ if(mirror<0){clear_swap();return 0;}
+ Vec vacated={swapOn.origin.x,swapOn.origin.y,swapOn.origin.z};
+ if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
+ int onFollower=centered(&fwfield_player->world)&&same_tile(player->x,player->z,swapOn.follower.x,swapOn.follower.z);
+ int onOrigin=centered(&fwfield_player->world)&&same_tile(player->x,player->z,swapOn.origin.x,swapOn.origin.z);
+ if(mirror==1||onFollower){finish_swap(a,sample,player,&mirrored);return 1;}
+ int gridLeads=fwfield_player->grid[0]==(int16_t)fw_tile(swapOn.follower.x)&&fwfield_player->grid[2]==(int16_t)fw_tile(swapOn.follower.z);
+ if(onOrigin&&mirror==0&&(swapOn.departed||!gridLeads)){
+  bind_pose(a,swapOn.follower.x,swapOn.follower.y,swapOn.follower.z,swapOn.savedFace);
+  clear_swap();settled=fwfield_player->world;haveSettled=1;animation_gate(a);return 1;
+ }
+ if(!(onOrigin&&mirror==0))swapOn.departed=1;
+ bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fwfield_player->face^1u);
+ FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
+ FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
+ if(fwfield_follower.state==FW_FOLLOWING&&!fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
+ animation_gate(a);return 1;
+}
+static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ FwPoint follower={a->world.x,a->world.y,a->world.z},origin={settled.x,settled.y,settled.z};
+ if(player->x==origin.x&&player->y==origin.y&&player->z==origin.z)return 0;
+ if(!fw_rail_swap_match(&fwfield_follower.trail,&follower,&origin))return 0;
+ FwPoint probe;
+ if(fw_rail_swap_mirror(&follower,&origin,player,&probe,0)<0)return 0;
+ if(probe.x==follower.x&&probe.y==follower.y&&probe.z==follower.z)return 0;
+ Vec vacated={origin.x,origin.y,origin.z};
+ if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
+ clear_ease();
+ swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.player=*player;swapOn.savedFace=a->face;
+ FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
+ return drive_swap(a,sample,player);
+}
+static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ if(swapOn.active||!haveSettled||fwfield_follower.state!=FW_FOLLOWING||fwfx_hides_actor())return 0;
+ if(on_rail())return begin_rail_swap(a,sample,player);
+ FwPoint follower={a->world.x,a->world.y,a->world.z},origin={settled.x,settled.y,settled.z};
+ if(!fw_swap_match(&fwfield_follower.trail,&follower,&origin,fwfield_player->face))return 0;
+ int stepping=!centered(&fwfield_player->world);
+ int gridLeads=centered(&fwfield_player->world)&&fwfield_player->grid[0]==(int16_t)fw_tile(follower.x)&&fwfield_player->grid[2]==(int16_t)fw_tile(follower.z);
+ int jumped=centered(&fwfield_player->world)&&same_tile(player->x,player->z,follower.x,follower.z);
+ if(!stepping&&!gridLeads&&!jumped)return 0;
+ FwPoint probe;
+ if(fw_swap_mirror(&follower,&origin,player,&probe)<0)return 0;
+ Vec vacated={origin.x,origin.y,origin.z};
+ if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
+ clear_ease();
+ swapOn.active=1;swapOn.departed=0;swapOn.follower=follower;swapOn.origin=origin;swapOn.savedFace=a->face;
+ FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
+ return drive_swap(a,sample,player);
+}
 static void move(Actor *a) {
  if ((uintptr_t)a!=fwfield_follower.actor || !fwfield_player || a->system!=fwfield_owner) return;
 #ifdef FW_MOUNT
  if(fwland_active()){fwland_follow_player(a,fwfield_player);a->flags&=~PAUSE_ANM;return;}
 #endif
- if(fwfield_follower.state==FW_INTERACTING||fwfield_follower.state==FW_EVENT_PAUSED){a->flags|=PAUSE_ANM;return;}
- FwSample sample={.x=fwfield_player->world.x,.y=fwfield_player->world.y+fwfield_player->drawOffset.y+fwfield_player->externalOffset.y,
- .z=fwfield_player->world.z,.generation=fwfield_generation,.space=1,.rail=0,.connection=0,.direction=(uint8_t)fwfield_player->face,.kind=FW_WORLD,.duration=1}, target;
+ if(fwfield_follower.state==FW_INTERACTING){a->flags|=PAUSE_ANM;return;}
+ int paused=fwfield_follower.state==FW_EVENT_PAUSED;
+ if(paused)a->flags|=PAUSE_ANM;
+ FwSample sample,target;
+ player_sample(&sample);
+ uint16_t zoneBefore=fwfield_trailZone;uint8_t zoneValid=fwfield_trailZoneValid;
+ if(!rebase_connection(a,0,&sample)){a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;++FollowingDebug.resets;clear_swap();clear_ease();drop_settled();animation_gate(a);return;}
+ if(zoneValid&&fwfield_player->zone!=zoneBefore){clear_swap();clear_ease();drop_settled();}
+ FwPoint player={fwfield_player->world.x,fwfield_player->world.y,fwfield_player->world.z};
+ if(paused){clear_swap();drop_settled();}
+ else if(swapOn.active){if(drive_swap(a,&sample,&player))return;}
+ else if(begin_swap(a,&sample,&player))return;
  int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
- if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;animation_gate(a); return; }
+ if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;clear_swap();clear_ease();drop_settled();animation_gate(a); return; }
+ /* An event may own the sprite, but the route has to keep the player's
+  * steps or a short pause while running exceeds one tile and the trail drops.
+  * Pause and a full stop do not advance the ease, so a held gap stays put. */
+ if(paused)return;
  if(fwfield_follower.state==FW_FOLLOWING && !fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
- if(result!=1)target=(FwSample){.x=a->world.x,.y=a->world.y,.z=a->world.z,
-                                .direction=(uint8_t)a->face};
- int clamped=0;
- if(fwfield_follower.state==FW_FOLLOWING&&!(a->flags&HIDDEN)&&!fwfx_busy()){
-  int64_t ox=(int64_t)a->drawOffset.x+a->externalOffset.x;
-  int64_t oy=(int64_t)a->drawOffset.y+a->externalOffset.y;
-  int64_t oz=(int64_t)a->drawOffset.z+a->externalOffset.z;
-  if(ox>=-8*4096&&ox<=8*4096&&oy>=-8*4096&&oy<=8*4096&&oz>=-8*4096&&oz<=8*4096){
-   FwPoint pose={target.x,target.y,target.z},playerPose={sample.x,sample.y,sample.z};
-   FwPoint artOffset={(int32_t)ox,(int32_t)oy,(int32_t)oz};
-   clamped=fw_clamp_dialogue_pose(&pose,&playerPose,&artOffset,fwfield_player->face,
-                                   fwfield_follower.directional_gap[fwfield_player->face]);
-   if(clamped){target.x=pose.x;target.z=pose.z;}
+ if(result!=1){note_settled();animation_gate(a);return;}
+ if(ease.active){
+  if(!fwfield_follower.trail.count)clear_ease();
+  else{
+   int64_t dy=(int64_t)sample.y-a->world.y;
+   if(dy<0)dy=-dy;
+   uint32_t step=fw_travel(ease.last.x,ease.last.z,player.x,player.z);
+   uint32_t traveled=ease.traveled+step;
+   if(traveled<ease.traveled)traveled=0xffffffffu;
+   ease.last=player;
+   /* A stair or ledge completes onto the ordinary trail pose. Past the
+    * travel budget the push output is the fresh-load rest, exactly. */
+   if(dy>(int64_t)FW_TILE||traveled>=FW_EASE_TRAVEL)clear_ease();
+   else{
+    ease.traveled=traveled;
+    uint32_t keep=fw_ease_keep(traveled,FW_EASE_TRAVEL,ease.close_keep,FW_TILE);
+    FwSample posed;
+    if(fw_trail_pose_behind(&fwfield_follower.trail,fwfield_follower.directional_gap,keep,&posed)){
+     target.x=posed.x;target.y=posed.y;target.z=posed.z;
+    }
+   }
   }
  }
- if(result!=1&&!clamped){animation_gate(a);return;}
  Vec next={target.x,target.y,target.z};
  if(!fws_step_clear(a,&next)){
-  if(result!=1){animation_gate(a);return;}
   if(!(a->flags&HIDDEN))fwfx_recall(a);
   a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
-  fw_trail_clear(&fwfield_follower.trail);++FollowingDebug.resets;return;
+  fw_trail_clear(&fwfield_follower.trail);clear_ease();++FollowingDebug.resets;return;
  }
  a->world=(Vec){target.x,target.y,target.z};
  for(unsigned i=0;i<3;++i) a->previous[i]=a->grid[i];
@@ -144,6 +391,7 @@ static void move(Actor *a) {
   * cleared dereferences a null Actor+0x94 context and freezes the game. Keep
   * stock out of this path until a grid-specific adapter is audited. */
  animation_gate(a);
+ note_settled();
 }
 static const Moves fwfield_moves={0,noop,move,removed,noop};
 static int owned(void) {
@@ -158,9 +406,10 @@ static void cleanup_impl(int keepTrail) {
  fwt_cancel();
  if(owned()) CALL(0x02166981,void(*)(Actor*))((Actor*)fwfield_follower.actor);
  fwfield_follower.actor=0; fwfield_player=0; fwfield_follower.state=FW_ABSENT;
- if(!keepTrail)fw_trail_clear(&fwfield_follower.trail);
+ if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
  fwfield_cyclePending=0;
+ clear_swap();clear_ease();drop_settled();settled=(Vec){0,0,0};
  FollowingDebug.actor=FollowingDebug.visible=0;
 }
 static void cleanup(void) {cleanup_impl(0);}
@@ -245,7 +494,8 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
    species=key>>11;form=(key>>3)&255;gender=(key>>1)&3;shiny=key&1;row=read16(r+4);
   }else{species=read16(r);form=r[2];gender=r[3];shiny=r[4];row=read16(r+6);}
   if(species!=p->species)goto fail;
-  int score=(form==p->form?8:form==0?0:-20)+(gender==p->gender?4:gender==2?2:-20)+(shiny==p->shiny?1:-20);
+  unsigned shown=fw_follower_form(p->species,p->form);
+  int score=(form==shown?8:form==0?0:-20)+(gender==p->gender?4:gender==2?2:-20)+(shiny==p->shiny?1:-20);
   if(score>best){best=score;fallback=FW_CODE_BASE+row-FW_STOCK_ROWS;fwfield_follower.side_gap=fwfield_stride==12?(r[8]>>3)&7:r[15];fwfield_follower.sprite_y=(int8_t)(fwfield_stride==12?r[10]:r[13]);
    artX=(int8_t)(fwfield_stride==12?r[9]:r[12]);
 #ifdef FW_MOUNT
@@ -254,15 +504,19 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
   }
  }
  if(opened)CALL(0x02070de1,int(*)(void*))(file);
- fwfield_follower.directional_gap[0]=fwfield_follower.directional_gap[1]=0;
  if(artX<0)artX=-artX;
  unsigned maximum=artX<10?10u-(unsigned)artX:0u;
  unsigned gap=fwfield_follower.side_gap+FW_DEFAULT_SIDE_GAP_BONUS;
- fwfield_follower.directional_gap[2]=fwfield_follower.directional_gap[3]=gap<maximum?gap:maximum;
+ if(gap>maximum)gap=maximum;
+ if(gap>FW_MAX_DIRECTIONAL_GAP)gap=FW_MAX_DIRECTIONAL_GAP;
+ for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)gap;
  if(first<end&&fallback>=FW_CODE_BASE){
   uint8_t positions[12];
   if(fwp_land(fallback-FW_CODE_BASE,fwfield_descriptorCount-FW_STOCK_ROWS,fwfield_registryCrc,positions)){
-   for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=positions[i];
+   unsigned uniform=0;
+   for(unsigned i=0;i<4;++i)if(positions[i]>uniform)uniform=positions[i];
+   if(uniform>FW_MAX_DIRECTIONAL_GAP)uniform=FW_MAX_DIRECTIONAL_GAP;
+   for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)uniform;
   }
  }
  return first<end?fallback:0;
@@ -355,10 +609,9 @@ static void cycle_follower(void *game,void *field){
 }
 static void cycle_track(void){
  if(!fwfield_cyclePending||!fwfield_player)return;
- FwSample sample={.x=fwfield_player->world.x,
-  .y=fwfield_player->world.y+fwfield_player->drawOffset.y+fwfield_player->externalOffset.y,
-  .z=fwfield_player->world.z,.generation=fwfield_generation,.space=1,
-  .direction=(uint8_t)fwfield_player->face,.kind=FW_WORLD,.duration=1},target;
+ FwSample sample,target;
+ player_sample(&sample);
+ if(!rebase_connection(0,&fwfield_cyclePose,&sample)){fwfield_cyclePending=0;return;}
  int step=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
  if(step<0){fwfield_cyclePending=0;return;}
  if(step==1){
@@ -392,7 +645,7 @@ API uint32_t FollowingSurfPartyAppearance(void *game){
   unsigned form=param(mon,0x6f,0),gender=param(mon,0x6e,0);
   unsigned shiny=!!CALL(0x0201cdd9,int(*)(void*))(mon);
   if(form>255||gender>2)continue;
-  uint32_t appearance=species|(form<<10)|(gender<<18)|(shiny<<26);
+  uint32_t appearance=species|(fw_follower_form(species,form)<<10)|(gender<<18)|(shiny<<26);
   if(!first)first=appearance;
   if(fwfield_follower.has_selection){
    const FwPokemon *selected=&fwfield_follower.selected;
@@ -493,12 +746,12 @@ static void before(ActorSystem *sys) {
  if(fwland_invalid()&&owned()){
   Actor *a=(Actor*)fwfield_follower.actor;
   fwland_end();a->flags|=HIDDEN;a->moveflags&=~SHADOW_VANISH;
-  fw_trail_clear(&fwfield_follower.trail);fwfield_follower.state=FW_WAITING;
+  fw_trail_clear(&fwfield_follower.trail);clear_ease();fwfield_follower.state=FW_WAITING;
   FollowingDebug.visible=0;
  }
 #endif
  FollowingDebug.fwfield_player=(uint32_t)fwfield_player; FollowingDebug.species=fwfield_follower.selected.species; FollowingDebug.fwfield_code=fwfield_code;
- if(fwfield_follower.actor && !owned()){fwfield_follower.actor=0;fw_trail_clear(&fwfield_follower.trail);}
+ if(fwfield_follower.actor && !owned()){fwfield_follower.actor=0;fw_trail_clear(&fwfield_follower.trail);clear_ease();}
  if(paused&&fwfield_restore.magic!=FWE_RESTORE_MAGIC)return;
  /* Only a matching storage return may reconstruct during a paused event. */
  if(fwfield_restore.magic==FWE_RESTORE_MAGIC&&(!fw_same_identity(&fwfield_restore.selected,&fwfield_follower.selected)
@@ -514,7 +767,7 @@ static void before(ActorSystem *sys) {
    a->flags&=~HIDDEN;fwfield_follower.state=FW_FOLLOWING;
    if(fwland_begin(sys,a,fwfield_player,field,fwfield_code,
       fwfield_registryCrc,fwfield_descriptorCount,&fwfield_follower.selected,fwfield_follower.slot)){
-    fw_trail_clear(&fwfield_follower.trail);fwland_follow_player(a,fwfield_player);
+    fw_trail_clear(&fwfield_follower.trail);clear_ease();fwland_follow_player(a,fwfield_player);
     FollowingDebug.visible=1;
    }else{a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;}
   }
@@ -545,7 +798,7 @@ static void before(ActorSystem *sys) {
     a->flags&=~HIDDEN;fwfield_follower.state=FW_FOLLOWING;
     if(fwland_begin(sys,a,fwfield_player,field,fwfield_code,
        fwfield_registryCrc,fwfield_descriptorCount,&fwfield_follower.selected,fwfield_follower.slot)){
-     fw_trail_clear(&fwfield_follower.trail);fwland_follow_player(a,fwfield_player);
+     fw_trail_clear(&fwfield_follower.trail);clear_ease();fwland_follow_player(a,fwfield_player);
      FollowingDebug.visible=1;
     }else{a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;}
    }
@@ -573,7 +826,7 @@ static void before(ActorSystem *sys) {
 #ifdef FW_MOUNT
    if(fwfield_landCarry){
     if(fwland_begin(sys,a,fwfield_player,field,fwfield_code,fwfield_registryCrc,fwfield_descriptorCount,&fwfield_follower.selected,fwfield_follower.slot)){
-     fw_trail_clear(&fwfield_follower.trail);fwland_follow_player(a,fwfield_player);
+     fw_trail_clear(&fwfield_follower.trail);clear_ease();fwland_follow_player(a,fwfield_player);
     }
     fwfield_landCarry=0;
    }
@@ -689,7 +942,9 @@ API void FollowingDraw(void *system,void *camera,void *light){
 #endif
 }
 API void FollowingEffectsDraw(void *system,void *camera,void *light){
- CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);fwfx_draw(camera,light);
+ fwr_shadow_pass(system,camera,light);
+ fwfx_set_player(fwfield_player&&!(fwfield_player->flags&HIDDEN)?fwfield_player:0);
+ fwfx_draw(camera,light);
 }
 API void FollowingTerrainDraw(void *system,void *camera,void *light){
  fwr_effects_draw(system,camera,light,owned()?(Actor*)fwfield_follower.actor:0);
@@ -743,11 +998,11 @@ static int land_toggle(void *field){
    fwfield_landCheckAfterPause=0;
    if(fwland_active()){
     fwland_end();a->flags|=HIDDEN;a->moveflags&=~SHADOW_VANISH;
-    fw_trail_clear(&fwfield_follower.trail);fwfield_follower.state=FW_WAITING;
+    fw_trail_clear(&fwfield_follower.trail);clear_ease();fwfield_follower.state=FW_WAITING;
     FollowingDebug.visible=0;
    }else if(!(a->flags&HIDDEN) && fwland_begin(fwfield_owner,a,fwfield_player,field,fwfield_code,
       fwfield_registryCrc,fwfield_descriptorCount,&fwfield_follower.selected,fwfield_follower.slot)){
-   fw_trail_clear(&fwfield_follower.trail);
+   fw_trail_clear(&fwfield_follower.trail);clear_ease();
    fwland_follow_player(a,fwfield_player);
     CALL(0x02006255,void(*)(unsigned))(1374u);
    }
@@ -768,7 +1023,7 @@ static void *try_water(void *game,void *field){
      slot,&dir,&attribute))return 0;
  Actor *a=(Actor*)fwfield_follower.actor;
  unsigned appearance=fwfield_follower.selected.species|
-  ((unsigned)fwfield_follower.selected.form<<10)|
+  (fw_follower_form(fwfield_follower.selected.species,fwfield_follower.selected.form)<<10)|
   ((unsigned)fwfield_follower.selected.gender<<18)|
   ((unsigned)fwfield_follower.selected.shiny<<26);
  /* Keep the land rider's texture allocations live while the Surf materials
@@ -779,7 +1034,7 @@ static void *try_water(void *game,void *field){
  if(!event){fwsurf_destroy();return 0;}
  fwland_handoff(fwfield_tick);
  a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;
- fw_trail_clear(&fwfield_follower.trail);FollowingDebug.visible=0;
+ fw_trail_clear(&fwfield_follower.trail);clear_ease();FollowingDebug.visible=0;
  return event;
 }
 #endif

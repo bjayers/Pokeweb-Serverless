@@ -85,32 +85,48 @@ int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
  if(!f||f->state!=FW_FOLLOWING||!p||!a||(a->flags&4)||fwfx_busy()||p->face>3||f->trail.count<2)return 0;
  int gap=f->directional_gap[p->face];if(gap>(int)FW_MAX_DIRECTIONAL_GAP)return 0;
  int x=a->world.x-p->world.x,z=a->world.z-p->world.z,y=a->world.y-(p->world.y+p->drawOffset.y+p->externalOffset.y);
- if(abs32(x)>(int)(p->face>=2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0))||
-    abs32(z)>(int)(p->face<2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0))||
-    abs32(y)>8*4096)return 0;
+ if(abs32(y)>8*4096)return 0;
+ int box=abs32(x)>(int)(p->face>=2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0))||
+    abs32(z)>(int)(p->face<2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0));
  unsigned controller=CALL(0x02180579,unsigned(*)(void*))(field);
  int vx=p->face==2?-256:p->face==3?256:0,vz=p->face==0?-256:p->face==1?256:0;
+ int rail=0,axis=512;
  if(controller){
   /* Rail-facing keys are relative to the curve, not world compass directions.
-     Only the player owns native rail movement work; never query the follower. */
+     Only the player owns native rail movement work; never query the follower.
+     Consecutive rail knots can be wider than one grid tile. A follower standing
+     on that facing knot is in reach; the compass box and the two-tile cap are
+     what used to reject it. Anything that is not that knot keeps both checks. */
   if(!(p->flags&8192)||!PTR(p->moveWork,0))return 0;
   if(CALL(0x02195729,unsigned(*)(Actor*,unsigned))(p,p->face)&3)return 0;
   Vec front;CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(PTR(field,0x94),p->face,&front);
+  FwPoint playerPt={p->world.x,p->world.y+p->drawOffset.y+p->externalOffset.y,p->world.z};
+  FwPoint followPt={a->world.x,a->world.y,a->world.z},forward={front.x,front.y,front.z};
+  rail=fw_rail_segment_reach(&playerPt,&followPt,&forward,(unsigned)gap);
   vx=(front.x-p->world.x)/256;vz=(front.z-p->world.z)/256;
-  if(abs32(vx)>512||abs32(vz)>512)return 0;
- }
+  if(!rail){
+   if(box||abs32(vx)>512||abs32(vz)>512)return 0;
+  }else{
+   int reach=abs32(vx)>abs32(vz)?abs32(vx):abs32(vz);
+   axis=reach+64;if(axis<512)axis=512;
+  }
+ }else if(box)return 0;
  /* A turn leaves a follower partway across its adjacent tile, with a facing
     independent of the player's. Admit half a tile sideways regardless of
     sprite width or facing, including a rotated rail tangent. Native target
     tiles, obstructions and the bounded connected trail still constrain reach. */
- int length=vx*vx+vz*vz,px=x/256,pz=z/256,along=px*vx+pz*vz,lateral=px*vz-pz*vx;
- if(!length||along<length/2||along>length+length/8+gap*length/16||abs32(lateral)>(int)((unsigned)length/2))return 0;
+ int length=vx*vx+vz*vz;
+ if(!rail){
+  int px=x/256,pz=z/256,along=px*vx+pz*vz,lateral=px*vz-pz*vx;
+  if(!length||along<length/2||along>length+length/8+gap*length/16||abs32(lateral)>(int)((unsigned)length/2))return 0;
+ }else if(!length)return 0;
  /* A bounded connected trail proves both actors occupy the same corridor.
-    Use the rail tangent too, so rotated/curved paths retain normal reach. */
+    Use the rail tangent too, so rotated/curved paths retain normal reach.
+    On a wide knot the axis limit is that segment, not a fixed two tiles. */
  for(unsigned i=0;i<f->trail.count;++i){const FwSample *s=&f->trail.samples[(f->trail.head+i)%FW_TRAIL_CAPACITY];
   if(s->generation!=f->generation||abs32(s->y-a->world.y)>8*4096)return 0;
   int dx=(s->x-p->world.x)/256,dz=(s->z-p->world.z)/256;
-  if(abs32(dx)>512||abs32(dz)>512||abs32(dx*vz-dz*vx)>(int)((unsigned)length/2))return 0;
+  if(abs32(dx)>axis||abs32(dz)>axis||abs32(dx*vz-dz*vx)>(int)((unsigned)length/2))return 0;
  }
  if(!controller){
   int16_t gx,gy,gz;CALL(0x0219aacd,void(*)(void*,void*,void*,void*))(PTR(field,0x94),&gx,&gy,&gz);
@@ -122,6 +138,18 @@ int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
       (p->face==2&&dx==-1&&dz==0)||(p->face==3&&dx==1&&dz==0));
   if((dx||dz)&&!next)return 0;
   if(CALL(0x0215e4f1,unsigned(*)(Actor*,unsigned))(p,p->face))return 0;
+ }
+ /* The world box, trail and grid already admit this follower. A draw anchor
+    that sticks past the talk limit is pulled back onto it. Anything rejected
+    above returns before this write, so a failed probe leaves the pose as it was. */
+ int64_t ox=(int64_t)a->drawOffset.x+a->externalOffset.x,oy=(int64_t)a->drawOffset.y+a->externalOffset.y,oz=(int64_t)a->drawOffset.z+a->externalOffset.z;
+ if(ox>=-8*4096&&ox<=8*4096&&oy>=-8*4096&&oy<=8*4096&&oz>=-8*4096&&oz<=8*4096){
+  FwPoint pose={a->world.x,a->world.y,a->world.z};
+  FwPoint playerPose={p->world.x,p->world.y+p->drawOffset.y+p->externalOffset.y,p->world.z};
+  FwPoint art={(int32_t)ox,(int32_t)oy,(int32_t)oz};
+  if(fw_clamp_dialogue_pose(&pose,&playerPose,&art,p->face,(unsigned)gap)){
+   a->world.x=pose.x;a->world.z=pose.z;a->grid[0]=(int16_t)(pose.x/FW_TILE);a->grid[2]=(int16_t)(pose.z/FW_TILE);
+  }
  }
  return 1;
 }
@@ -226,6 +254,19 @@ void *fwt_begin(FwFollower *f,Actor *player,Actor *actor,void *field,void *game,
  current.tileX=player->grid[0];current.tileY=player->grid[2];
  int dx=player->world.x-actor->world.x,dz=player->world.z-actor->world.z;
  unsigned face=abs32(dx)>abs32(dz)?(dx<0?2u:3u):(dz<0?0u:1u);
+ /* Grid facing is a world compass. On a rail the same numbers are the line
+  * frame: 0 +side, 1 -side, 2 +front, 3 -front. They match the compass only
+  * while the line is axis-aligned, which is why a curved ring turned away
+  * or down. The follower stores that rail value in the same face field the
+  * engine converts for a rail NPC. */
+ void *railWork=PTR(field,0x94);
+ if(railWork&&(player->flags&8192)&&PTR(player->moveWork,0)&&player->face<=3){
+  Vec side,ahead;
+  CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(railWork,0,&side);
+  CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(railWork,2,&ahead);
+  unsigned rail=fw_rail_face_at(dx,dz,ahead.x-player->world.x,ahead.z-player->world.z,side.x-player->world.x,side.z-player->world.z);
+  face=rail<=3?rail:player->face^1u;
+ }
  current.direction=(uint8_t)face;
  void *gameData=PTR(field,8);
  int giftRule=-1,contextRule=-1,rule=-1;uint16_t claims=0;FwrItemChoice choice={0};

@@ -155,8 +155,12 @@ void FollowingOptionsMain(OptScroll *s,OptUi *ui,void *message,void *graphic,voi
  else if(old==OPT_CONFIRM)s->select=5;
  CALL(0x0219e0e1,void(*)(void*,void*,void*,void*,void*))(s,ui,message,graphic,appbar);
  ui->input=(int32_t)input;
- int16_t touchRowY=(int16_t)(120+s->objectY);
- if(input==INPUT_TOUCH&&ui->touch.y>=touchRowY-12&&ui->touch.y<touchRowY+12){
+ /* Marker Y is the top of the sixth row, not its center. A 24px band
+  * centered on that top covers the bottom of Save and only the top of
+  * Followers. The drawn row is the 24px under the marker, which does not
+  * meet the Save row. D-pad left/right above is unchanged. */
+ int rowTop=120+s->objectY;
+ if(input==INPUT_TOUCH&&ui->touch.y>=rowTop&&ui->touch.y<rowTop+24){
   option.virtualRow=OPT_ROW;s->select=5;
   uint8_t next=option.staged;
   if(ui->touch.x>=112&&ui->touch.x<184)next=0;

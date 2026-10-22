@@ -45,10 +45,19 @@ for script in (False,True):
  assert not h.u32(h.F+24) and h.u32(s.debug+16)==4
  assert h.call('fws_poll')==(2 if script else 4)
  assert bytes(uc.mem_read(s.NPC+68,12))==snap[2] # original write still commits
-# The same long sweep from an initialized NPC remains unsafe even when the
-# endpoint is clear. Do not weaken real movement to destination-only checks.
+# A multi-tile relocate is a traffic respawn, not a swept walk. A clear
+# endpoint keeps the follower. Landing on its tile still recalls, and a
+# one-tile step onto it still sweeps.
 s.setup();h.put(s.NPC,3);uc.mem_write(s.NPC+68,bytes(12))
 uc.mem_write(s.VEC,struct.pack('<iii',20*65536+32768,0,20*65536+32768))
+h.call(0x02167348,[s.NPC,s.VEC]);assert h.u32(h.F+24)==h.A
+s.setup();h.put(s.NPC,3);uc.mem_write(s.NPC+68,bytes(12))
+uc.mem_write(s.VEC,struct.pack('<iii',10*65536+32768,0,9*65536+32768))
+h.call(0x02167348,[s.NPC,s.VEC])
+assert not h.u32(h.F+24) and h.u32(s.debug+16)==4
+s.setup();h.put(s.NPC,3)
+uc.mem_write(s.NPC+68,struct.pack('<iii',10*65536+32768,0,8*65536+32768))
+uc.mem_write(s.VEC,struct.pack('<iii',10*65536+32768,0,9*65536+32768))
 h.call(0x02167348,[s.NPC,s.VEC])
 assert not h.u32(h.F+24) and h.u32(s.debug+16)==4
 # Native 0x1D9 target only edits spawn data: direction/x/y/z, not live actors.

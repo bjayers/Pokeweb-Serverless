@@ -444,29 +444,34 @@ snap=setup();event();actor_pos(10,8);h.call(0x02166ec8,[NPC,9]);recalled(4);asse
 snap=setup();event();actor_pos(10,8,2);h.call(0x02166ec8,[NPC,9]);kept(snap)
 for code in (8,0x2c,0x34,0x43):
  setup();event();h.call(0x02166ec8,[h.P,code]);recalled(3)
-if os.environ.get('FOLLOWING_VARIANT','full')=='full':
- for code in range(0x54,0x5c):
-  snap=setup();event();h.put(h.GAME+0x18,0)
-  h.put(h.P,h.u32(h.P)|2) # initialized retail player uses world-step path
-  h.call(0x02166ec8,[h.P,code]);kept(snap)
-  uc.mem_write(VEC,struct.pack('<iii',11*65536,0,10*65536))
-  h.call(0x02167348,[h.P,VEC]);kept(snap)
-  # A later live event cannot inherit the event-end running exemption.
-  event();h.call(0x02166ec8,[h.P,code]);recalled(3)
- snap=setup();event();h.put(h.GAME+0x18,0);h.put(h.P,h.u32(h.P)|2)
- h.call(0x02166ec8,[h.P,0x58]);kept(snap)
- uc.mem_write(VEC,struct.pack('<iii',13*65536,0,10*65536))
- h.call(0x02167348,[h.P,VEC]);recalled(3) # teleport-scale step
- setup();event();h.put(h.GAME+0x18,0);h.put(h.P,h.u32(h.P)|2)
- h.call(0x02166ec8,[h.P,0x58])
+# Base and full both keep a held run across a seamless zone when no event is live.
+for code in range(0x54,0x5c):
+ snap=setup();event();h.put(h.GAME+0x18,0)
+ h.put(h.P,h.u32(h.P)|2) # initialized retail player uses world-step path
+ h.call(0x02166ec8,[h.P,code]);kept(snap)
  uc.mem_write(VEC,struct.pack('<iii',11*65536,0,10*65536))
- h.call(0x02167c0c,[h.P,VEC,0]);recalled(3) # direct placement
-else:
- # The no-live-event running exemption is a pre-existing full-only policy.
- for code in range(0x54,0x5c):
-  setup();event();h.put(h.GAME+0x18,0);h.put(h.P,h.u32(h.P)|2)
-  h.call(0x02166ec8,[h.P,code]);recalled(3)
+ h.call(0x02167348,[h.P,VEC]);kept(snap)
+ # A later live event cannot inherit the event-end running exemption.
+ event();h.call(0x02166ec8,[h.P,code]);recalled(3)
+snap=setup();event();h.put(h.GAME+0x18,0);h.put(h.P,h.u32(h.P)|2)
+h.call(0x02166ec8,[h.P,0x58]);kept(snap)
+uc.mem_write(VEC,struct.pack('<iii',13*65536,0,10*65536))
+h.call(0x02167348,[h.P,VEC]);recalled(3) # teleport-scale step
+setup();event();h.put(h.GAME+0x18,0);h.put(h.P,h.u32(h.P)|2)
+h.call(0x02166ec8,[h.P,0x58])
+uc.mem_write(VEC,struct.pack('<iii',11*65536,0,10*65536))
+h.call(0x02167c0c,[h.P,VEC,0]);recalled(3) # direct placement
 setup();event();h.call(0x02166ec8,[NPC,0xc0]);recalled(7)
+# Castelia is a rail map, and its sidewalk crowds use wall-walk codes. Neither
+# the map controller nor a far sidewalk step is a collision. A step onto the
+# follower still is. Rail and placeholder spawns wait for the real position.
+for code in (4,0x69,0x6a,0x71,0x54):
+ snap=setup();event();h.controller=1;actor_pos(20,20);h.call(0x02166ec8,[NPC,code]);kept(snap)
+snap=setup();event();h.controller=1;actor_pos(10,8);h.call(0x02166ec8,[NPC,0x6a]);recalled(4)
+snap=setup();event();h.put(ENTITY+24,1);h.call(ex[symbol_hash('FollowingEventAllocate')],[h.SYS,ENTITY]);kept(snap)
+snap=setup();event();h.half(ENTITY+2,0xb9);h.call(ex[symbol_hash('FollowingEventAllocate')],[h.SYS,ENTITY]);kept(snap)
+snap=setup();event();h.controller=1;h.put(NPC,1|8192);h.put(NPC+148,0);actor_pos(20,20)
+h.call(0x02166ec8,[NPC,0x69]);kept(snap)
 
 # Common field-event setup pauses autonomous actor movement. A dormant queued
 # route from a random mover must not recall the follower during NPC, sign, or

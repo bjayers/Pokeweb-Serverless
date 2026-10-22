@@ -30,10 +30,10 @@ export type FollowerAssetEntry = {
 export function followerDefaultDirectionalGaps(entry: Pick<FollowerAssetEntry, "sideGap"> & Partial<Pick<FollowerAssetEntry, "offsets">>): [number, number, number, number] {
   // The largest supported talk envelope is 29 world units. Reserve the
   // native two-unit art anchor, any authored X anchor, and one unit of slack.
-  // Both side directions share the stricter bound; explicit values survive.
+  // Every direction uses that same distance; explicit authored values survive.
   const maximum = Math.max(0, FOLLOWER_MAX_DIRECTIONAL_GAP - 2 - Math.abs(entry.offsets?.[0] ?? 0));
   const side = Math.min((entry.sideGap ?? 0) + FOLLOWER_DEFAULT_SIDE_GAP_BONUS, maximum);
-  return [0, 0, side, side];
+  return [side, side, side, side];
 }
 export type FollowerZonePolicy = { zone: number; suppressed: boolean; reason: string };
 export type FollowerInstallState = {
@@ -52,6 +52,14 @@ export type FollowerDirection = typeof FOLLOWER_DIRECTIONS[number];
 
 function integer(value: number, min: number, max: number, label: string): void {
   if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Invalid ${label}: ${value}`);
+}
+/** Forced follower display forms. Unown '?' is Gen 5 form 27; Arceus is always Normal (form 0). */
+export const FOLLOWER_FORCED_FORMS: Readonly<Record<number, number>> = {
+  201: 27,
+  493: 0,
+};
+export function followerDisplayForm(species: number, form: number): number {
+  return FOLLOWER_FORCED_FORMS[species] ?? form;
 }
 export function followerKey(key: FollowerAppearanceKey): string {
   integer(key.species, 1, 1023, "species"); integer(key.form, 0, 255, "form"); integer(key.gender, 0, 2, "gender");

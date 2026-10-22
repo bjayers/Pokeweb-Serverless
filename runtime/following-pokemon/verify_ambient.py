@@ -79,6 +79,9 @@ rail_point=(12*65536+32768,0,9*65536+32768);assert run()==0
 rail_result=1;assert run()==1;rail_result=0
 setup();h.put(s.NPC,3|8192);h.put(s.NPC+148,s.RAIL);h.put(s.RAIL+120,s.MAN+128)
 uc.mem_write(QUERY,struct.pack('<iii',*rail_point));assert not h.call('fws_step_clear',[h.A,QUERY])
+# A sidewalk actor flagged as rail before its cursor exists does not block a step elsewhere.
+setup();h.put(s.NPC,1|8192);h.put(s.NPC+148,0)
+uc.mem_write(QUERY,struct.pack('<iii',10*65536+32768,0,9*65536+32768));assert h.call('fws_step_clear',[h.A,QUERY])
 # Execute the actual random-walk state machine's blocked/retry branch. Only
 # direction RNG and terrain route conversion are spies; collision scan is native.
 h.native_addresses.discard(0x0215e4f0)

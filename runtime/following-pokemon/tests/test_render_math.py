@@ -25,8 +25,13 @@ class Rendering(unittest.TestCase):
   subprocess.run(['cc','-shared','-fPIC','-std=c11','-Wall','-Wextra','-Werror',str(HERE/'render_math.c'),'-o',str(lib)],check=True)
   cls.lib=c.CDLL(str(lib));cls.lib.fwr_correct.argtypes=[c.POINTER(Point),c.POINTER(Point),c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.c_uint,c.POINTER(Pose),c.POINTER(Result)]
   cls.lib.fwr_above_shadow.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_keep_behind.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.POINTER(Pose)]
+  cls.lib.fwr_shadow_behind.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_shadow_on_feet.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_player_in_front.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),Point,c.c_int32,c.c_int32,c.POINTER(Pose),c.POINTER(c.c_int32)]
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
+  cls.lib.fwr_emote_place.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_emote_place.restype=c.c_int
   cls.lib.fwr_cover_feet.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_box_advance_limit.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Point)]
   cls.lib.fwr_box_advance_limit.restype=c.c_int32
@@ -153,21 +158,58 @@ class Rendering(unittest.TestCase):
      self.assertLess(abs(diff[0]*eye[2]-diff[2]*eye[0])/math.hypot(eye[0],eye[2]),256)
   for eye,height in ((Point(),34*4096),(Point(0,240*4096,0),34*4096),(Point(0,240*4096,240*4096),-1)):
    cam=Camera(eye,Point(),0);head=Point();self.assertFalse(self.lib.fwr_head_position(c.byref(base),c.byref(cam),height,c.byref(head)))
+ def test_emote_clears_overhang_without_covering_the_player(self):
+  eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
+  bubble=Pose(Point(),8192,8192);placed=Pose()
+  self.assertTrue(self.lib.fwr_emote_place(c.byref(bubble),None,c.byref(cam),c.byref(placed)))
+  n=[v/math.sqrt(dot(eye,eye)) for v in eye]
+  closer=dot(xyz(placed.position),n)-dot(xyz(bubble.position),n)
+  self.assertGreater(closer,4*65536)
+  before=project(bubble,eye,False);after=project(placed,eye,False)
+  self.assertLess(max(abs(x-y) for a,b in zip(before,after) for x,y in zip(a,b)),0.002/256)
+  player=Point(*(int(v*24*4096) for v in n))
+  held=Pose();self.assertTrue(self.lib.fwr_emote_place(c.byref(bubble),c.byref(player),c.byref(cam),c.byref(held)))
+  depth=dot((held.position.x-player.x,held.position.y-player.y,held.position.z-player.z),n)
+  self.assertLessEqual(depth,-4096+256)
+  after=project(held,eye,False)
+  self.assertLess(max(abs(x-y) for a,b in zip(before,after) for x,y in zip(a,b)),0.002/256)
+  # Beside the follower: the canopy clearance stays, the bubble is not pulled back.
+  right=(n[2],0,-n[0]);length=math.sqrt(dot(right,right));right=[v/length for v in right]
+  beside=Point(*(int(right[i]*2*65536) for i in range(3)))
+  side=Pose();self.assertTrue(self.lib.fwr_emote_place(c.byref(bubble),c.byref(beside),c.byref(cam),c.byref(side)))
+  self.assertGreater(dot(xyz(side.position),n),4*65536)
  def test_stair_policy_does_not_depend_on_bob(self):
   cam=Camera(Point(0,760739,581835),Point(),0)
-  for y,policy in [(65536,0),(-32740,-2)]:
+  # Side-and-above used to return policy 0. It now clamps behind, independent of bob.
+  for y,policy in [(65536,-1),(-32740,-2)]:
    for bob in (0,6144):
     world=Point(65536,y,0);pose=Pose(Point(57344,y+bob,-8192),16384,16384)
     applied,out,res=self.run_case(world,pose,cam)
     self.assertEqual(res.policy,policy)
-    if not policy:self.assertEqual(bytes(out),bytes(pose))
+    if policy==-1:
+     self.assertLessEqual(res.after,-4096+64)
+     before=project(pose,(0,760739,581835),False);after=project(out,(0,760739,581835),False)
+     self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
+     player=Point();again=Pose()
+     self.assertFalse(self.lib.fwr_correct(c.byref(world),c.byref(player),c.byref(out),c.byref(player),c.byref(cam),1,c.byref(again),c.byref(res)))
+ def test_south_stair_clamps_follower_behind_player(self):
+  # One tile north and one tile up: the old early-out left this at policy 0.
+  cam=Camera(Point(0,760739,581835),Point(),0)
+  world=Point(0,65536,-65536)
+  pose=Pose(Point(0,65536,-65536),16384,16384)
+  for flags in (0,1):
+   applied,out,res=self.run_case(world,pose,cam,flags)
+   self.assertEqual(res.policy,-1)
+   self.assertLessEqual(res.after,-4096+64)
+   before=project(pose,(0,760739,581835),False);after=project(out,(0,760739,581835),False)
+   self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
  def test_north_follower_keeps_previous_foreground_depth(self):
   eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
   world=Point(0,0,65536)
-  # The new north-facing native anchor moved seven Z units, and the artwork
-  # moved two additional Y units. Restore the previous *depth*, not its pixels.
+  # North artwork is tucked two Y units and stays on the shadow's ground plane.
+  # Restore the previous *depth*, not its pixels. The old -7 Z shift is gone.
   old=Pose(Point(0,-6*4096,65536-2*4096),8192,8192)
-  current=Pose(Point(0,-8*4096,65536-9*4096),8192,8192)
+  current=Pose(Point(0,-8*4096,65536-2*4096),8192,8192)
   _,_,old_result=self.run_case(world,old,cam,0)
   applied,out,result=self.run_case(world,current,cam,2)
   self.assertTrue(applied);self.assertEqual(result.policy,1)
@@ -227,4 +269,347 @@ class Rendering(unittest.TestCase):
    self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
    unchanged=Pose();self.assertEqual(self.lib.fwr_player_in_front(c.byref(raised),c.byref(foreground),c.byref(cam),result.axis,12*4096,32*4096,c.byref(unchanged),c.byref(final)),0)
    self.assertEqual(bytes(foreground),bytes(unchanged))
+   # The draw path no longer shoves the player. The follower quad is tucked
+   # one unit behind the player after the shadow push, and the player stays put.
+   behind=Pose();player_pose=Pose(player_draw,8192,8192)
+   self.assertEqual(self.lib.fwr_keep_behind(c.byref(raised),c.byref(player_pose),c.byref(cam),4096,16*4096,c.byref(behind)),1)
+   kept=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(behind.position),xyz(player_pose.position),direction))/4096)
+   self.assertLessEqual(kept,-4096)
+   self.assertGreater(kept,-4*4096)
+   held=Pose();self.assertEqual(self.lib.fwr_keep_behind(c.byref(behind),c.byref(player_pose),c.byref(cam),4096,16*4096,c.byref(held)),0)
+   self.assertEqual(bytes(behind),bytes(held))
+   screen_before=project(raised,eye,projection==2);screen_after=project(behind,eye,projection==2)
+   self.assertLess(max(abs(x-y)for a,b in zip(screen_before,screen_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
+   # The same tuck must not cross a wall when the pose starts far in front.
+   far=Pose(Point(*(int(v*20) for v in direction)),16384,16384)
+   capped=Pose()
+   self.assertEqual(self.lib.fwr_keep_behind(c.byref(far),c.byref(player_pose),c.byref(cam),4096,16*4096,c.byref(capped)),1)
+   moved=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(capped.position),xyz(far.position),direction))/4096)
+   self.assertGreaterEqual(moved,-16*4096-128)
+   self.assertLess(moved,-15*4096)
+   # The shadow receives that same eye-ray bias, so it stays behind the sprite
+   # without leaving its projected ground position.
+   shade=Pose(Point(*(a+b for a,b in zip(xyz(behind.position),direction))),4096,4096);tucked=Pose()
+   self.assertEqual(self.lib.fwr_shadow_behind(c.byref(shade),c.byref(behind.position),c.byref(cam),c.byref(tucked)),1)
+   shadow_depth=math.trunc(sum((a-b)*n for a,b,n in zip(xyz(tucked.position),xyz(behind.position),direction))/4096)
+   self.assertLessEqual(shadow_depth,-4096+64)
+   shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
+   self.assertLess(max(abs(x-y)for a,b in zip(shade_before,shade_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
+   again=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again)),0)
+ def test_shadow_stays_on_its_native_ground(self):
+  # The oval is the ground sample. A sprite drawn a step low must not drag
+  # the shadow with it; the bias keeps the oval's projected image.
+  eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
+  feet=Point(0,65536,-65536);sprite=Point(0,65536,-65536)
+  feet_screen=project(Pose(feet,4096,4096),eye,False)
+  for dz,dy in ((0,-65536),(0,65536),(6*4096,0),(0,4096)):
+   shade=Pose(Point(feet.x,feet.y+dy,feet.z+dz),4096,4096);out=Pose()
+   code=self.lib.fwr_shadow_on_feet(c.byref(shade),c.byref(feet),c.byref(sprite),c.byref(cam),c.byref(out))
+   self.assertIn(code,(0,1))
+   before=project(shade,eye,False);after=project(out,eye,False)
+   self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
+   if abs(dy)>2*4096 or abs(dz)>2*4096:
+    # Projection units are 1/256 of a pixel at this camera. A step away from
+    # the feet must stay visibly off the feet; the bias does not pull it there.
+    self.assertGreater(max(abs(x-y)for a,b in zip(feet_screen,after)for x,y in zip(a,b)),1/256)
+ def test_close_range_depth_follows_the_ease(self):
+  # The close pose and the swap crossing need a deeper eye-ray tuck than the
+  # one-unit default. That tuck blends back to the default on the same
+  # smoothstep the spacing uses, and a zoomed camera scales both ends.
+  self.lib.fwr_view_distance.argtypes=[c.POINTER(Camera)]
+  self.lib.fwr_view_distance.restype=c.c_uint32
+  self.lib.fwr_sort_margin.argtypes=[c.POINTER(Camera),c.c_uint32]
+  self.lib.fwr_sort_margin.restype=c.c_int32
+  self.lib.fwr_clear_front.argtypes=[c.POINTER(Camera)]
+  self.lib.fwr_clear_front.restype=c.c_int32
+  near=(0,760739,581835)
+  span=math.sqrt(sum(v*v for v in near))
+  exact=tuple(int(v*240*4096/span) for v in near)
+  packaged=(0,200*4096,140*4096)
+  zoom=tuple(v*2 for v in near)
+  def camera(eye,projection=0):return Camera(Point(*eye),Point(),projection)
+  for eye in (near,exact,packaged):
+   view=camera(eye)
+   self.assertLessEqual(self.lib.fwr_view_distance(c.byref(view)),256*4096)
+   self.assertEqual(self.lib.fwr_sort_margin(c.byref(view),65536),4096)
+   self.assertEqual(self.lib.fwr_sort_margin(c.byref(view),70000),4096)
+   self.assertEqual(self.lib.fwr_sort_margin(c.byref(view),0),8*4096)
+   self.assertEqual(self.lib.fwr_clear_front(c.byref(view)),4*4096)
+  far=camera(zoom)
+  self.assertGreater(self.lib.fwr_view_distance(c.byref(far)),256*4096)
+  zoom_idle=self.lib.fwr_sort_margin(c.byref(far),65536)
+  zoom_strong=self.lib.fwr_sort_margin(c.byref(far),0)
+  self.assertGreater(zoom_idle,4096)
+  self.assertLessEqual(zoom_idle,65536)
+  self.assertGreater(zoom_strong,8*4096)
+  self.assertLessEqual(zoom_strong,65536)
+  self.assertGreater(zoom_strong,zoom_idle)
+  self.assertGreater(self.lib.fwr_clear_front(c.byref(far)),4*4096)
+  self.assertLessEqual(self.lib.fwr_clear_front(c.byref(far)),32768)
+  for eye in (near,zoom):
+   view=camera(eye)
+   previous=None
+   for step in range(9):
+    margin=self.lib.fwr_sort_margin(c.byref(view),65536*step//8)
+    if previous is not None:self.assertLessEqual(margin,previous)
+    previous=margin
+   self.assertEqual(previous,self.lib.fwr_sort_margin(c.byref(view),65536))
+  def depth(pose,player,axis):
+   return math.trunc(sum((a-b)*n for a,b,n in zip(xyz(pose.position),xyz(player.position),axis))/4096)
+  # North of the player is behind this camera. South is toward it.
+  separations=(('five_eighths',-5*65536//8),('quarter',-65536//4),('cross',0),('brush',2048),('front',65536))
+  for name,eye in (('near',near),('zoom',zoom)):
+   for projection in (0,2):
+    view=camera(eye,projection)
+    idle=self.lib.fwr_sort_margin(c.byref(view),65536)
+    close=self.lib.fwr_sort_margin(c.byref(view),0)
+    clear=self.lib.fwr_clear_front(c.byref(view))
+    for label,z in separations:
+     world=Point(0,0,z);origin=Point();pose=Pose(Point(0,0,z),8192,8192)
+     ordered=Pose();result=Result()
+     self.lib.fwr_correct(c.byref(world),c.byref(origin),c.byref(pose),c.byref(origin),c.byref(view),0,c.byref(ordered),c.byref(result))
+     player=Pose(origin,8192,8192);axis=xyz(result.axis);rel=depth(ordered,player,axis)
+     def settle(ease_s,margin):
+      blend=ease_s<65536
+      tuck=result.policy==-1 or (blend and result.policy==1 and rel<=clear)
+      out=Pose();moved=0
+      if tuck:
+       moved=self.lib.fwr_keep_behind(c.byref(ordered),c.byref(player),c.byref(view),margin,16*4096,c.byref(out))
+       if not moved:out=ordered
+      else:out=ordered
+      return tuck,depth(out,player,axis),out
+     tucked,final,out=settle(0,close)
+     _,idle_final,_=settle(65536,idle)
+     if label=='front':
+      self.assertEqual(result.policy,1,name)
+      self.assertGreater(rel,clear)
+      self.assertFalse(tucked)
+      self.assertGreater(final,clear)
+      self.assertEqual(final,idle_final)
+     else:
+      self.assertTrue(tucked,(name,label,result.policy,rel,clear))
+      self.assertLessEqual(final,-close+256,(name,label,final,close))
+      self.assertGreater(final,-close-1024,(name,label,final,close))
+      self.assertLess(final,idle_final,(name,label,final,idle_final))
+      before=project(ordered,eye,projection==2);after=project(out,eye,projection==2)
+      error=max(abs(a-b)for p,q in zip(before,after)for a,b in zip(p,q))
+      self.assertLess(error,4 if projection==2 else 0.002/256)
+     if name=='near' and projection==0 and label in ('five_eighths','quarter','cross'):
+      # Idle is the historical one-unit tuck, including its no-op when the
+      # follower is already that far behind.
+      direct=Pose()
+      moved=self.lib.fwr_keep_behind(c.byref(ordered),c.byref(player),c.byref(view),4096,16*4096,c.byref(direct))
+      self.assertEqual(idle_final,depth(direct if moved else ordered,player,axis))
+     if name=='zoom' and projection==0 and label=='five_eighths':
+      dist=self.lib.fwr_view_distance(c.byref(view))/4096
+      steps=lambda view_depth:32800*(abs(view_depth)/4096)/(dist*dist)
+      self.assertLess(steps(rel),1.5)
+      self.assertGreaterEqual(steps(final),2)
+  # The fresh-load rest is already behind the strong target on a normal
+  # camera, so the blend and the idle path submit the same pose. On the
+  # zoomed camera the late blend has fallen back under that gap too.
+  rest=Pose(Point(0,0,-90112),8192,8192);origin=Point()
+  for eye in (near,zoom):
+   view=camera(eye);ordered=Pose();result=Result()
+   self.lib.fwr_correct(c.byref(Point(0,0,-90112)),c.byref(origin),c.byref(rest),c.byref(origin),c.byref(view),0,c.byref(ordered),c.byref(result))
+   player=Pose(origin,8192,8192);axis=xyz(result.axis)
+   late=self.lib.fwr_sort_margin(c.byref(view),65536*7//8)
+   done=self.lib.fwr_sort_margin(c.byref(view),65536)
+   self.assertLessEqual(done,late)
+   for margin in (late,done):
+    out=Pose()
+    self.assertEqual(self.lib.fwr_keep_behind(c.byref(ordered),c.byref(player),c.byref(view),margin,16*4096,c.byref(out)),0)
+    self.assertEqual(bytes(ordered),bytes(out))
+ def test_corner_overlap_uses_the_swap_margin_and_keeps_the_shadow_behind(self):
+  # East-then-south (and the other seven turns) leaves the follower on the
+  # bend: one tile back along the new leg and 24574 units back along the old
+  # one. That chord is 69991, shorter than the straight rest of 90110. Midway
+  # through the step it is 66044. The idle one-unit target no-ops there, so
+  # an overlapping pair has to take the swap margin. The same margin keeps
+  # the foot shadow behind the tucked sprite.
+  self.lib.fwr_view_gap.argtypes=[c.POINTER(Point),c.POINTER(Point),c.POINTER(Camera)]
+  self.lib.fwr_view_gap.restype=c.c_int32
+  self.lib.fwr_sprites_overlap.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera)]
+  self.lib.fwr_sprites_overlap.restype=c.c_int
+  self.lib.fwr_follow_margin.argtypes=[c.POINTER(Camera),c.c_uint32,c.c_int32,c.c_int,c.c_int]
+  self.lib.fwr_follow_margin.restype=c.c_int32
+  self.lib.fwr_follow_tuck.argtypes=[c.c_int,c.c_int32,c.c_int32,c.c_int,c.c_int,c.c_int]
+  self.lib.fwr_follow_tuck.restype=c.c_int
+  self.lib.fwr_shadow_tuck.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
+  self.lib.fwr_shadow_tuck.restype=c.c_int
+  self.lib.fwr_sort_margin.argtypes=[c.POINTER(Camera),c.c_uint32]
+  self.lib.fwr_sort_margin.restype=c.c_int32
+  self.lib.fwr_clear_front.argtypes=[c.POINTER(Camera)]
+  self.lib.fwr_clear_front.restype=c.c_int32
+  near=(0,760739,581835)
+  zoom=tuple(v*2 for v in near)
+  def camera(eye,projection=0):return Camera(Point(*eye),Point(),projection)
+  def depth_of(point,cam):
+   origin=Point();return self.lib.fwr_view_gap(c.byref(point),c.byref(origin),c.byref(cam))
+  def quant_z(point,eye):
+   length=math.sqrt(dot(eye,eye));n=[v/length for v in eye]
+   distance=(dot(eye,n)-dot(xyz(point),n))/4096
+   return math.trunc((4104*distance-8200)/distance*4)+0x3fff
+  # Idle overlap on flat ground takes the swap margin through the clear-front
+  # threshold. One unit past it does not. The ease keeps its own blend, and a
+  # height change never upgrades. A front policy already nearer than the player
+  # is not pulled back; a tie still prefers the player.
+  for eye in (near,zoom):
+   view=camera(eye)
+   clear=self.lib.fwr_clear_front(c.byref(view))
+   strong=self.lib.fwr_sort_margin(c.byref(view),0)
+   idle=self.lib.fwr_sort_margin(c.byref(view),65536)
+   mid=self.lib.fwr_sort_margin(c.byref(view),32768)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,0,1,1),strong)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,-4096,1,1),strong)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,1,1,1),strong)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,clear,1,1),strong)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,clear+1,1,1),idle)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,-4096,0,1),idle)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,-4096,1,0),idle)
+   self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),32768,-4096,1,1),mid)
+   self.assertEqual(self.lib.fwr_follow_tuck(1,clear+1,clear,0,1,1),0)
+   self.assertEqual(self.lib.fwr_follow_tuck(1,1,clear,0,1,1),0)
+   self.assertEqual(self.lib.fwr_follow_tuck(1,clear,clear,1,1,1),1)
+   self.assertEqual(self.lib.fwr_follow_tuck(1,0,clear,0,1,1),1)
+   self.assertEqual(self.lib.fwr_follow_tuck(1,-4096,clear,0,1,0),0)
+   self.assertEqual(self.lib.fwr_follow_tuck(-1,-4096,clear,0,1,0),1)
+   self.assertEqual(self.lib.fwr_follow_tuck(-2,0,clear,0,1,1),0)
+   self.assertGreater(strong,idle)
+   self.assertGreater(strong,mid)
+  legs=((1,0,0,1),(1,0,0,-1),(-1,0,0,1),(-1,0,0,-1),(0,1,1,0),(0,1,-1,0),(0,-1,1,0),(0,-1,-1,0))
+  phases=(('end',-24574,-65536),('mid',-57342,-32768))
+  for name,eye in (('near',near),('zoom',zoom)):
+   for projection in (0,2):
+    view=camera(eye,projection)
+    strong=self.lib.fwr_sort_margin(c.byref(view),0)
+    behind_south=0
+    for dx,dz,tx,tz in legs:
+     face=1 if tz>0 else 0 if tz<0 else 3 if tx>0 else 2
+     for phase,old,new in phases:
+      wx,wz=dx*old+tx*new,dz*old+tz*new
+      world=Point(wx,0,wz)
+      qy=-2*4096 if face==0 else 0
+      qz=wz+(6*4096 if face==1 else 0)
+      quad=Point(wx,qy,qz)
+      for size in (8192,16384):
+       pose=Pose(quad,size,size);player=Pose(Point(),size,size)
+       ordered=Pose();result=Result();origin=Point()
+       self.lib.fwr_correct(c.byref(world),c.byref(origin),c.byref(pose),c.byref(origin),c.byref(view),0,c.byref(ordered),c.byref(result))
+       raised=Pose();self.lib.fwr_above_shadow(c.byref(ordered),c.byref(world),c.byref(view),c.byref(raised))
+       rel=depth_of(raised.position,view)
+       overlap=self.lib.fwr_sprites_overlap(c.byref(raised),c.byref(player),c.byref(view))
+       self.assertEqual(overlap,1,(name,phase,face,size,projection))
+       clear=self.lib.fwr_clear_front(c.byref(view))
+       margin=self.lib.fwr_follow_margin(c.byref(view),65536,rel,overlap,1)
+       tuck=self.lib.fwr_follow_tuck(result.policy,rel,clear,0,overlap,1)
+       idle=self.lib.fwr_sort_margin(c.byref(view),65536)
+       # A south step leaves the follower north of the player, behind this
+       # camera. A north step leaves them toward the camera; that one stays
+       # in front. East and west follow whichever side of the player the
+       # bend actually put them on.
+       if face==1:self.assertLessEqual(rel,clear,(name,phase,rel))
+       if face==0:self.assertGreater(rel,clear,(name,phase,rel))
+       # Behind, tied, or a horizontal-behind quad that shadow clearance
+       # nudged toward the camera: swap margin. A front policy already
+       # nearer than the player stays put, which is the north foreground.
+       if rel<=0 or (result.policy==-1 and rel<=clear):
+        behind_south+=face==1
+        self.assertEqual(margin,strong,(name,phase,face,rel,strong))
+        self.assertEqual(tuck,1)
+        separation=strong
+        stayed=0
+       elif result.policy==1 and rel>0:
+        # Already nearer than the player. Leave the quad, including the band
+        # short of clearly-nearer. That is the north foreground restore.
+        self.assertEqual(tuck,0,(name,phase,face,rel))
+        separation=None
+        stayed=1
+       else:
+        # Clearly nearer, or a horizontal-behind quad past the threshold.
+        # That order still applies the idle tuck; a front policy does not.
+        self.assertEqual(margin,idle,(name,phase,face,rel,idle))
+        self.assertLess(idle,strong)
+        if result.policy==-1:self.assertEqual(tuck,1)
+        else:self.assertEqual(tuck,0,(name,phase,face,result.policy,rel))
+        separation=idle if tuck else None
+        stayed=0
+       out=Pose();moved=0
+       if tuck:
+        moved=self.lib.fwr_keep_behind(c.byref(raised),c.byref(player),c.byref(view),margin,16*4096,c.byref(out))
+       final=out if moved else raised
+       gap=depth_of(final.position,view)
+       if separation is not None:
+        # shift_depth travels the eye ray, so a full-tile tuck lands a unit
+        # or two short of the view-axis target. Quantized Z is the real bar.
+        self.assertLessEqual(gap,-separation+3*4096,(name,phase,face,gap,separation))
+       elif stayed:
+        self.assertEqual(gap,rel,(name,phase,face,gap,rel))
+        self.assertGreater(gap,0)
+       else:
+        self.assertGreater(gap,clear,(name,phase,face,gap,clear))
+       before=project(raised,eye,projection==2);after=project(final,eye,projection==2)
+       error=max(abs(a-b) for p,q in zip(before,after) for a,b in zip(p,q))
+       self.assertLess(error,4 if projection==2 else 0.002/256)
+       shade=Pose(world,4096,4096);tucked=Pose()
+       keep=margin if moved else 4096
+       self.lib.fwr_shadow_tuck(c.byref(shade),c.byref(final.position),c.byref(view),keep,c.byref(tucked))
+       shadow_gap=self.lib.fwr_view_gap(c.byref(tucked.position),c.byref(final.position),c.byref(view))
+       self.assertLessEqual(shadow_gap,-min(keep,4096)+256,(name,phase,face,shadow_gap,keep))
+       if moved:self.assertLessEqual(shadow_gap,-keep+3*4096,(name,phase,face,shadow_gap,keep))
+       shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
+       shade_error=max(abs(a-b) for p,q in zip(shade_before,shade_after) for a,b in zip(p,q))
+       self.assertLess(shade_error,4 if projection==2 else 0.002/256)
+       if projection==0 and keep>=8*4096:
+        self.assertGreaterEqual(quant_z(tucked.position,eye),quant_z(final.position,eye)+1,(name,phase,face,keep))
+    self.assertGreaterEqual(behind_south,4)
+    # A follower four tiles off to the side does not overlap, so the idle
+    # margin stays. Straight rest may overlap; it must not come forward.
+    side=Pose(Point(-4*65536,0,0),8192,8192);player=Pose(Point(),8192,8192)
+    self.assertEqual(self.lib.fwr_sprites_overlap(c.byref(side),c.byref(player),c.byref(view)),0)
+    idle=self.lib.fwr_sort_margin(c.byref(view),65536)
+    self.assertEqual(self.lib.fwr_follow_margin(c.byref(view),65536,depth_of(side.position,view),0,1),idle)
+    front=Point(0,0,65536)
+    self.assertGreater(depth_of(front,view),self.lib.fwr_clear_front(c.byref(view)))
+    self.assertEqual(self.lib.fwr_follow_tuck(1,depth_of(front,view),self.lib.fwr_clear_front(c.byref(view)),0,1,1),0)
+    # North artwork one tile south: the 2px tuck plus the registry drop leaves
+    # the quad in front, but short of the clear-front threshold. Idle overlap
+    # must not pull that recovered foreground behind the player.
+    north_world=Point(0,0,65536);north_quad=Point(0,-8*4096,65536-2*4096)
+    north_pose=Pose(north_quad,8192,8192);north_player=Pose(Point(),8192,8192)
+    north_ordered=Pose();north_result=Result();north_origin=Point()
+    self.assertEqual(self.lib.fwr_correct(c.byref(north_world),c.byref(north_origin),c.byref(north_pose),c.byref(north_origin),c.byref(view),2,c.byref(north_ordered),c.byref(north_result)),1)
+    north_rel=depth_of(north_ordered.position,view)
+    self.assertGreater(north_rel,0)
+    self.assertLess(north_rel,self.lib.fwr_clear_front(c.byref(view)))
+    self.assertEqual(north_result.policy,1)
+    self.assertEqual(self.lib.fwr_follow_tuck(north_result.policy,north_rel,self.lib.fwr_clear_front(c.byref(view)),0,1,1),0)
+    # Post-swap ease. The close pose is five eighths of a tile north. The
+    # shadow stays behind the sprite at every blend step, on both cameras.
+    close_z=-5*65536//8
+    for step in range(5):
+     ease_s=65536*step//4
+     pose=Pose(Point(0,0,close_z),8192,8192);player=Pose(Point(),8192,8192)
+     ordered=Pose();result=Result();origin=Point();world=Point(0,0,close_z)
+     self.lib.fwr_correct(c.byref(world),c.byref(origin),c.byref(pose),c.byref(origin),c.byref(view),0,c.byref(ordered),c.byref(result))
+     raised=Pose();self.lib.fwr_above_shadow(c.byref(ordered),c.byref(world),c.byref(view),c.byref(raised))
+     rel=depth_of(raised.position,view)
+     overlap=self.lib.fwr_sprites_overlap(c.byref(raised),c.byref(player),c.byref(view))
+     margin=self.lib.fwr_follow_margin(c.byref(view),ease_s,rel,overlap,1)
+     clear=self.lib.fwr_clear_front(c.byref(view))
+     tuck=self.lib.fwr_follow_tuck(result.policy,rel,clear,ease_s<65536,overlap,1)
+     out=Pose();moved=0
+     if tuck:
+      moved=self.lib.fwr_keep_behind(c.byref(raised),c.byref(player),c.byref(view),margin,16*4096,c.byref(out))
+     final=out if moved else raised
+     shade=Pose(world,4096,4096);tucked=Pose()
+     keep=margin if moved else 4096
+     self.lib.fwr_shadow_tuck(c.byref(shade),c.byref(final.position),c.byref(view),keep,c.byref(tucked))
+     shadow_gap=self.lib.fwr_view_gap(c.byref(tucked.position),c.byref(final.position),c.byref(view))
+     self.assertLessEqual(shadow_gap,-4096+64,(name,step,shadow_gap,keep,moved))
+     if moved:self.assertLessEqual(shadow_gap,-keep+256,(name,step,shadow_gap,keep))
+     shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
+     self.assertLess(max(abs(a-b) for p,q in zip(shade_before,shade_after) for a,b in zip(p,q)),4 if projection==2 else 0.002/256)
+     if projection==0:
+      self.assertGreaterEqual(quant_z(tucked.position,eye),quant_z(final.position,eye)+1,(name,step,keep))
 if __name__=='__main__':unittest.main()

@@ -85,9 +85,11 @@ def verify(rom_path):
  def expected(sp,f,g,s):
   variants=rows.get(sp,[])
   if not variants:return 0
+  # Unown (201) displays as '?'; Arceus (493) displays as Normal. Other forms pass through.
+  shown={201: 27, 493: 0}.get(sp, f)
   def score(e):
    ef,eg,es,_=e
-   return (8 if ef==f else 0 if ef==0 else -20)+(4 if eg==g else 2 if eg==2 else -20)+(1 if es==s else -20)
+   return (8 if ef==shown else 0 if ef==0 else -20)+(4 if eg==g else 2 if eg==2 else -20)+(1 if es==s else -20)
   return 0x3000+max(variants,key=score)[3]-1008
  assert config()==1 and not paths
  before=(reads,seeks,opens);assert config()==1 and before==(reads,seeks,opens)

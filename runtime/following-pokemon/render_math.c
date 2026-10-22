@@ -8,6 +8,16 @@ static int32_t divide(int64_t value,int32_t divisor){
  if(q>INT32_MAX)q=INT32_MAX;
  return value<0?-(int32_t)q:(int32_t)q;
 }
+static uint32_t isqrt(uint64_t n){
+ uint64_t bit=(uint64_t)1<<62,result=0;
+ while(bit>n)bit>>=2;
+ while(bit){
+  if(n>=result+bit){n-=result+bit;result=(result>>1)+bit;}
+  else result>>=1;
+  bit>>=2;
+ }
+ return result>0xffffffffu?0xffffffffu:(uint32_t)result;
+}
 static uint32_t root(uint32_t n){
  uint32_t answer=0,bit=1u<<30;
  while(bit>n)bit>>=2;
@@ -122,6 +132,261 @@ int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
  if(current>=target)return 0;
  return shift_depth(native,camera,direction,target-current+16,out);
 }
+#define FWR_ZOOM_LIMIT (8u * FWR_CAMERA_REF)
+_Static_assert(FWR_SORT_STRONG > FWR_SORT_BEHIND, "strong tuck");
+_Static_assert(FWR_SORT_STRONG <= (int)FW_TILE, "strong tuck fits the cap");
+static uint32_t view_span(const FwrCamera *camera){
+ int64_t dx=(int64_t)camera->eye.x-camera->target.x;
+ int64_t dy=(int64_t)camera->eye.y-camera->target.y;
+ int64_t dz=(int64_t)camera->eye.z-camera->target.z;
+ if(dx<0)dx=-dx;
+ if(dy<0)dy=-dy;
+ if(dz<0)dz=-dz;
+ if(dx>=(int64_t)FWR_ZOOM_LIMIT||dy>=(int64_t)FWR_ZOOM_LIMIT||dz>=(int64_t)FWR_ZOOM_LIMIT)
+  return FWR_ZOOM_LIMIT;
+ return isqrt((uint64_t)dx*(uint64_t)dx+(uint64_t)dy*(uint64_t)dy+(uint64_t)dz*(uint64_t)dz);
+}
+/* (distance/ref)^2 in 16.16. One at the ordinary field camera, saturated
+ * once the scaled margin is past the one-tile cap anyway. */
+static uint32_t zoom_sq(uint32_t distance){
+ if(distance<=FWR_CAMERA_REF)return 65536u;
+ if(distance>=FWR_ZOOM_LIMIT)return 64u*65536u;
+ int32_t q=divide((int64_t)distance<<16,(int32_t)FWR_CAMERA_REF);
+ if(q<=65536)return 65536u;
+ uint32_t s=(uint32_t)(((uint64_t)(uint32_t)q*(uint32_t)q)>>16);
+ return s<65536u?65536u:s;
+}
+static int32_t scale_margin(int32_t base,uint32_t zoom){
+ if(base<=0)return 0;
+ uint64_t v=((uint64_t)(uint32_t)base*zoom)>>16;
+ if(v<(uint32_t)base)v=(uint32_t)base;
+ if(v>FW_TILE)v=FW_TILE;
+ return (int32_t)v;
+}
+uint32_t fwr_view_distance(const FwrCamera *camera){
+ if(!camera)return 0;
+ return view_span(camera);
+}
+int32_t fwr_sort_margin(const FwrCamera *camera,uint32_t ease_s){
+ uint32_t zoom=zoom_sq(camera?view_span(camera):0);
+ int32_t base=scale_margin(FWR_SORT_BEHIND,zoom);
+ if(ease_s>=65536u)return base;
+ int32_t strong=scale_margin(FWR_SORT_STRONG,zoom);
+ if(strong<base)strong=base;
+ uint32_t span=(uint32_t)(strong-base);
+ uint32_t drop=(uint32_t)(((uint64_t)span*ease_s)>>16);
+ int32_t margin=strong-(int32_t)drop;
+ return margin<base?base:margin;
+}
+int32_t fwr_clear_front(const FwrCamera *camera){
+ uint32_t zoom=zoom_sq(camera?view_span(camera):0);
+ int32_t clear=scale_margin(FWR_CLEAR_FRONT,zoom);
+ /* A full tile toward the camera has to stay in front on a zoomed view. */
+ if(clear>(int32_t)(FW_TILE/2))clear=(int32_t)(FW_TILE/2);
+ return clear;
+}
+static int view_axis(const FwrCamera *camera,FwPoint *view){
+ if(!camera||!delta(camera->eye,camera->target,view,1<<27)||!axis(*view,view))return 0;
+ return 1;
+}
+int32_t fwr_view_gap(const FwPoint *point,const FwPoint *origin,const FwrCamera *camera){
+ FwPoint view,relative;
+ if(!point||!origin||!view_axis(camera,&view)||!delta(*point,*origin,&relative,8*(int32_t)FW_TILE))return 0;
+ return dot(relative,view);
+}
+/* Camera basis. `view` points toward the eye. `right` and `up` span the
+ * camera plane, matching the head-attachment basis. */
+static int camera_plane(const FwrCamera *camera,FwPoint *view,FwPoint *right,FwPoint *up){
+ FwPoint flat;
+ if(!view_axis(camera,view))return 0;
+ flat=(FwPoint){view->z,0,-view->x};
+ flat.x*=4096;flat.z*=4096;
+ if(!axis(flat,right))return 0;
+ flat=(FwPoint){view->y*right->z,view->z*right->x-view->x*right->z,-view->y*right->x};
+ return axis(flat,up);
+}
+/* Screen interval of one camera-facing quad, in 16.16. Orthographic values
+ * stay in 20.12, which is the same comparison space for both sprites. */
+static int screen_span(const FwrPose *pose,const FwrCamera *camera,FwPoint view,FwPoint right,FwPoint up,
+                       int32_t *x0,int32_t *x1,int32_t *y0,int32_t *y1){
+ FwPoint fromEye;
+ if(!pose||pose->sx<=0||pose->sy<=0||pose->sx>32767||pose->sy>32767)return 0;
+ if(!delta(pose->position,camera->eye,&fromEye,1<<27))return 0;
+ int32_t forward=-dot(fromEye,view);
+ if(forward<4*(int32_t)FW_TILE)return 0;
+ int32_t rx=dot(fromEye,right),uy=dot(fromEye,up);
+ int32_t half=pose->sx*8,tall=pose->sy*16;
+ int32_t left=rx-half,rightEdge=rx+half,bottom=uy,top=uy+tall;
+ if(camera->projection==2){*x0=left;*x1=rightEdge;*y0=bottom;*y1=top;return 1;}
+ *x0=divide((int64_t)left<<16,forward);
+ *x1=divide((int64_t)rightEdge<<16,forward);
+ *y0=divide((int64_t)bottom<<16,forward);
+ *y1=divide((int64_t)top<<16,forward);
+ return 1;
+}
+static int span_hits(int32_t a0,int32_t a1,int32_t b0,int32_t b1){
+ if(a0>a1){int32_t t=a0;a0=a1;a1=t;}
+ if(b0>b1){int32_t t=b0;b0=b1;b1=t;}
+ return a0<=b1&&b0<=a1;
+}
+int fwr_sprites_overlap(const FwrPose *a,const FwrPose *b,const FwrCamera *camera){
+ FwPoint view,right,up;
+ int32_t ax0,ax1,ay0,ay1,bx0,bx1,by0,by1;
+ if(!a||!b||!camera||camera->projection>2)return 0;
+ if(!camera_plane(camera,&view,&right,&up))return 0;
+ if(!screen_span(a,camera,view,right,up,&ax0,&ax1,&ay0,&ay1))return 0;
+ if(!screen_span(b,camera,view,right,up,&bx0,&bx1,&by0,&by1))return 0;
+ return span_hits(ax0,ax1,bx0,bx1)&&span_hits(ay0,ay1,by0,by1);
+}
+int32_t fwr_follow_margin(const FwrCamera *camera,uint32_t ease_s,int32_t depth_rel,int overlap,int flat){
+ int32_t margin=fwr_sort_margin(camera,ease_s);
+ /* The ease already blends this gap. Stairs keep the height policy. An idle
+  * overlap that is not clearly in front needs the swap-sized gap: a corner
+  * step can sit a unit toward the camera after shadow clearance and still
+  * lose the Z test. */
+ if(ease_s<65536u||!flat||!overlap||depth_rel>fwr_clear_front(camera))return margin;
+ int32_t strong=fwr_sort_margin(camera,0);
+ return strong>margin?strong:margin;
+}
+int fwr_follow_tuck(int policy,int32_t depth_rel,int32_t clear,int easing,int overlap,int flat){
+ if(policy==-1)return 1;
+ if(depth_rel>clear)return 0;
+ if(easing&&policy==1)return 1;
+ /* Idle overlap adds a tuck only when the follower is behind or tied. A
+  * front-ordered quad that is already nearer stays there, so the north
+  * foreground restore is not pulled back through the player. */
+ return flat&&overlap&&depth_rel<=0&&policy!=-2;
+}
+int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
+                    const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *out){
+ *out=*follower;
+ if(camera->projection>2||margin<FWR_TIE_MARGIN||margin>FW_TILE||
+    cap<margin||cap>2*FW_TILE||
+    follower->sx<=0||follower->sy<=0||follower->sx>32767||follower->sy>32767)return 0;
+ FwPoint direction,relative;
+ if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction)
+    ||!delta(follower->position,player->position,&relative,8*FW_TILE))return 0;
+ int32_t current=dot(relative,direction),target=-margin;
+ if(current<=target)return 0;
+ int32_t change=target-current;
+ if(change<-cap)change=-cap;
+ return shift_depth(follower,camera,direction,change-16,out);
+}
+int32_t fwr_ground_back(const FwrPose *pose,const FwrCamera *camera,int32_t foot_y){
+ if(!pose||!camera||camera->projection>2)return 0;
+ if(pose->position.y<=foot_y)return 0;
+ FwPoint view;
+ if(!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
+ int32_t drop=pose->position.y-foot_y,limit;
+ if(camera->projection==2){
+  if(view.y<=0)return 2*(int32_t)FW_TILE;
+  limit=divide((int64_t)drop<<12,view.y);
+ }else{
+  FwPoint ray;
+  if(!delta(camera->eye,pose->position,&ray,1<<27)||ray.y<=0)return 2*(int32_t)FW_TILE;
+  int32_t distance=dot(ray,view);
+  if(distance<4*(int32_t)FW_TILE)return 0;
+  limit=divide((int64_t)drop*distance,ray.y);
+ }
+ if(limit<0)return 0;
+ if(limit>2*(int32_t)FW_TILE)return 2*(int32_t)FW_TILE;
+ return limit;
+}
+int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
+                    const FwrCamera *camera,FwrPose *out){
+ *out=*bubble;
+ if(!bubble||!camera||bubble->sx<=0||bubble->sy<=0||bubble->sx>32767||bubble->sy>32767)return 0;
+ FwPoint view;
+ if(camera->projection>2||!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
+ /* Three tile-pair pushes clear a canopy that overhangs toward the camera.
+  * Each step stays inside shift_depth's limit and keeps the screen pixels. */
+ FwrPose shifted=*bubble;
+ int moved=0;
+ for(int i=0;i<3;++i){
+  FwrPose next;
+  if(!shift_depth(&shifted,camera,view,2*(int32_t)FW_TILE,&next))break;
+  shifted=next;moved=1;
+ }
+ /* Only a player who is actually in front of the unpushed bubble gives that
+  * clearance back. Someone beside the follower must not undo it. */
+ if(player){
+  FwPoint relative;
+  if(delta(*player,bubble->position,&relative,8*(int32_t)FW_TILE)&&dot(relative,view)>FW_TILE/2){
+   FwrPose playerPose={{player->x,player->y,player->z},8192,8192};
+   for(int i=0;i<4;++i){
+    FwrPose behind;
+    /* cap stops one unit short of shift_depth's limit; that helper subtracts 16. */
+    if(!fwr_keep_behind(&shifted,&playerPose,camera,FWR_SORT_BEHIND,2*(int32_t)FW_TILE-16,&behind))break;
+    shifted=behind;moved=1;
+   }
+  }
+ }
+ *out=shifted;
+ return moved;
+}
+int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
+                    const FwrCamera *camera,int32_t keep,FwrPose *out){
+ if(!shadow||!sprite||!camera||!out)return 0;
+ *out=*shadow;
+ if(keep<FWR_SHADOW_KEEP)keep=FWR_SHADOW_KEEP;
+ if(keep>(int32_t)FW_TILE)keep=(int32_t)FW_TILE;
+ if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
+ FwPoint direction;
+ if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction))return 0;
+ /* Flat oval: the camera-side rim is closer than the center. Clear that rim,
+  * not just the center, or the near half still wins against the sprite. */
+ {
+  int32_t half=shadow->sx>shadow->sy?shadow->sx:shadow->sy;
+  if(half<1)half=1;
+  half*=8;
+  if(half>(int32_t)FW_TILE)half=(int32_t)FW_TILE;
+  uint32_t horiz=isqrt((uint64_t)direction.x*(uint64_t)direction.x+(uint64_t)direction.z*(uint64_t)direction.z);
+  int32_t rim=divide((int64_t)half*(int32_t)horiz,4096);
+  int32_t cover=rim+FWR_SHADOW_KEEP;
+  if(cover>(int32_t)FW_TILE)cover=(int32_t)FW_TILE;
+  if(keep<cover)keep=cover;
+ }
+ /* The one-unit keep is a single step, capped like the old bias. A swap or
+  * corner tuck has to be able to follow the sprite back through that oval,
+  * so the larger keep may use the whole eye-ray shift. */
+ int32_t cap=keep<=FWR_SHADOW_KEEP?FWR_BEHIND_CAP:(int32_t)(2*FW_TILE-64);
+ FwrPose cursor=*shadow;
+ int moved=0;
+ for(int step=0;step<3;++step){
+  FwPoint relative;
+  if(!delta(cursor.position,*sprite,&relative,8*(int32_t)FW_TILE))break;
+  int32_t ahead=dot(relative,direction);
+  if(ahead<=-keep)break;
+  int32_t change=-keep-ahead;
+  if(change<-cap)change=-cap;
+  FwrPose next;
+  if(!shift_depth(&cursor,camera,direction,change-16,&next))break;
+  cursor=next;moved=1;
+  if(keep<=FWR_SHADOW_KEEP)break;
+ }
+ *out=cursor;
+ return moved;
+}
+int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
+                      const FwrCamera *camera,FwrPose *out){
+ return fwr_shadow_tuck(shadow,sprite,camera,FWR_SHADOW_KEEP,out);
+}
+int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
+                     const FwPoint *sprite,const FwrCamera *camera,int32_t keep,FwrPose *out){
+ *out=*shadow;
+ if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
+ FwPoint relative;
+ if(!delta(shadow->position,*feet,&relative,4*FW_TILE))return 0;
+ /* The native oval stays where it was sampled, including a stair step or a
+  * rail curve. Pulling it onto the sprite copied the sprite's extra drop.
+  * `feet` only rejects a shadow that is not this follower's. */
+ (void)relative;
+ return fwr_shadow_tuck(shadow,sprite,camera,keep,out);
+}
+int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
+                       const FwPoint *sprite,const FwrCamera *camera,FwrPose *out){
+ return fwr_shadow_match(shadow,feet,sprite,camera,FWR_SHADOW_KEEP,out);
+}
 int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
                         const FwrCamera *camera,FwPoint direction,int32_t margin,int32_t max_advance,
                         FwrPose *out,int32_t *after){
@@ -182,23 +447,30 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  int32_t horizontal_length=(int32_t)root((uint32_t)(horizontal.x*horizontal.x+horizontal.z*horizontal.z));
  if(horizontal_length<256)return 0;
  int32_t h=divide((int64_t)dot(base,horizontal)*4096,horizontal_length),target=-FWR_TIE_MARGIN;
- int front=h>FW_TILE/2,unequal=base.y>8192||base.y<-8192,lower=0;
+ int front=h>FW_TILE/2,unequal=base.y>8192||base.y<-8192,lower=0,cap_back=0;
  if(flags&(FWR_FORCE_FRONT|FWR_FORCE_BACK)){
   front=!!(flags&FWR_FORCE_FRONT);
   /* Surf's seated rider and mount have overlapping quads. A tie-sized depth
    * gap can quantize away as the rider bobs, switching their visible order. */
   target=front?4*4096:-4*4096;
  }else if(unequal){
-  if(!(flags&FWR_LARGE)||(!front&&base.y>0))return 0;
-  lower=!front;target=front?8*4096:-4*4096;
+  /* A higher follower north of the player (south stairs, south ledges) used
+   * to keep native order and then draw in front. Clamp that quad behind.
+   * Large sprites already in front, and large sprites below-and-behind,
+   * keep their previous stair targets. */
+  if(front){
+   if(!(flags&FWR_LARGE))return 0;
+   target=8*4096;
+  }else if((flags&FWR_LARGE)&&base.y<=0){
+   lower=1;target=-4*4096;
+  }else{target=-FWR_SORT_BEHIND;cap_back=1;}
  }else if(front){
   target=FWR_TIE_MARGIN;
   if((flags&FWR_NORTH)&&h<=3*FW_TILE/2){
-   /* The north-facing visual correction displaced the sprite by -7 Z and
-    * -2 Y. Restore its previous camera depth relative to the player by
-    * moving only the submitted quad along the eye ray. The projected sprite
-    * position remains fixed; the native shadow stays at its corrected anchor. */
-   FwPoint lost={(int32_t)0,FWR_NORTH_ART_Y*4096,FWR_NORTH_ANCHOR_Z*4096};
+   /* North artwork is tucked two pixels down and shares the shadow's ground
+    * plane. Restore the depth that tuck costs. The old -7 Z shift is not
+    * applied, so it is not added back here. */
+   FwPoint lost={(int32_t)0,FWR_NORTH_ART_Y*4096,(int32_t)0};
    int32_t previousDepth=result->before+dot(lost,direction);
    if(previousDepth>target)target=previousDepth;
   }
@@ -207,6 +479,8 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  int32_t current=result->before;
  if(lower?current>=target:(front?current>=target:current<=target))return 0;
  int32_t change=target-current;
+ /* A pose already far in front must not be driven through a nearby wall. */
+ if(cap_back&&change<-FWR_BEHIND_CAP)change=-FWR_BEHIND_CAP;
  /* Cover fixed-point normalization and translation rounding at submission. */
  change+=change<0?-16:16;
  /* A corrupt/disconnected pose must never cause a large visual teleport. */

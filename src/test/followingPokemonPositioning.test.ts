@@ -48,13 +48,13 @@ describe("ROM-resident follower positioning", () => {
     const { registry, encoded, anchors, surf } = fixture();
     delete (registry.entries[0] as { directionalGaps?: number[] }).directionalGaps;
     let decoded = decodeFollowerPositioningNarc(encodeFollowerPositioningNarc(registry, encoded, anchors, surf), encoded, surf);
-    expect(Array.from(decoded.land.subarray(0, 4))).toEqual([0, 0, 9, 9]);
+    expect(Array.from(decoded.land.subarray(0, 4))).toEqual([9, 9, 9, 9]);
     registry.entries[0].sideGap = 6;
     decoded = decodeFollowerPositioningNarc(encodeFollowerPositioningNarc(registry, encoded, anchors, surf), encoded, surf);
-    expect(Array.from(decoded.land.subarray(0, 4))).toEqual([0, 0, 10, 10]);
+    expect(Array.from(decoded.land.subarray(0, 4))).toEqual([10, 10, 10, 10]);
     registry.entries[0].offsets[0] = -4;
     decoded = decodeFollowerPositioningNarc(encodeFollowerPositioningNarc(registry, encoded, anchors, surf), encoded, surf);
-    expect(Array.from(decoded.land.subarray(0, 4))).toEqual([0, 0, 6, 6]);
+    expect(Array.from(decoded.land.subarray(0, 4))).toEqual([6, 6, 6, 6]);
     registry.entries[0].directionalGaps = [1, 2, 12, 12];
     decoded = decodeFollowerPositioningNarc(encodeFollowerPositioningNarc(registry, encoded, anchors, surf), encoded, surf);
     expect(Array.from(decoded.land.subarray(0, 4))).toEqual([1, 2, 12, 12]);
