@@ -343,12 +343,25 @@ blocked=1;assert not call('fwt_reach',[follower,P,A,FIELD]);blocked=0
 put(owner,0);put(addr('fwfield_player'),0)
 # Vertical reach does not expand with the lateral spacing.
 setup(0);put(A+76,10*65536-22*4096);assert not call('fwt_reach',[F,P,A,FIELD]);assert u32(A+76)==10*65536-22*4096
-# Rail keys rotated 90 degrees relative to world compass still address the follower.
+# Rail keys rotated 90 degrees: +side is east and +front is north. A follower
+# standing on +side faces -side (1), not the world-west compass (2). A follower
+# standing on +front faces -front (3), not world south.
 setup(0);controller=2
 uc.mem_write(A+68,struct.pack('<iii',11*65536,0,10*65536))
 uc.mem_write(F+52,struct.pack('<iii',11*65536,0,10*65536))
 assert call('fwt_reach',[F,P,A,FIELD])==1
 blocked=3;assert not call('fwt_reach',[F,P,A,FIELD]);blocked=0
+assert begin();assert struct.unpack('<H',uc.mem_read(A+24,2))[0]==1;call('fwt_cancel');balanced()
+setup(2);controller=2
+x,z=10*65536,10*65536;az=z-65536
+uc.mem_write(A+68,struct.pack('<iii',x,0,az));uc.mem_write(A+60,struct.pack('<hhh',10,0,az//65536))
+for i,sz in enumerate((az,z)):
+ uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',x,0,sz,1,1,0,0,0,3,1))
+half(F+52+64*28+6,2)
+assert call('fwt_reach',[F,P,A,FIELD])==1
+assert begin();assert struct.unpack('<H',uc.mem_read(A+24,2))[0]==3;call('fwt_cancel');balanced();controller=0
+# An axis-aligned rail still stores the compass that matches the line frame.
+setup(3);controller=1
 assert begin();assert struct.unpack('<H',uc.mem_read(A+24,2))[0]==2;call('fwt_cancel');balanced();controller=0
 # A rail knot wider than one tile is still the adjacent point in front.
 # The pose stays put: it is outside the compass clamp window.

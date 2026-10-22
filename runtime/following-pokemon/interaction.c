@@ -254,6 +254,19 @@ void *fwt_begin(FwFollower *f,Actor *player,Actor *actor,void *field,void *game,
  current.tileX=player->grid[0];current.tileY=player->grid[2];
  int dx=player->world.x-actor->world.x,dz=player->world.z-actor->world.z;
  unsigned face=abs32(dx)>abs32(dz)?(dx<0?2u:3u):(dz<0?0u:1u);
+ /* Grid facing is a world compass. On a rail the same numbers are the line
+  * frame: 0 +side, 1 -side, 2 +front, 3 -front. They match the compass only
+  * while the line is axis-aligned, which is why a curved ring turned away
+  * or down. The follower stores that rail value in the same face field the
+  * engine converts for a rail NPC. */
+ void *railWork=PTR(field,0x94);
+ if(railWork&&(player->flags&8192)&&PTR(player->moveWork,0)&&player->face<=3){
+  Vec side,ahead;
+  CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(railWork,0,&side);
+  CALL(0x0219a9d1,void(*)(void*,unsigned,Vec*))(railWork,2,&ahead);
+  unsigned rail=fw_rail_face_at(dx,dz,ahead.x-player->world.x,ahead.z-player->world.z,side.x-player->world.x,side.z-player->world.z);
+  face=rail<=3?rail:player->face^1u;
+ }
  current.direction=(uint8_t)face;
  void *gameData=PTR(field,8);
  int giftRule=-1,contextRule=-1,rule=-1;uint16_t claims=0;FwrItemChoice choice={0};

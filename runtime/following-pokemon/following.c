@@ -286,6 +286,30 @@ unsigned fw_swap_face(unsigned player_face, int moving) {
     if (player_face > 3) return 0;
     return moving ? player_face ^ 1u : player_face;
 }
+unsigned fw_rail_face_toward(int d_front, int d_side) {
+    int a_front = d_front < 0 ? -d_front : d_front;
+    int a_side = d_side < 0 ? -d_side : d_side;
+    if (a_front >= a_side) return d_front >= 0 ? 2u : 3u;
+    return d_side >= 0 ? 0u : 1u;
+}
+unsigned fw_rail_face_at(int rel_x, int rel_z, int front_x, int front_z, int side_x, int side_z) {
+    uint32_t span_front = segment_span(front_x, front_z), span_side = segment_span(side_x, side_z);
+    int use_front = span_front >= 256u, use_side = span_side >= 256u;
+    if (!use_front && !use_side) return 4u;
+    int32_t proj_front = use_front ? div_s64((int64_t)rel_x * front_x + (int64_t)rel_z * front_z, span_front) : 0;
+    int32_t proj_side = use_side ? div_s64((int64_t)rel_x * side_x + (int64_t)rel_z * side_z, span_side) : 0;
+    int a_front = proj_front < 0 ? -proj_front : proj_front;
+    int a_side = proj_side < 0 ? -proj_side : proj_side;
+    if (!use_side || (use_front && a_front >= a_side)) return proj_front >= 0 ? 2u : 3u;
+    return proj_side >= 0 ? 0u : 1u;
+}
+unsigned fw_rail_swap_turn(unsigned player_face, int chord_x, int chord_z) {
+    /* The follower is reseated on the player's line, so a knot behind them
+     * does not need its own orientation. A world compass of `chord_*` agrees
+     * with this only while the line is axis-aligned. */
+    (void)chord_x; (void)chord_z;
+    return player_face > 3 ? 0u : player_face;
+}
 int fw_rail_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin) {
     if (!trail || !follower || !origin || trail->count < 2) return 0;
     int64_t dy = (int64_t)follower->y - origin->y;
@@ -303,7 +327,7 @@ int fw_rail_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPo
     }
     return 0;
 }
-int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out) {
+int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out, int step_settled) {
     if (!follower || !origin || !player || !out) return -1;
     *out = *follower;
     int64_t sx = (int64_t)follower->x - origin->x, sz = (int64_t)follower->z - origin->z;
@@ -321,8 +345,11 @@ int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const Fw
     int64_t lat2 = mx * mx + mz * mz - (int64_t)proj * proj;
     int32_t tol = (int32_t)FW_TILE / 4;
     if (lat2 > (int64_t)tol * tol) return -1;
-    int done = proj >= (int32_t)span;
-    if (done) proj = (int32_t)span;
+    /* One knot often ends before the follow gap. A step that has stopped
+     * while still moving toward the follower is the rail equivalent of
+     * arriving on their tile. */
+    int done = proj >= (int32_t)span || (step_settled && proj >= 4096);
+    if (proj >= (int32_t)span) proj = (int32_t)span;
     out->x = follower->x + div_s64(((int64_t)origin->x - follower->x) * proj, span);
     out->y = follower->y + div_s64(((int64_t)origin->y - follower->y) * proj, span);
     out->z = follower->z + div_s64(((int64_t)origin->z - follower->z) * proj, span);

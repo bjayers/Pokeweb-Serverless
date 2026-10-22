@@ -303,10 +303,39 @@ int main(void) {
     t.samples[1]=sample(origin.x,0,origin.z,1,FW_WORLD);
     assert(fw_rail_swap_match(&t,&follower,&origin)==1);
     assert(fw_swap_match(&t,&follower,&origin,3)==0);
-    assert(fw_rail_swap_mirror(&follower,&origin,&follower,&mid)==1);
+    assert(fw_rail_swap_mirror(&follower,&origin,&follower,&mid,0)==1);
     assert(mid.x==origin.x&&mid.y==origin.y&&mid.z==origin.z);
     FwPoint away=origin;away.x-=(int32_t)FW_TILE;
-    assert(fw_rail_swap_mirror(&follower,&origin,&away,&mid)==-1);
+    assert(fw_rail_swap_mirror(&follower,&origin,&away,&mid,0)==-1);
+    assert(fw_rail_swap_mirror(&follower,&origin,&away,&mid,1)==-1);
+    /* The follow gap is longer than one knot. Stopping on that knot finishes
+     * the swap; the facing is the player's rail face, not the chord compass. */
+    FwPoint gapFollower=origin;gapFollower.x+=90110;
+    FwPoint oneKnot=origin;oneKnot.x+=(int32_t)FW_TILE;
+    assert(fw_rail_swap_mirror(&gapFollower,&origin,&oneKnot,&mid,0)==0);
+    assert(fw_rail_swap_mirror(&gapFollower,&origin,&oneKnot,&mid,1)==1);
+    FwPoint curveOrigin={0,0,0};
+    FwPoint curveFollower={3*(int32_t)FW_TILE,0,4*(int32_t)FW_TILE};
+    FwPoint curvePlayer={3*(int32_t)FW_TILE/2,0,2*(int32_t)FW_TILE};
+    assert(fw_rail_swap_mirror(&curveFollower,&curveOrigin,&curvePlayer,&mid,0)==0);
+    assert(fw_rail_swap_mirror(&curveFollower,&curveOrigin,&curvePlayer,&mid,1)==1);
+    assert(fw_rail_swap_turn(2,3*(int)FW_TILE,4*(int)FW_TILE)==2);
+    assert(fw_rail_swap_turn(2,(int)FW_TILE,0)==2);
+    assert(fw_rail_swap_turn(0,0,-(int)FW_TILE)==0);
+    assert(fw_rail_swap_turn(3,-5,1)==3);
+    assert(fw_rail_swap_turn(9,1,1)==0);
+    /* Curved talk: front and side deltas, including a chord whose world
+     * compass is south while the line's +front is the 3-4-5 diagonal. */
+    assert(fw_rail_face_toward(5,0)==2&&fw_rail_face_toward(-4,0)==3);
+    assert(fw_rail_face_toward(0,3)==0&&fw_rail_face_toward(0,-1)==1);
+    assert(fw_rail_face_toward(3,1)==2&&fw_rail_face_toward(-5,2)==3);
+    assert(fw_rail_face_toward(1,4)==0&&fw_rail_face_toward(2,-5)==1);
+    assert(fw_rail_face_toward(4,4)==2&&fw_rail_face_toward(-4,4)==3);
+    assert(fw_rail_face_at(3*(int)FW_TILE,4*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==2);
+    assert(fw_rail_face_at(-4*(int)FW_TILE,3*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==0);
+    assert(fw_rail_face_at(-3*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==3);
+    assert(fw_rail_face_at(4*(int)FW_TILE,-3*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==1);
+    assert(fw_rail_face_at(1,0,0,0,0,0)==4);
     /* Wide rail knot is talkable. Two grid tiles, and the old 22-unit north
        rejection, still fail. One grid tile still succeeds. */
     FwPoint talkPlayer={10*(int32_t)FW_TILE,0,10*(int32_t)FW_TILE};

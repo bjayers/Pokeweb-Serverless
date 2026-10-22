@@ -77,7 +77,7 @@ API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags
 /* FWSW: active during a reverse step, face applied this frame, progress along
  * the vacated tile, blocked when that tile was not enterable. */
 API volatile struct { uint32_t magic,version,active,face,progress,blocked; } FollowingSwapDebug={.magic=0x57535746,.version=1};
-static struct { uint8_t active,departed,rail; uint16_t savedFace; FwPoint follower,origin; } swapOn;
+static struct { uint8_t active,departed,rail; uint16_t savedFace; FwPoint follower,origin,player; } swapOn;
 static Vec settled;
 static uint8_t haveSettled,haveLast;
 static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
@@ -180,8 +180,12 @@ static void recall_blocked(Actor *a){
  clear_swap();drop_settled();FollowingSwapDebug.blocked=1;
 }
 static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player){
- unsigned face=fwfield_player->face;
  int rail=swapOn.rail;
+ /* Grid keeps the compass the player is walking. A rail facing is the line
+  * frame (0 +side, 1 -side, 2 +front, 3 -front); copy it, and reseed every
+  * sample with it before this function returns. move() does not push the
+  * trail on this frame, so the pre-turn head cannot replace the turn. */
+ unsigned face=rail?fw_rail_swap_turn(fwfield_player->face,player->x-swapOn.origin.x,player->z-swapOn.origin.z):fwfield_player->face;
  FwSample start=*sample,end=*sample,pose;
  start.x=swapOn.origin.x;start.y=swapOn.origin.y;start.z=swapOn.origin.z;start.direction=(uint8_t)face;
  end.x=player->x;end.y=player->y;end.z=player->z;end.direction=(uint8_t)face;
@@ -206,10 +210,17 @@ static int near_origin(const FwPoint *p){
  if(dy>4096||dy<-4096)return 0;
  return dx*dx+dz*dz<=(int64_t)4096*4096;
 }
-/* Rail completion is the segment projection only. Tile centers are not rail knots. */
+/* Tile centers are not rail knots. A knot shorter than the follow gap never
+ * reaches the follower's world pose, so the travel facing would stay applied. */
 static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  FwPoint mirrored;
- int mirror=fw_rail_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored);
+ int dx=player->x-swapOn.player.x,dz=player->z-swapOn.player.z;
+ if(dx<0)dx=-dx;
+ if(dz<0)dz=-dz;
+ /* A finished knot sits still. A sub-unit bob must not keep the travel
+  * facing applied; a real step moves far more than this between frames. */
+ int stepSettled=swapOn.departed&&dx<=256&&dz<=256;
+ int mirror=fw_rail_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored,stepSettled);
  if(mirror<0){clear_swap();return 0;}
  Vec vacated={swapOn.origin.x,swapOn.origin.y,swapOn.origin.z};
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
@@ -219,6 +230,7 @@ static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
   clear_swap();settled=fwfield_player->world;haveSettled=1;animation_gate(a);return 1;
  }
  if(!near_origin(player))swapOn.departed=1;
+ swapOn.player=*player;
  bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fw_swap_face(fwfield_player->face,1));
  FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
  FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
@@ -254,11 +266,11 @@ static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  if(player->x==origin.x&&player->y==origin.y&&player->z==origin.z)return 0;
  if(!fw_rail_swap_match(&fwfield_follower.trail,&follower,&origin))return 0;
  FwPoint probe;
- if(fw_rail_swap_mirror(&follower,&origin,player,&probe)<0)return 0;
+ if(fw_rail_swap_mirror(&follower,&origin,player,&probe,0)<0)return 0;
  if(probe.x==follower.x&&probe.y==follower.y&&probe.z==follower.z)return 0;
  Vec vacated={origin.x,origin.y,origin.z};
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
- swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.savedFace=a->face;
+ swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.player=*player;swapOn.savedFace=a->face;
  FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
  return drive_swap(a,sample,player);
 }

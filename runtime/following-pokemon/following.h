@@ -90,12 +90,25 @@ int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint
 /* Rail points are not grid tiles. The follower is the next recorded point
  * behind `origin`, at any world spacing up to eight tiles. */
 int fw_rail_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin);
-/* Project onto the full rail segment, including a diagonal. Same results as
- * fw_swap_mirror: 1 at the far end, 0 on the segment, -1 if the player left it. */
-int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out);
+/* Project onto the full rail segment, including a diagonal. 1 at the far end,
+ * or when `step_settled` and the player has moved toward the follower (one
+ * rail knot is often shorter than the follow gap), 0 while that step is still
+ * moving, -1 if the player left the segment. */
+int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out, int step_settled);
 /* Facing applied to the follower. `moving` is the step back toward `origin`;
  * the finished swap uses the player's own facing. */
 unsigned fw_swap_face(unsigned player_face, int moving);
+/* Rail facing is relative to the line: 0 +side, 1 -side, 2 +front, 3 -front.
+ * `dFront`/`dSide` are player minus follower. The larger axis wins; a tie
+ * faces along the line. */
+unsigned fw_rail_face_toward(int d_front, int d_side);
+/* Same choice from world deltas. `front_*` is the +front step and `side_*`
+ * is the +side step. Returns 4 when both steps are degenerate. */
+unsigned fw_rail_face_at(int rel_x, int rel_z, int front_x, int front_z, int side_x, int side_z);
+/* Post-swap facing. Both actors share the player's line, so this is the
+ * player's rail facing on a straight line and on a curve. The chord is the
+ * world step just taken; it is not a compass to quantize. */
+unsigned fw_rail_swap_turn(unsigned player_face, int chord_x, int chord_z);
 /* Sprite/palette/size form. A small species table pins Unown (201) to '?'
  * (Gen 5 form 27) and Arceus (493) to Normal (form 0). Other species pass through. */
 unsigned fw_follower_form(unsigned species, unsigned form);
