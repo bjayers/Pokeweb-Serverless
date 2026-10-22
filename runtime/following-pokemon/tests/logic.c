@@ -10,6 +10,227 @@ static int npc_tile(int fx, int fz, int x0, int z0, int x1, int z1) {
     int xmin=x0<x1?x0:x1, xmax=x0>x1?x0:x1, zmin=z0<z1?z0:z1, zmax=z0>z1?z0:z1;
     return xmin<=fx && xmax>=fx && zmin<=fz && zmax>=fz;
 }
+static int near_eq(int32_t a, int32_t b) { int32_t d = a - b; return d < 64 && d > -64; }
+/* The swap finish keeps `natural` (no jump). Walking or running then eases the
+ * metric keep to one tile, which is the fresh-load pose. A stop holds it. */
+static void ease_line(int along, unsigned direction, int32_t *doneBehind) {
+    const uint8_t gaps[4] = {6, 6, 6, 6};
+    const int32_t player0 = 24 * (int32_t)FW_TILE + 4 * 4096;
+    const int32_t naturalX = player0 - (int32_t)FW_TILE;
+    for (int speed = 1; speed <= 2; ++speed) {
+        FwTrail fresh, swapped;
+        FwSample pose, after;
+        fw_trail_clear(&fresh);
+        for (int32_t x = 0;;) {
+            FwSample s = sample(x, 0, 0, 1, FW_WORLD);
+            s.direction = (uint8_t)direction;
+            assert(fw_trail_push_directional(&fresh, &s, &pose, gaps) >= 0);
+            if (x == player0) break;
+            int32_t next = x + speed * 4096;
+            if (next > player0) next = player0;
+            x = next;
+        }
+        FwSample far = sample(naturalX, 0, 0, 1, FW_WORLD);
+        FwSample at = sample(player0, 0, 0, 1, FW_WORLD);
+        far.direction = at.direction = (uint8_t)direction;
+        int seeded = along ? fw_trail_reseed_along(&swapped, &far, &at, gaps, &after)
+                           : fw_trail_reseed(&swapped, &far, &at, gaps, &after);
+        assert(seeded == 1);
+        assert(after.direction == direction);
+        assert(after.x < naturalX && naturalX - after.x > (int32_t)FW_TILE / 4);
+        uint32_t close = fw_trail_metric_to_point(&swapped, gaps, naturalX, 0);
+        assert(close > 0 && close < FW_TILE);
+        FwSample held;
+        assert(fw_trail_pose_behind(&swapped, gaps, close, &held) == 1);
+        assert(near_eq(held.x, naturalX) && held.z == 0);
+        assert(fw_trail_pose_behind(&swapped, gaps, FW_TILE, &held) == 1);
+        assert(held.x == after.x && held.y == after.y && held.z == after.z);
+        int finishTile = fw_tile(naturalX), playerTile = fw_tile(player0);
+        assert(finishTile != playerTile);
+        assert(npc_tile(finishTile, 0, finishTile, 0, finishTile, 0));
+        assert(!npc_tile(finishTile, 0, playerTile, 0, playerTile, 0));
+        assert(!npc_tile(finishTile, 0, finishTile + 2, 0, finishTile + 2, 0));
+        int32_t player = player0, kept = naturalX;
+        uint32_t traveled = 0;
+        int sawHold = 0, recorded = 0;
+        for (int n = 0; n < 48; ++n) {
+            int32_t prev = player;
+            player += speed * 4096;
+            FwSample s = sample(player, 0, 0, 1, FW_WORLD);
+            s.direction = (uint8_t)direction;
+            assert(fw_trail_push_directional(&fresh, &s, &pose, gaps) == 1);
+            assert(fw_trail_push_directional(&swapped, &s, &after, gaps) == 1);
+            assert(after.direction == direction);
+            uint32_t nextTravel = traveled + fw_travel(prev, 0, player, 0);
+            FwSample shown = after;
+            if (nextTravel < FW_EASE_TRAVEL) {
+                traveled = nextTravel;
+                uint32_t keep = fw_ease_keep(traveled, FW_EASE_TRAVEL, close, FW_TILE);
+                assert(fw_trail_pose_behind(&swapped, gaps, keep, &shown) == 1);
+                shown.direction = after.direction;
+                assert(shown.x > kept);
+                assert(player - shown.x > (int32_t)FW_TILE);
+                assert(player - shown.x < player - after.x);
+            } else {
+                traveled = nextTravel;
+                shown = after;
+            }
+            kept = shown.x;
+            int tile = fw_tile(shown.x), ptile = fw_tile(player);
+            assert(npc_tile(tile, 0, tile, 0, tile, 0));
+            assert(tile != ptile && !npc_tile(tile, 0, ptile, 0, ptile, 0));
+            assert(!npc_tile(tile, 0, tile + 2, 0, tile + 2, 0));
+            if (!sawHold && traveled >= FW_TILE && traveled < FW_EASE_TRAVEL) {
+                sawHold = 1;
+                int32_t frozen = shown.x;
+                uint32_t frozenTravel = traveled;
+                for (int idle = 0; idle < 5; ++idle) {
+                    FwSample idleOut;
+                    assert(fw_trail_push_directional(&swapped, &s, &idleOut, gaps) == 0);
+                    assert(fw_trail_push_directional(&fresh, &s, &idleOut, gaps) == 0);
+                }
+                FwSample again;
+                uint32_t keep = fw_ease_keep(frozenTravel, FW_EASE_TRAVEL, close, FW_TILE);
+                assert(fw_trail_pose_behind(&swapped, gaps, keep, &again) == 1);
+                assert(again.x == frozen && traveled == frozenTravel);
+                assert(player - frozen > (int32_t)FW_TILE + 64);
+                assert(player - frozen < player - after.x - 64);
+            }
+            if (traveled >= FW_EASE_TRAVEL) {
+                assert(near_eq(shown.x, pose.x) && shown.z == pose.z);
+                assert(player - shown.x > (int32_t)FW_TILE + (int32_t)FW_TILE / 4);
+                assert(fw_tile(shown.x) == fw_tile(pose.x));
+                if (!recorded) {
+                    recorded = 1;
+                    doneBehind[speed - 1] = player - shown.x;
+                    /* The grown gap has crossed a tile the close offset never occupied. */
+                    assert(fw_tile(shown.x) != fw_tile(player - (int32_t)FW_TILE));
+                }
+            }
+        }
+        assert(sawHold && recorded && traveled >= FW_EASE_TRAVEL);
+    }
+}
+static void ease_bend(void) {
+    const uint8_t gaps[4] = {6, 6, 6, 6};
+    const unsigned face = 2;
+    FwPoint player0 = {10 * (int32_t)FW_TILE, 0, 10 * (int32_t)FW_TILE};
+    FwSample from = sample(player0.x - 3 * (int32_t)FW_TILE, 0, player0.z - 4 * (int32_t)FW_TILE, 1, FW_WORLD);
+    FwSample at = sample(player0.x, 0, player0.z, 1, FW_WORLD);
+    from.direction = at.direction = face;
+    for (int speed = 1; speed <= 2; ++speed) {
+        FwTrail swapped, fresh;
+        FwSample after, pose;
+        assert(fw_trail_reseed_along(&swapped, &from, &at, gaps, &after) == 1);
+        assert(fw_trail_reseed_along(&fresh, &from, &at, gaps, &pose) == 1);
+        assert(after.direction == face && pose.direction == face);
+        uint32_t rest = fw_travel(after.x, after.z, at.x, at.z);
+        assert(rest > FW_TILE);
+        int32_t nx = after.x, nz = after.z;
+        uint32_t best = 0xffffffffu;
+        for (unsigned i = 0; i < swapped.count; ++i) {
+            const FwSample *sm = &swapped.samples[(swapped.head + i) % FW_TRAIL_CAPACITY];
+            uint32_t d = fw_travel(sm->x, sm->z, at.x, at.z);
+            if (d >= rest || d < FW_TILE / 2) continue;
+            uint32_t err = d > FW_TILE ? d - FW_TILE : FW_TILE - d;
+            if (err < best) { best = err; nx = sm->x; nz = sm->z; }
+        }
+        assert(best < 4096u);
+        assert(nz != at.z);
+        uint32_t close = fw_trail_metric_to_point(&swapped, gaps, nx, nz);
+        assert(close > 0 && close < FW_TILE);
+        FwSample held;
+        assert(fw_trail_pose_behind(&swapped, gaps, close, &held) == 1);
+        assert(near_eq(held.x, nx) && near_eq(held.z, nz));
+        assert(fw_trail_pose_behind(&swapped, gaps, FW_TILE, &held) == 1);
+        assert(held.x == after.x && held.z == after.z);
+        int sawHold = 0;
+        uint32_t traveled = 0;
+        FwPoint player = player0;
+        for (int n = 0; n < 40; ++n) {
+            FwPoint prev = player;
+            player.x += speed * 4096;
+            FwSample s = sample(player.x, 0, player.z, 1, FW_WORLD);
+            s.direction = face;
+            assert(fw_trail_push_directional(&fresh, &s, &pose, gaps) == 1);
+            assert(fw_trail_push_directional(&swapped, &s, &after, gaps) == 1);
+            assert(after.direction == face && pose.direction == face);
+            uint32_t nextTravel = traveled + fw_travel(prev.x, prev.z, player.x, player.z);
+            FwSample shown = after;
+            if (nextTravel < FW_EASE_TRAVEL) {
+                traveled = nextTravel;
+                uint32_t keep = fw_ease_keep(traveled, FW_EASE_TRAVEL, close, FW_TILE);
+                assert(fw_trail_pose_behind(&swapped, gaps, keep, &shown) == 1);
+                uint32_t gap = fw_travel(shown.x, shown.z, player.x, player.z);
+                uint32_t full = fw_travel(after.x, after.z, player.x, player.z);
+                assert(gap + 64 < full);
+            } else {
+                traveled = nextTravel;
+                shown = after;
+            }
+            int fx = fw_tile(shown.x), fz = fw_tile(shown.z);
+            int px = fw_tile(player.x), pz = fw_tile(player.z);
+            assert(npc_tile(fx, fz, fx, fz, fx, fz));
+            assert(!npc_tile(fx, fz, fx + 2, fz + 2, fx + 2, fz + 2));
+            if (fx != px || fz != pz) assert(!npc_tile(fx, fz, px, pz, px, pz));
+            if (!sawHold && traveled >= FW_TILE && traveled < FW_EASE_TRAVEL) {
+                sawHold = 1;
+                int32_t fx0 = shown.x, fz0 = shown.z;
+                for (int idle = 0; idle < 4; ++idle) {
+                    FwSample idleOut;
+                    assert(fw_trail_push_directional(&swapped, &s, &idleOut, gaps) == 0);
+                    assert(fw_trail_push_directional(&fresh, &s, &idleOut, gaps) == 0);
+                }
+                FwSample again;
+                assert(fw_trail_pose_behind(&swapped, gaps, fw_ease_keep(traveled, FW_EASE_TRAVEL, close, FW_TILE), &again) == 1);
+                assert(again.x == fx0 && again.z == fz0);
+            }
+            if (traveled >= FW_EASE_TRAVEL) {
+                assert(shown.x == pose.x && shown.z == pose.z);
+                assert(shown.z == player.z && nz != player.z);
+                uint32_t gap = fw_travel(shown.x, shown.z, player.x, player.z);
+                assert(gap > FW_TILE && gap < FW_TILE * 2u);
+            }
+        }
+        assert(sawHold && traveled >= FW_EASE_TRAVEL);
+    }
+}
+static void check_ease(void) {
+    assert(fw_ease_smoothstep(0, FW_EASE_TRAVEL) == 0);
+    assert(fw_ease_smoothstep(FW_EASE_TRAVEL / 2, FW_EASE_TRAVEL) == 32768u);
+    assert(fw_ease_smoothstep(FW_EASE_TRAVEL, FW_EASE_TRAVEL) == 65536u);
+    assert(fw_ease_smoothstep(FW_EASE_TRAVEL + 8, FW_EASE_TRAVEL) == 65536u);
+    assert(fw_ease_smoothstep(FW_EASE_TRAVEL / 8, FW_EASE_TRAVEL) < 8192u);
+    uint32_t rise0 = fw_ease_smoothstep(FW_EASE_TRAVEL / 8, FW_EASE_TRAVEL);
+    uint32_t mid0 = fw_ease_smoothstep(FW_EASE_TRAVEL * 3 / 8, FW_EASE_TRAVEL);
+    uint32_t mid1 = fw_ease_smoothstep(FW_EASE_TRAVEL / 2, FW_EASE_TRAVEL);
+    uint32_t end0 = fw_ease_smoothstep(FW_EASE_TRAVEL * 7 / 8, FW_EASE_TRAVEL);
+    assert(rise0 < mid1 - mid0 && 65536u - end0 < mid1 - mid0);
+    uint32_t prev = 0;
+    for (uint32_t i = 0; i <= 8; ++i) {
+        uint32_t s = fw_ease_smoothstep(FW_EASE_TRAVEL / 8 * i, FW_EASE_TRAVEL);
+        assert(s >= prev);
+        prev = s;
+    }
+    assert(fw_ease_keep(0, FW_EASE_TRAVEL, 40000u, FW_TILE) == 40000u);
+    assert(fw_ease_keep(FW_EASE_TRAVEL, FW_EASE_TRAVEL, 40000u, FW_TILE) == FW_TILE);
+    assert(fw_ease_keep(1, FW_EASE_TRAVEL, FW_TILE, FW_TILE) == FW_TILE);
+    prev = 40000u;
+    for (uint32_t i = 0; i <= 8; ++i) {
+        uint32_t k = fw_ease_keep(FW_EASE_TRAVEL / 8 * i, FW_EASE_TRAVEL, 40000u, FW_TILE);
+        assert(k >= prev && k <= FW_TILE);
+        prev = k;
+    }
+    assert(fw_travel(0, 0, (int32_t)FW_TILE, 0) == FW_TILE);
+    assert(fw_travel(5, -7, 5 + 3 * (int32_t)FW_TILE, -7 + 4 * (int32_t)FW_TILE) == 5u * FW_TILE);
+    int32_t gridBehind[2], railBehind[2];
+    ease_line(0, 3, gridBehind);
+    ease_line(1, 1, railBehind);
+    assert(near_eq(gridBehind[0], gridBehind[1]));
+    assert(near_eq(railBehind[0], railBehind[1]));
+    assert(near_eq(gridBehind[0], railBehind[0]));
+    ease_bend();
+}
 int main(void) {
     FwPokemon party[6] = {{0}};
     assert(fw_select(0, 0) == -1 && fw_select(party, 0) == -1 && fw_select(party, 7) == -1);
@@ -381,5 +602,6 @@ int main(void) {
     assert(fw_follower_form(201,0)==27&&fw_follower_form(201,12)==27&&fw_follower_form(201,27)==27);
     assert(fw_follower_form(493,9)==0&&fw_follower_form(493,0)==0&&fw_follower_form(493,16)==0);
     assert(fw_follower_form(25,1)==1&&fw_follower_form(200,0)==0&&fw_follower_form(494,1)==1);
+    check_ease();
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

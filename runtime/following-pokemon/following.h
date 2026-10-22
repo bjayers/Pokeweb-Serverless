@@ -123,6 +123,23 @@ int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *pl
  * of the compass axis. Rail facings are not world axes. */
 int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *player,
                           const uint8_t gaps[4], FwSample *out);
+/* Player travel, in world units, over which a post-swap gap eases from the
+ * close pose out to one metric tile (the fresh-load rest). Distance, not
+ * frames: a run covers it in fewer steps than a walk. */
+#define FW_EASE_TRAVEL (2u * FW_TILE)
+/* Smoothstep in 16.16: 0 at the start, 65536 at `length`, flat at both ends. */
+uint32_t fw_ease_smoothstep(uint32_t traveled, uint32_t length);
+/* Metric keep. `full_keep` once `traveled` reaches `length`, or when
+ * `close_keep` is already there. */
+uint32_t fw_ease_keep(uint32_t traveled, uint32_t length, uint32_t close_keep, uint32_t full_keep);
+/* Euclidean XZ length. This is the ease clock. */
+uint32_t fw_travel(int32_t x0, int32_t z0, int32_t x1, int32_t z1);
+/* Point `keep` metric units behind the newest sample. `FW_TILE` matches
+ * fw_trail_push_directional, including the older sample's direction. */
+int fw_trail_pose_behind(const FwTrail *trail, const uint8_t gaps[4], uint32_t keep, FwSample *out);
+/* Metric from the newest sample back to the trail projection of (x, z).
+ * 0 when it is not on the trail. Never more than one tile. */
+uint32_t fw_trail_metric_to_point(const FwTrail *trail, const uint8_t gaps[4], int32_t x, int32_t z);
 /* Grid talk box: one tile of reach on the facing axis. Two tiles do not pass. */
 int fw_grid_talk_span(const FwPoint *player, const FwPoint *follower, unsigned face, unsigned gap);
 /* Follower lies on the segment from the player to the adjacent rail point.

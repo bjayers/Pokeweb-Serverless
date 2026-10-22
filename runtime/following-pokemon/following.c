@@ -489,3 +489,83 @@ int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *
     }
     return ready == 1;
 }
+static int gaps_ok(const uint8_t gaps[4]) {
+    return gaps && gaps[0] <= FW_MAX_DIRECTIONAL_GAP && gaps[1] <= FW_MAX_DIRECTIONAL_GAP &&
+        gaps[2] <= FW_MAX_DIRECTIONAL_GAP && gaps[3] <= FW_MAX_DIRECTIONAL_GAP;
+}
+uint32_t fw_travel(int32_t x0, int32_t z0, int32_t x1, int32_t z1) {
+    return segment_span((int64_t)x1 - x0, (int64_t)z1 - z0);
+}
+uint32_t fw_ease_smoothstep(uint32_t traveled, uint32_t length) {
+    if (!length || traveled >= length) return 65536u;
+    int32_t u = div_s64((int64_t)traveled << 16, length);
+    if (u <= 0) return 0;
+    if (u >= 65536) return 65536u;
+    uint32_t uu = (uint32_t)u;
+    uint32_t u2 = (uint32_t)(((uint64_t)uu * uu) >> 16);
+    uint32_t three = 3u * 65536u - 2u * uu;
+    uint32_t s = (uint32_t)(((uint64_t)u2 * three) >> 16);
+    return s > 65536u ? 65536u : s;
+}
+uint32_t fw_ease_keep(uint32_t traveled, uint32_t length, uint32_t close_keep, uint32_t full_keep) {
+    if (!length || traveled >= length || close_keep >= full_keep) return full_keep;
+    uint32_t s = fw_ease_smoothstep(traveled, length);
+    uint32_t span = full_keep - close_keep;
+    uint32_t add = (uint32_t)(((uint64_t)span * s) >> 16);
+    uint32_t keep = close_keep + add;
+    return keep > full_keep ? full_keep : keep;
+}
+int fw_trail_pose_behind(const FwTrail *t, const uint8_t gaps[4], uint32_t keep, FwSample *out) {
+    if (!t || !out || !gaps_ok(gaps) || !t->count) return 0;
+    if (t->count == 1 || !keep) { *out = *trail_sample(t, t->count - 1); return 1; }
+    if (keep >= t->distance) { *out = *trail_sample(t, 0); return 1; }
+    /* `remain` is the metric from the oldest sample, the same origin push uses. */
+    uint32_t remain = t->distance - keep;
+    for (unsigned i = 0; i + 1 < t->count; ++i) {
+        const FwSample *a = trail_sample(t, i);
+        const FwSample *b = trail_sample(t, i + 1);
+        uint32_t span = trail_distance(a, b, gaps);
+        if (remain <= span || i + 2 == t->count) {
+            *out = *a;
+            if (span && remain) {
+                if (remain > span) remain = span;
+                out->x += scale_step(b->x - out->x, remain, span);
+                out->y += scale_step(b->y - out->y, remain, span);
+                out->z += scale_step(b->z - out->z, remain, span);
+            }
+            return 1;
+        }
+        remain -= span;
+    }
+    *out = *trail_sample(t, t->count - 1);
+    return 1;
+}
+uint32_t fw_trail_metric_to_point(const FwTrail *t, const uint8_t gaps[4], int32_t x, int32_t z) {
+    if (!t || !gaps_ok(gaps) || t->count < 2) return 0;
+    uint32_t back = 0;
+    int32_t tol = (int32_t)FW_TILE / 2;
+    for (unsigned n = t->count - 1; n > 0; --n) {
+        const FwSample *b = trail_sample(t, n);
+        const FwSample *a = trail_sample(t, n - 1);
+        uint32_t span = trail_distance(a, b, gaps);
+        int64_t sx = (int64_t)a->x - b->x, sz = (int64_t)a->z - b->z;
+        uint32_t world = segment_span(sx, sz);
+        if (world && span) {
+            int64_t mx = (int64_t)x - b->x, mz = (int64_t)z - b->z;
+            int32_t proj = div_s64(mx * sx + mz * sz, world);
+            if (proj >= 0 && (uint32_t)proj <= world) {
+                int64_t lat2 = mx * mx + mz * mz - (int64_t)proj * proj;
+                if (lat2 < 0) lat2 = 0;
+                if (lat2 <= (int64_t)tol * tol) {
+                    uint32_t along = (uint32_t)div_s64((int64_t)span * proj, world);
+                    if (along > span) along = span;
+                    uint32_t keep = back + along;
+                    return keep > FW_TILE ? FW_TILE : keep;
+                }
+            }
+        }
+        back += span;
+        if (back >= FW_TILE) return FW_TILE;
+    }
+    return 0;
+}
