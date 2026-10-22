@@ -23,19 +23,29 @@ void fwr_anchor(Actor *a,unsigned face){
  *     0 used, 1 not a shadow quad, 2 too far, 3 player's oval, 4 bias declined
  * +128 hold           1 sprite kept on that ground (slope or yawed camera);
  *     0 standard flat camera, south +6 Z and the north 2px tuck still apply
+ * Version 3 appends, leaving +128 in place:
+ * +132 viewDistance   eye-to-target length, 20.12
+ * +136 sortMargin     eye-ray behind target used this frame
+ * +140 easeBlend      0 on a swap or the close pose, 65536 when idle
+ * +144 depthRel       follower view depth vs the player before that tuck
  */
 typedef struct {
  uint32_t magic,version,frames,actor,size,applied;int32_t policy,before,after;
  FwPoint axis,native,submitted; int32_t nativeSX,submittedSX,shadowChange,shadowCount;
  FwPoint shadowAt;
  int32_t shadowNativeY,groundY,gap,snap,nearY,nearGeom,nearWhy,hold;
+ int32_t viewDistance,sortMargin,easeBlend,depthRel;
 } FwrDebug;
 _Static_assert(offsetof(FwrDebug,shadowCount)==84,"shadow count");
 _Static_assert(offsetof(FwrDebug,shadowAt)==88,"shadow position");
 _Static_assert(offsetof(FwrDebug,shadowNativeY)==100,"native shadow Y");
 _Static_assert(offsetof(FwrDebug,snap)==112,"shadow snap");
 _Static_assert(offsetof(FwrDebug,hold)==128,"sprite hold");
-__attribute__((visibility("default"))) volatile FwrDebug FollowingRenderDebug={.magic=0x44525746,.version=2};
+_Static_assert(offsetof(FwrDebug,viewDistance)==132,"view distance");
+_Static_assert(offsetof(FwrDebug,sortMargin)==136,"sort margin");
+_Static_assert(offsetof(FwrDebug,easeBlend)==140,"ease blend");
+_Static_assert(offsetof(FwrDebug,depthRel)==144,"relative depth");
+__attribute__((visibility("default"))) volatile FwrDebug FollowingRenderDebug={.magic=0x44525746,.version=3};
 /* The effect pass draws the shadow after this actor pass. Remember the
  * submitted sprite so that pass can tuck the shadow behind it. */
 static struct {
@@ -217,6 +227,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  FollowingRenderDebug.frames++;FollowingRenderDebug.applied=0;FollowingRenderDebug.actor=(uint32_t)a;
  FollowingRenderDebug.policy=FollowingRenderDebug.before=FollowingRenderDebug.after=0;
  FollowingRenderDebug.hold=0;
+ FollowingRenderDebug.viewDistance=FollowingRenderDebug.sortMargin=0;
+ FollowingRenderDebug.easeBlend=65536;FollowingRenderDebug.depthRel=0;
  if(system&&camera&&a&&player&&a!=player&&a->system==player->system){
   b=billboard(system,a);p=billboard(system,player);
   if(b){
@@ -243,6 +255,15 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    int64_t rise=(int64_t)a->world.y-playerY;
    int hold=rise>FWR_SHADOW_FLAT||rise<-FWR_SHADOW_FLAT||!standard_view(&cam);
    FollowingRenderDebug.hold=hold;
+   int swapping=0,easing=0;uint32_t traveled=0;
+   fw_depth_query(&swapping,&easing,&traveled);
+   uint32_t ease_s=65536u;
+   if(swapping)ease_s=0;
+   else if(easing)ease_s=fw_ease_smoothstep(traveled,FW_EASE_TRAVEL);
+   int32_t margin=fwr_sort_margin(&cam,ease_s);
+   FollowingRenderDebug.viewDistance=(int32_t)fwr_view_distance(&cam);
+   FollowingRenderDebug.sortMargin=margin;
+   FollowingRenderDebug.easeBlend=(int32_t)ease_s;
    int faceZ=!hold&&a->face==1?FWR_SOUTH_ANCHOR_Z:0;
    if(faceZ){
     int64_t z=(int64_t)adjusted.position.z+(int64_t)faceZ*4096;
@@ -281,12 +302,26 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
      adjusted=corrected;changed=1;
     }
    }
-   if(p&&result.policy==-1){
-    /* Shadow clearance can pull a trailing quad toward the camera and in
-     * front of the player. Sit just behind the player; a fixed four-unit
-     * target crossed the shadow and nearby stair walls. Leave the player. */
+   int32_t depthRel=0;
+   if(p&&b!=p&&result.policy){
+    int64_t dx=(int64_t)adjusted.position.x-playerOriginal.position.x;
+    int64_t dy=(int64_t)adjusted.position.y-playerOriginal.position.y;
+    int64_t dz=(int64_t)adjusted.position.z-playerOriginal.position.z;
+    depthRel=(int32_t)((dx*result.axis.x+dy*result.axis.y+dz*result.axis.z)/4096);
+   }
+   FollowingRenderDebug.depthRel=depthRel;
+   /* Shadow clearance can pull a trailing quad toward the camera and in
+    * front of the player. Sit just behind the player. Idle draws keep the
+    * one-unit target, scaled only past the ordinary field camera. A swap
+    * and the close pose after it use a deeper target and give it back on
+    * the same smoothstep as the spacing, so the two finish together. A
+    * follower who is clearly nearer the camera stays in front. The one-tile
+    * cap still stops the quad at a nearby wall. Leave the player. */
+   int blend=ease_s<65536u;
+   int tuckBehind=result.policy==-1||(blend&&result.policy==1&&depthRel<=fwr_clear_front(&cam));
+   if(p&&tuckBehind){
     FwrPose behind;
-    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,FWR_SORT_BEHIND,FWR_BEHIND_CAP,&behind)){
+    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,margin,FWR_BEHIND_CAP,&behind)){
      adjusted=behind;changed=1;
     }
    }

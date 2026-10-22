@@ -8,6 +8,16 @@ static int32_t divide(int64_t value,int32_t divisor){
  if(q>INT32_MAX)q=INT32_MAX;
  return value<0?-(int32_t)q:(int32_t)q;
 }
+static uint32_t isqrt(uint64_t n){
+ uint64_t bit=(uint64_t)1<<62,result=0;
+ while(bit>n)bit>>=2;
+ while(bit){
+  if(n>=result+bit){n-=result+bit;result=(result>>1)+bit;}
+  else result>>=1;
+  bit>>=2;
+ }
+ return result>0xffffffffu?0xffffffffu:(uint32_t)result;
+}
 static uint32_t root(uint32_t n){
  uint32_t answer=0,bit=1u<<30;
  while(bit>n)bit>>=2;
@@ -121,6 +131,59 @@ int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
  int32_t current=dot(relative,direction),target=6*4096;
  if(current>=target)return 0;
  return shift_depth(native,camera,direction,target-current+16,out);
+}
+#define FWR_ZOOM_LIMIT (8u * FWR_CAMERA_REF)
+_Static_assert(FWR_SORT_STRONG > FWR_SORT_BEHIND, "strong tuck");
+_Static_assert(FWR_SORT_STRONG <= (int)FW_TILE, "strong tuck fits the cap");
+static uint32_t view_span(const FwrCamera *camera){
+ int64_t dx=(int64_t)camera->eye.x-camera->target.x;
+ int64_t dy=(int64_t)camera->eye.y-camera->target.y;
+ int64_t dz=(int64_t)camera->eye.z-camera->target.z;
+ if(dx<0)dx=-dx;
+ if(dy<0)dy=-dy;
+ if(dz<0)dz=-dz;
+ if(dx>=(int64_t)FWR_ZOOM_LIMIT||dy>=(int64_t)FWR_ZOOM_LIMIT||dz>=(int64_t)FWR_ZOOM_LIMIT)
+  return FWR_ZOOM_LIMIT;
+ return isqrt((uint64_t)dx*(uint64_t)dx+(uint64_t)dy*(uint64_t)dy+(uint64_t)dz*(uint64_t)dz);
+}
+/* (distance/ref)^2 in 16.16. One at the ordinary field camera, saturated
+ * once the scaled margin is past the one-tile cap anyway. */
+static uint32_t zoom_sq(uint32_t distance){
+ if(distance<=FWR_CAMERA_REF)return 65536u;
+ if(distance>=FWR_ZOOM_LIMIT)return 64u*65536u;
+ int32_t q=divide((int64_t)distance<<16,(int32_t)FWR_CAMERA_REF);
+ if(q<=65536)return 65536u;
+ uint32_t s=(uint32_t)(((uint64_t)(uint32_t)q*(uint32_t)q)>>16);
+ return s<65536u?65536u:s;
+}
+static int32_t scale_margin(int32_t base,uint32_t zoom){
+ if(base<=0)return 0;
+ uint64_t v=((uint64_t)(uint32_t)base*zoom)>>16;
+ if(v<(uint32_t)base)v=(uint32_t)base;
+ if(v>FW_TILE)v=FW_TILE;
+ return (int32_t)v;
+}
+uint32_t fwr_view_distance(const FwrCamera *camera){
+ if(!camera)return 0;
+ return view_span(camera);
+}
+int32_t fwr_sort_margin(const FwrCamera *camera,uint32_t ease_s){
+ uint32_t zoom=zoom_sq(camera?view_span(camera):0);
+ int32_t base=scale_margin(FWR_SORT_BEHIND,zoom);
+ if(ease_s>=65536u)return base;
+ int32_t strong=scale_margin(FWR_SORT_STRONG,zoom);
+ if(strong<base)strong=base;
+ uint32_t span=(uint32_t)(strong-base);
+ uint32_t drop=(uint32_t)(((uint64_t)span*ease_s)>>16);
+ int32_t margin=strong-(int32_t)drop;
+ return margin<base?base:margin;
+}
+int32_t fwr_clear_front(const FwrCamera *camera){
+ uint32_t zoom=zoom_sq(camera?view_span(camera):0);
+ int32_t clear=scale_margin(FWR_CLEAR_FRONT,zoom);
+ /* A full tile toward the camera has to stay in front on a zoomed view. */
+ if(clear>(int32_t)(FW_TILE/2))clear=(int32_t)(FW_TILE/2);
+ return clear;
 }
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
                     const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *out){

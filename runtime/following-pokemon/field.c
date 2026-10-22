@@ -86,6 +86,11 @@ static Vec settled;
 static uint8_t haveSettled,haveLast;
 static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
 static void clear_ease(void){ease.active=0;ease.traveled=ease.close_keep=0;}
+void fw_depth_query(int *swapping,int *easing,uint32_t *traveled){
+ if(swapping)*swapping=swapOn.active?1:0;
+ if(easing)*easing=ease.active?1:0;
+ if(traveled)*traveled=ease.active?ease.traveled:0;
+}
 static void drop_settled(void){haveSettled=0;haveLast=0;}
 static void cleanup(void);
 static void clear_restore(void){

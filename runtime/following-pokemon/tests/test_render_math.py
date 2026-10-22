@@ -312,4 +312,112 @@ class Rendering(unittest.TestCase):
     # Projection units are 1/256 of a pixel at this camera. A step away from
     # the feet must stay visibly off the feet; the bias does not pull it there.
     self.assertGreater(max(abs(x-y)for a,b in zip(feet_screen,after)for x,y in zip(a,b)),1/256)
+ def test_close_range_depth_follows_the_ease(self):
+  # The close pose and the swap crossing need a deeper eye-ray tuck than the
+  # one-unit default. That tuck blends back to the default on the same
+  # smoothstep the spacing uses, and a zoomed camera scales both ends.
+  self.lib.fwr_view_distance.argtypes=[c.POINTER(Camera)]
+  self.lib.fwr_view_distance.restype=c.c_uint32
+  self.lib.fwr_sort_margin.argtypes=[c.POINTER(Camera),c.c_uint32]
+  self.lib.fwr_sort_margin.restype=c.c_int32
+  self.lib.fwr_clear_front.argtypes=[c.POINTER(Camera)]
+  self.lib.fwr_clear_front.restype=c.c_int32
+  near=(0,760739,581835)
+  span=math.sqrt(sum(v*v for v in near))
+  exact=tuple(int(v*240*4096/span) for v in near)
+  packaged=(0,200*4096,140*4096)
+  zoom=tuple(v*2 for v in near)
+  def camera(eye,projection=0):return Camera(Point(*eye),Point(),projection)
+  for eye in (near,exact,packaged):
+   view=camera(eye)
+   self.assertLessEqual(self.lib.fwr_view_distance(c.byref(view)),256*4096)
+   self.assertEqual(self.lib.fwr_sort_margin(c.byref(view),65536),4096)
+   self.assertEqual(self.lib.fwr_sort_margin(c.byref(view),70000),4096)
+   self.assertEqual(self.lib.fwr_sort_margin(c.byref(view),0),8*4096)
+   self.assertEqual(self.lib.fwr_clear_front(c.byref(view)),4*4096)
+  far=camera(zoom)
+  self.assertGreater(self.lib.fwr_view_distance(c.byref(far)),256*4096)
+  zoom_idle=self.lib.fwr_sort_margin(c.byref(far),65536)
+  zoom_strong=self.lib.fwr_sort_margin(c.byref(far),0)
+  self.assertGreater(zoom_idle,4096)
+  self.assertLessEqual(zoom_idle,65536)
+  self.assertGreater(zoom_strong,8*4096)
+  self.assertLessEqual(zoom_strong,65536)
+  self.assertGreater(zoom_strong,zoom_idle)
+  self.assertGreater(self.lib.fwr_clear_front(c.byref(far)),4*4096)
+  self.assertLessEqual(self.lib.fwr_clear_front(c.byref(far)),32768)
+  for eye in (near,zoom):
+   view=camera(eye)
+   previous=None
+   for step in range(9):
+    margin=self.lib.fwr_sort_margin(c.byref(view),65536*step//8)
+    if previous is not None:self.assertLessEqual(margin,previous)
+    previous=margin
+   self.assertEqual(previous,self.lib.fwr_sort_margin(c.byref(view),65536))
+  def depth(pose,player,axis):
+   return math.trunc(sum((a-b)*n for a,b,n in zip(xyz(pose.position),xyz(player.position),axis))/4096)
+  # North of the player is behind this camera. South is toward it.
+  separations=(('five_eighths',-5*65536//8),('quarter',-65536//4),('cross',0),('brush',2048),('front',65536))
+  for name,eye in (('near',near),('zoom',zoom)):
+   for projection in (0,2):
+    view=camera(eye,projection)
+    idle=self.lib.fwr_sort_margin(c.byref(view),65536)
+    close=self.lib.fwr_sort_margin(c.byref(view),0)
+    clear=self.lib.fwr_clear_front(c.byref(view))
+    for label,z in separations:
+     world=Point(0,0,z);origin=Point();pose=Pose(Point(0,0,z),8192,8192)
+     ordered=Pose();result=Result()
+     self.lib.fwr_correct(c.byref(world),c.byref(origin),c.byref(pose),c.byref(origin),c.byref(view),0,c.byref(ordered),c.byref(result))
+     player=Pose(origin,8192,8192);axis=xyz(result.axis);rel=depth(ordered,player,axis)
+     def settle(ease_s,margin):
+      blend=ease_s<65536
+      tuck=result.policy==-1 or (blend and result.policy==1 and rel<=clear)
+      out=Pose();moved=0
+      if tuck:
+       moved=self.lib.fwr_keep_behind(c.byref(ordered),c.byref(player),c.byref(view),margin,16*4096,c.byref(out))
+       if not moved:out=ordered
+      else:out=ordered
+      return tuck,depth(out,player,axis),out
+     tucked,final,out=settle(0,close)
+     _,idle_final,_=settle(65536,idle)
+     if label=='front':
+      self.assertEqual(result.policy,1,name)
+      self.assertGreater(rel,clear)
+      self.assertFalse(tucked)
+      self.assertGreater(final,clear)
+      self.assertEqual(final,idle_final)
+     else:
+      self.assertTrue(tucked,(name,label,result.policy,rel,clear))
+      self.assertLessEqual(final,-close+256,(name,label,final,close))
+      self.assertGreater(final,-close-1024,(name,label,final,close))
+      self.assertLess(final,idle_final,(name,label,final,idle_final))
+      before=project(ordered,eye,projection==2);after=project(out,eye,projection==2)
+      error=max(abs(a-b)for p,q in zip(before,after)for a,b in zip(p,q))
+      self.assertLess(error,4 if projection==2 else 0.002/256)
+     if name=='near' and projection==0 and label in ('five_eighths','quarter','cross'):
+      # Idle is the historical one-unit tuck, including its no-op when the
+      # follower is already that far behind.
+      direct=Pose()
+      moved=self.lib.fwr_keep_behind(c.byref(ordered),c.byref(player),c.byref(view),4096,16*4096,c.byref(direct))
+      self.assertEqual(idle_final,depth(direct if moved else ordered,player,axis))
+     if name=='zoom' and projection==0 and label=='five_eighths':
+      dist=self.lib.fwr_view_distance(c.byref(view))/4096
+      steps=lambda view_depth:32800*(abs(view_depth)/4096)/(dist*dist)
+      self.assertLess(steps(rel),1.5)
+      self.assertGreaterEqual(steps(final),2)
+  # The fresh-load rest is already behind the strong target on a normal
+  # camera, so the blend and the idle path submit the same pose. On the
+  # zoomed camera the late blend has fallen back under that gap too.
+  rest=Pose(Point(0,0,-90112),8192,8192);origin=Point()
+  for eye in (near,zoom):
+   view=camera(eye);ordered=Pose();result=Result()
+   self.lib.fwr_correct(c.byref(Point(0,0,-90112)),c.byref(origin),c.byref(rest),c.byref(origin),c.byref(view),0,c.byref(ordered),c.byref(result))
+   player=Pose(origin,8192,8192);axis=xyz(result.axis)
+   late=self.lib.fwr_sort_margin(c.byref(view),65536*7//8)
+   done=self.lib.fwr_sort_margin(c.byref(view),65536)
+   self.assertLessEqual(done,late)
+   for margin in (late,done):
+    out=Pose()
+    self.assertEqual(self.lib.fwr_keep_behind(c.byref(ordered),c.byref(player),c.byref(view),margin,16*4096,c.byref(out)),0)
+    self.assertEqual(bytes(ordered),bytes(out))
 if __name__=='__main__':unittest.main()

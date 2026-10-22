@@ -19,6 +19,15 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 /* One tile covers shadow clearance and a step of height. A wilder pose stops
  * here instead of diving through the wall behind the player. */
 #define FWR_BEHIND_CAP (16 * 4096)
+/* Ordinary field cameras sit inside this eye distance. Past it the
+ * behind-target grows with (distance/ref)^2, matching the drop in native
+ * Z resolution, and stops at one tile. */
+#define FWR_CAMERA_REF (256u * 4096u)
+/* Swap crossing and the close post-swap pose. Blends back to the default. */
+#define FWR_SORT_STRONG (8 * 4096)
+/* View depth past which the follower is nearer the camera. The close-range
+ * blend must not pull that sprite behind the player. */
+#define FWR_CLEAR_FRONT (4 * 4096)
 /* A biased shadow sits one unit further than the sprite it belongs to. */
 #define FWR_SHADOW_KEEP (1 * 4096)
 /* Native flat shadows sit about one unit above the ground anchor. A larger
@@ -39,6 +48,16 @@ int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
  * anchor, and logical world position stay where they are. */
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
     const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *output);
+/* Eye-to-target length in 20.12. 0 when the camera has no separation. */
+uint32_t fwr_view_distance(const FwrCamera *camera);
+/* Margin for fwr_keep_behind. `ease_s` is a smoothstep in 0..65536: 0 while
+ * the sprites cross or the follower holds the close pose, 65536 when no swap
+ * or ease is active. The strong margin blends to the default, so the last
+ * eased frame matches an idle draw. Farther than FWR_CAMERA_REF, both ends
+ * scale by (distance/ref)^2 and stay within one tile. */
+int32_t fwr_sort_margin(const FwrCamera *camera, uint32_t ease_s);
+/* View depth, in 20.12, that counts as clearly nearer the camera. */
+int32_t fwr_clear_front(const FwrCamera *camera);
 /* Push a camera-facing shadow along the eye ray until it sorts just behind
  * its sprite. Screen position and size stay put. */
 int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
