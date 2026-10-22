@@ -344,7 +344,8 @@ for move_slot in range(4):
     moves = [0] * 4; moves[move_slot] = 57
     party[:] = [mon(493, tuple(moves), form=9, gender=2, shiny=1)]
     call("FollowingSurfPartyAppearance", [game])
-    assert uc.reg_read(UC_ARM_REG_R0) == 493 | (9 << 10) | (2 << 18) | (1 << 26)
+    # The follower sprite ignores the held plate and always uses Normal Arceus.
+    assert uc.reg_read(UC_ARM_REG_R0) == 493 | (0 << 10) | (2 << 18) | (1 << 26)
 party[:] = [mon(493, (0, 0, 0, 0)), mon(650, (57, 0, 0, 0))]
 call("FollowingSurfPartyAppearance", [game])
 assert uc.reg_read(UC_ARM_REG_R0) == 0

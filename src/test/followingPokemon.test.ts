@@ -4,7 +4,7 @@ import { readU32, writeU32 } from "../nds/binary";
 import { decodeBtxImage } from "../pokeweb/btxModel";
 import {
   buildFollowerCatalog, compactFollowerRegistry, decodeFollowerRegistry, encodeFollowerFrames, encodeFollowerRegistry,
-  enumerateFollowerAppearances, followerAnimationFrame, followerCrc32, followerDescriptorOffset,
+  enumerateFollowerAppearances, followerAnimationFrame, followerCrc32, followerDescriptorOffset, followerDisplayForm,
   followerFramesFromSheet, followerKey, followerPreview, followerSideGap, deriveFollowerSpacing, encodeFollowerLandAnchors, validateFollowerLandAnchors, followerSheetFromFrames, stockFollowerRow,
   validateFollowerRegistry, validateFollowerResource, type FollowerFrame, type FollowerRegistry,
 } from "../pokeweb/followingPokemonModel";
@@ -79,6 +79,12 @@ describe("follower appearance registry",()=>{
     const keys=enumerateFollowerAppearances(personal);
     expect(new Set(keys.map(k=>k.species)).size).toBe(649);
     expect(keys.filter(k=>k.species===201)).toHaveLength(56);
+    expect(followerDisplayForm(201,0)).toBe(27);
+    expect(followerDisplayForm(201,26)).toBe(27);
+    expect(followerDisplayForm(201,27)).toBe(27);
+    expect(followerDisplayForm(493,9)).toBe(0);
+    expect(followerDisplayForm(493,0)).toBe(0);
+    expect(followerDisplayForm(25,1)).toBe(1);
     expect(keys.filter(k=>k.species===25)).toHaveLength(4);
     expect(keys.filter(k=>k.species===29).every(k=>k.gender===1)).toBe(true);
     expect(new Set(keys.map(followerKey)).size).toBe(keys.length);

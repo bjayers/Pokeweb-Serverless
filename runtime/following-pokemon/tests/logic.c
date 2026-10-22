@@ -293,5 +293,64 @@ int main(void) {
             assert(!npc_tile(tile,0,tile+2,0,tile+2,0));
         }
     }
+    /* Rail reverse step: the segment is wider than a tile and not cardinal.
+       The finished facing is the player's, including a rail direction key. */
+    assert(fw_swap_face(3,0)==3&&fw_swap_face(3,1)==2&&fw_swap_face(9,1)==0);
+    fw_trail_clear(&t);t.count=2;
+    follower=(FwPoint){center+2*(int32_t)FW_TILE+20000,0,center+(int32_t)FW_TILE};
+    origin=(FwPoint){center,0,center};
+    t.samples[0]=sample(follower.x,0,follower.z,1,FW_WORLD);
+    t.samples[1]=sample(origin.x,0,origin.z,1,FW_WORLD);
+    assert(fw_rail_swap_match(&t,&follower,&origin)==1);
+    assert(fw_swap_match(&t,&follower,&origin,3)==0);
+    assert(fw_rail_swap_mirror(&follower,&origin,&follower,&mid)==1);
+    assert(mid.x==origin.x&&mid.y==origin.y&&mid.z==origin.z);
+    FwPoint away=origin;away.x-=(int32_t)FW_TILE;
+    assert(fw_rail_swap_mirror(&follower,&origin,&away,&mid)==-1);
+    /* Wide rail knot is talkable. Two grid tiles, and the old 22-unit north
+       rejection, still fail. One grid tile still succeeds. */
+    FwPoint talkPlayer={10*(int32_t)FW_TILE,0,10*(int32_t)FW_TILE};
+    FwPoint talkFar=talkPlayer;talkFar.x-=2*(int32_t)FW_TILE;
+    assert(!fw_grid_talk_span(&talkPlayer,&talkFar,2,12));
+    FwPoint talkNear=talkPlayer;talkNear.x-=(int32_t)FW_TILE;
+    assert(fw_grid_talk_span(&talkPlayer,&talkNear,2,0)==1);
+    FwPoint talkNorth=talkPlayer;talkNorth.z-=22*4096;
+    assert(!fw_grid_talk_span(&talkPlayer,&talkNorth,0,0));
+    talkNorth.z=talkPlayer.z-(int32_t)FW_TILE;
+    assert(fw_grid_talk_span(&talkPlayer,&talkNorth,0,0)==1);
+    FwPoint wide=talkPlayer;wide.x+=2*(int32_t)FW_TILE+20000;
+    assert(fw_rail_segment_reach(&talkPlayer,&wide,&wide,0)==1);
+    FwPoint railDiagonal=talkPlayer;railDiagonal.x+=3*(int32_t)FW_TILE/2;railDiagonal.z+=(int32_t)FW_TILE;
+    assert(fw_rail_segment_reach(&talkPlayer,&railDiagonal,&railDiagonal,6)==1);
+    FwPoint railPast=talkPlayer;railPast.x+=2*(wide.x-talkPlayer.x);railPast.z+=2*(wide.z-talkPlayer.z);
+    assert(!fw_rail_segment_reach(&talkPlayer,&railPast,&wide,12));
+    FwPoint beside=wide;beside.z+=(int32_t)FW_TILE;
+    assert(!fw_rail_segment_reach(&talkPlayer,&beside,&wide,12));
+    /* Reseed along the chord, not the compass of a rail facing key. */
+    FwSample fromS=sample(0,0,0,1,FW_WORLD);
+    FwSample atS=sample(3*(int32_t)FW_TILE,0,4*(int32_t)FW_TILE,1,FW_WORLD);
+    atS.direction=1;
+    const uint8_t gap0[4]={0,0,0,0},gap6[4]={6,6,6,6};
+    assert(fw_trail_reseed_along(&t,&fromS,&atS,gap0,&out)==1);
+    assert(out.direction==1);
+    assert(out.x>fromS.x&&out.x<atS.x&&out.z>fromS.z&&out.z<atS.z);
+    int64_t back0x=(int64_t)atS.x-out.x,back0z=(int64_t)atS.z-out.z;
+    int64_t tile2=(int64_t)FW_TILE*(int64_t)FW_TILE;
+    int64_t dist0=back0x*back0x+back0z*back0z;
+    assert(dist0>tile2-tile2/8&&dist0<tile2+tile2/4);
+    FwSample along;
+    assert(fw_trail_reseed_along(&t,&fromS,&atS,gap6,&along)==1);
+    assert(along.direction==atS.direction);
+    int64_t back6x=(int64_t)atS.x-along.x,back6z=(int64_t)atS.z-along.z;
+    assert(back6x*back6x+back6z*back6z>dist0);
+    FwSample onward=atS;onward.x+=3*(int32_t)FW_TILE/5;onward.z+=4*(int32_t)FW_TILE/5;
+    assert(fw_trail_push_directional(&t,&onward,&out,gap6)==1);
+    int64_t keepx=(int64_t)onward.x-out.x,keepz=(int64_t)onward.z-out.z;
+    assert(keepx*keepx+keepz*keepz>tile2);
+    assert(fw_trail_reseed_along(&t,&atS,&atS,gap0,&out)==0);
+    /* Unown's follower sheet is always '?'. Arceus is always Normal. */
+    assert(fw_follower_form(201,0)==27&&fw_follower_form(201,12)==27&&fw_follower_form(201,27)==27);
+    assert(fw_follower_form(493,9)==0&&fw_follower_form(493,0)==0&&fw_follower_form(493,16)==0);
+    assert(fw_follower_form(25,1)==1&&fw_follower_form(200,0)==0&&fw_follower_form(494,1)==1);
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

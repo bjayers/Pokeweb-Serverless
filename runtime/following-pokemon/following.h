@@ -87,6 +87,18 @@ int fw_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *
  * follower's walk from `follower` back to `origin`. Returns 1 at the far
  * end, 0 while still on the segment, -1 if the player left it. */
 int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out);
+/* Rail points are not grid tiles. The follower is the next recorded point
+ * behind `origin`, at any world spacing up to eight tiles. */
+int fw_rail_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin);
+/* Project onto the full rail segment, including a diagonal. Same results as
+ * fw_swap_mirror: 1 at the far end, 0 on the segment, -1 if the player left it. */
+int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out);
+/* Facing applied to the follower. `moving` is the step back toward `origin`;
+ * the finished swap uses the player's own facing. */
+unsigned fw_swap_face(unsigned player_face, int moving);
+/* Sprite/palette/size form. A small species table pins Unown (201) to '?'
+ * (Gen 5 form 27) and Arceus (493) to Normal (form 0). Other species pass through. */
+unsigned fw_follower_form(unsigned species, unsigned form);
 /* Replace the trail with a unit-step walk that ends on `player` and uses
  * `gaps`. The pose is one metric tile behind, which is the fresh-load rest,
  * and later steps keep that distance. `follower` supplies the far height.
@@ -94,6 +106,15 @@ int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint
  * facing from before the turnaround. */
 int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player,
                     const uint8_t gaps[4], FwSample *out);
+/* Same rest distance, walked along the chord from `from` to `player` instead
+ * of the compass axis. Rail facings are not world axes. */
+int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *player,
+                          const uint8_t gaps[4], FwSample *out);
+/* Grid talk box: one tile of reach on the facing axis. Two tiles do not pass. */
+int fw_grid_talk_span(const FwPoint *player, const FwPoint *follower, unsigned face, unsigned gap);
+/* Follower lies on the segment from the player to the adjacent rail point.
+ * The segment may be wider than a grid tile. A point past that rail point fails. */
+int fw_rail_segment_reach(const FwPoint *player, const FwPoint *follower, const FwPoint *forward, unsigned gap);
 /* Bound a nearly-adjacent follower's world pose to the same forward reach
  * used by dialogue, without changing its route or authored gap. */
 int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *art_offset,

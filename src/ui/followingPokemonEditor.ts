@@ -9,7 +9,7 @@ import { findPokemonBaseSpeciesId, findPokemonPersonalFormOwner, pokemonSpeciesL
 import { FOLLOWER_DIALOGUE_ANIMATIONS, type FollowerDialogueAnimation, type FollowerDialogueRule } from "../pokeweb/followingPokemonDialogues";
 import { FOLLOWER_TILE_BOUND_KEYS, type FollowerTileBounds } from "../pokeweb/followingPokemonTileBounds";
 import type { FollowerItemRule } from "../pokeweb/followingPokemonItems";
-import { FOLLOWER_DIRECTIONS, decodeFollowerRegistry, encodeFollowerFrames, followerFramesFromSheet, followerKey, followerPreview, followerSheetFromFrames, type FollowerAssetEntry, type FollowerFrame } from "../pokeweb/followingPokemonModel";
+import { FOLLOWER_DIRECTIONS, decodeFollowerRegistry, encodeFollowerFrames, followerDisplayForm, followerFramesFromSheet, followerKey, followerPreview, followerSheetFromFrames, type FollowerAssetEntry, type FollowerFrame } from "../pokeweb/followingPokemonModel";
 import { parseHeaders } from "../pokeweb/headerModel";
 import { escapeHtml } from "./dom";
 import { createFollowerPositionEditor } from "./followingPokemonPositionEditor";
@@ -195,7 +195,8 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
   const previewEntry = (species?: number, form?: number) => {
     if (!species) return undefined;
     const entries = (workspace ?? previewWorkspace)?.registry.entries ?? [];
-    const matching = entries.filter(entry => entry.key.species === species && !entry.key.shiny && entry.key.form === (form ?? 0));
+    const shown = followerDisplayForm(species, form ?? 0);
+    const matching = entries.filter(entry => entry.key.species === species && !entry.key.shiny && entry.key.form === shown);
     return matching.find(entry => entry.key.gender === 0) ?? matching.find(entry => entry.key.gender === 2) ?? matching[0]
       ?? entries.find(entry => entry.key.species === species && !entry.key.shiny && entry.key.form === 0);
   };

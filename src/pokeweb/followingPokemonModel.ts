@@ -53,6 +53,14 @@ export type FollowerDirection = typeof FOLLOWER_DIRECTIONS[number];
 function integer(value: number, min: number, max: number, label: string): void {
   if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Invalid ${label}: ${value}`);
 }
+/** Forced follower display forms. Unown '?' is Gen 5 form 27; Arceus is always Normal (form 0). */
+export const FOLLOWER_FORCED_FORMS: Readonly<Record<number, number>> = {
+  201: 27,
+  493: 0,
+};
+export function followerDisplayForm(species: number, form: number): number {
+  return FOLLOWER_FORCED_FORMS[species] ?? form;
+}
 export function followerKey(key: FollowerAppearanceKey): string {
   integer(key.species, 1, 1023, "species"); integer(key.form, 0, 255, "form"); integer(key.gender, 0, 2, "gender");
   if (typeof key.shiny !== "boolean") throw new Error("Shiny must be a boolean.");

@@ -261,6 +261,114 @@ int fw_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *
         (face == 2 && tx == -1 && tz == 0) || (face == 3 && tx == 1 && tz == 0);
     return cardinal && ahead_is_origin(trail, follower, origin);
 }
+static int32_t div_s64(int64_t n, uint32_t d) {
+    if (!d || !n || n == INT64_MIN) return 0;
+    int neg = n < 0;
+    uint64_t u = neg ? (uint64_t)(-n) : (uint64_t)n, q = 0, r = 0;
+    for (unsigned bit = 0; bit < 64; ++bit) {
+        r = (r << 1) | (u >> 63); u <<= 1; q <<= 1;
+        if (r >= d) { r -= d; q |= 1; }
+    }
+    if (q > 2147483647u) q = 2147483647u;
+    return neg ? -(int32_t)q : (int32_t)q;
+}
+static uint32_t segment_span(int64_t dx, int64_t dz) {
+    int64_t ax = dx < 0 ? -dx : dx, az = dz < 0 ? -dz : dz;
+    return isqrt((uint64_t)ax * (uint64_t)ax + (uint64_t)az * (uint64_t)az);
+}
+static int near_sample(const FwSample *s, const FwPoint *p, int32_t tol) {
+    int32_t dx = s->x - p->x, dz = s->z - p->z;
+    if (dx < 0) dx = -dx;
+    if (dz < 0) dz = -dz;
+    return dx <= tol && dz <= tol;
+}
+unsigned fw_swap_face(unsigned player_face, int moving) {
+    if (player_face > 3) return 0;
+    return moving ? player_face ^ 1u : player_face;
+}
+int fw_rail_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin) {
+    if (!trail || !follower || !origin || trail->count < 2) return 0;
+    int64_t dy = (int64_t)follower->y - origin->y;
+    if (dy > 2 * (int64_t)FW_TILE || dy < -2 * (int64_t)FW_TILE) return 0;
+    uint32_t span = segment_span((int64_t)follower->x - origin->x, (int64_t)follower->z - origin->z);
+    if (span < 4096 || span > 8u * (uint32_t)FW_TILE) return 0;
+    int seen = 0;
+    for (unsigned i = 0; i < trail->count; ++i) {
+        const FwSample *s = trail_sample(trail, i);
+        if (!seen) {
+            if (near_sample(s, follower, (int32_t)FW_TILE)) seen = 1;
+            continue;
+        }
+        if (near_sample(s, origin, 8192)) return 1;
+    }
+    return 0;
+}
+int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out) {
+    if (!follower || !origin || !player || !out) return -1;
+    *out = *follower;
+    int64_t sx = (int64_t)follower->x - origin->x, sz = (int64_t)follower->z - origin->z;
+    int64_t sy = (int64_t)follower->y - origin->y;
+    if (sy > 2 * (int64_t)FW_TILE || sy < -2 * (int64_t)FW_TILE) return -1;
+    uint32_t span = segment_span(sx, sz);
+    if (span < 4096 || span > 8u * (uint32_t)FW_TILE) return -1;
+    int64_t mx = (int64_t)player->x - origin->x, mz = (int64_t)player->z - origin->z;
+    int64_t my = (int64_t)player->y - origin->y;
+    if (my > 2 * (int64_t)FW_TILE || my < -2 * (int64_t)FW_TILE) return -1;
+    int32_t proj = div_s64(mx * sx + mz * sz, span);
+    /* Any step away from the follower is not this segment. A one-unit
+     * forward step is a real walk, not slack, and must not start a swap. */
+    if (proj < 0) return -1;
+    int64_t lat2 = mx * mx + mz * mz - (int64_t)proj * proj;
+    int32_t tol = (int32_t)FW_TILE / 4;
+    if (lat2 > (int64_t)tol * tol) return -1;
+    int done = proj >= (int32_t)span;
+    if (done) proj = (int32_t)span;
+    out->x = follower->x + div_s64(((int64_t)origin->x - follower->x) * proj, span);
+    out->y = follower->y + div_s64(((int64_t)origin->y - follower->y) * proj, span);
+    out->z = follower->z + div_s64(((int64_t)origin->z - follower->z) * proj, span);
+    return done;
+}
+/* Display form for the follower sprite, palette, and size row. Identity,
+ * dialogue, gifts, and cries keep the party form. Add a row to pin another
+ * species; every other species passes its form through. */
+static const struct { unsigned species, form; } fw_forced_forms[] = {
+    {201u, 27u}, /* Unown '?': Gen 5 forms 0-25 are A-Z, 26 is '!', 27 is '?'. */
+    {493u, 0u},  /* Arceus Normal, ignoring the held plate. */
+};
+unsigned fw_follower_form(unsigned species, unsigned form) {
+    for (unsigned i = 0; i < sizeof fw_forced_forms / sizeof fw_forced_forms[0]; ++i)
+        if (fw_forced_forms[i].species == species) return fw_forced_forms[i].form;
+    return form;
+}
+int fw_grid_talk_span(const FwPoint *player, const FwPoint *follower, unsigned face, unsigned gap) {
+    if (!player || !follower || face > 3 || gap > FW_MAX_DIRECTIONAL_GAP) return 0;
+    int x = follower->x - player->x, z = follower->z - player->z, y = follower->y - player->y;
+    int ax = x < 0 ? -x : x, az = z < 0 ? -z : z, ay = y < 0 ? -y : y;
+    if (ax > (int)(face >= 2 ? FW_DIALOGUE_REACH(gap) : FW_DIALOGUE_REACH(0)) ||
+        az > (int)(face < 2 ? FW_DIALOGUE_REACH(gap) : FW_DIALOGUE_REACH(0)) ||
+        ay > 8 * 4096) return 0;
+    int vx = face == 2 ? -256 : face == 3 ? 256 : 0, vz = face == 0 ? -256 : face == 1 ? 256 : 0;
+    int length = vx * vx + vz * vz, px = x / 256, pz = z / 256;
+    int along = px * vx + pz * vz, lateral = px * vz - pz * vx;
+    if (lateral < 0) lateral = -lateral;
+    if (!length || along < length / 2 || along > length + length / 8 + (int)gap * length / 16) return 0;
+    return lateral <= length / 2;
+}
+int fw_rail_segment_reach(const FwPoint *player, const FwPoint *follower, const FwPoint *forward, unsigned gap) {
+    if (!player || !follower || !forward || gap > FW_MAX_DIRECTIONAL_GAP) return 0;
+    int64_t dy = (int64_t)follower->y - player->y;
+    if (dy > 8 * 4096 || dy < -8 * 4096) return 0;
+    int64_t sx = (int64_t)forward->x - player->x, sz = (int64_t)forward->z - player->z;
+    uint32_t span = segment_span(sx, sz);
+    if (span < 4096 || span > 8u * (uint32_t)FW_TILE) return 0;
+    int64_t mx = (int64_t)follower->x - player->x, mz = (int64_t)follower->z - player->z;
+    int32_t proj = div_s64(mx * sx + mz * sz, span);
+    int32_t slack = (int32_t)span / 8 + (int32_t)gap * (int32_t)span / 16;
+    if (proj < (int32_t)span / 2 || proj > (int32_t)span + slack) return 0;
+    int64_t lat2 = mx * mx + mz * mz - (int64_t)proj * proj;
+    int32_t tol = (int32_t)FW_TILE / 2;
+    return lat2 <= (int64_t)tol * tol;
+}
 int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out) {
     if (!follower || !origin || !player || !out) return -1;
     *out = *follower;
@@ -317,6 +425,37 @@ int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *pl
         FwSample step = *player;
         step.x = x + dx * i; step.z = z + dz * i;
         step.y = follower->y + mul_div(dy, i, units);
+        step.direction = player->direction;
+        ready = fw_trail_push_directional(trail, &step, out, gaps);
+        if (ready < 0) return 0;
+    }
+    return ready == 1;
+}
+int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *player,
+                          const uint8_t gaps[4], FwSample *out) {
+    /* Same forty-unit history as the compass reseed, walked along the chord
+     * the player actually travelled. Rail facings are not world axes. */
+    enum { units = 40 };
+    if (!trail || !from || !player || !gaps || !out || player->direction > 3 || !player->generation) return 0;
+    if (gaps[0] > FW_MAX_DIRECTIONAL_GAP || gaps[1] > FW_MAX_DIRECTIONAL_GAP ||
+        gaps[2] > FW_MAX_DIRECTIONAL_GAP || gaps[3] > FW_MAX_DIRECTIONAL_GAP) return 0;
+    int64_t dy64 = (int64_t)player->y - from->y;
+    if (dy64 > INT32_MAX || dy64 < INT32_MIN) return 0;
+    int64_t dx = (int64_t)player->x - from->x, dz = (int64_t)player->z - from->z;
+    uint32_t span = segment_span(dx, dz);
+    if (span < 256) return 0;
+    int64_t back = (int64_t)units * 4096;
+    int32_t ox = div_s64(dx * back, span), oz = div_s64(dz * back, span);
+    int64_t fx = (int64_t)player->x - ox, fz = (int64_t)player->z - oz;
+    if (fx < INT32_MIN || fx > INT32_MAX || fz < INT32_MIN || fz > INT32_MAX) return 0;
+    int32_t dy = (int32_t)dy64;
+    fw_trail_clear(trail);
+    int ready = 0;
+    for (int i = 0; i <= units; ++i) {
+        FwSample step = *player;
+        step.x = (int32_t)fx + mul_div(ox, i, units);
+        step.z = (int32_t)fz + mul_div(oz, i, units);
+        step.y = from->y + mul_div(dy, i, units);
         step.direction = player->direction;
         ready = fw_trail_push_directional(trail, &step, out, gaps);
         if (ready < 0) return 0;

@@ -77,10 +77,11 @@ API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags
 /* FWSW: active during a reverse step, face applied this frame, progress along
  * the vacated tile, blocked when that tile was not enterable. */
 API volatile struct { uint32_t magic,version,active,face,progress,blocked; } FollowingSwapDebug={.magic=0x57535746,.version=1};
-static struct { uint8_t active,departed; uint16_t savedFace; FwPoint follower,origin; } swapOn;
+static struct { uint8_t active,departed,rail; uint16_t savedFace; FwPoint follower,origin; } swapOn;
 static Vec settled;
-static uint8_t haveSettled;
-static void clear_swap(void){swapOn.active=swapOn.departed=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
+static uint8_t haveSettled,haveLast;
+static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
+static void drop_settled(void){haveSettled=0;haveLast=0;}
 static void cleanup(void);
 static void clear_restore(void){
  fwfield_restore.magic=0;fwfield_restore.player=(Vec){0,0,0};fwfield_restore.follower=(Vec){0,0,0};
@@ -147,7 +148,16 @@ static void player_sample(FwSample *sample){
 }
 static int centered(const Vec *v){return ((uint32_t)v->x&0xffffu)==0x8000u&&((uint32_t)v->z&0xffffu)==0x8000u;}
 static int same_tile(int32_t x,int32_t z,int32_t ox,int32_t oz){return fw_tile(x)==fw_tile(ox)&&fw_tile(z)==fw_tile(oz);}
-static void note_settled(void){if(centered(&fwfield_player->world)){settled=fwfield_player->world;haveSettled=1;}}
+static int on_rail(void){return (fwfield_player->flags&8192)&&PTR(fwfield_player->moveWork,0);}
+/* Grid centers still settle immediately. A rail point is almost never a
+ * tile center, so the previous frame's rail position is the step origin.
+ * The first frame only records that a position exists. */
+static void note_settled(void){
+ if(swapOn.active)return;
+ if(centered(&fwfield_player->world)){settled=fwfield_player->world;haveSettled=1;}
+ else if(on_rail()&&haveLast){settled=fwfield_player->world;haveSettled=1;}
+ haveLast=1;
+}
 static uint32_t swap_progress(const FwPoint *from,const FwPoint *to){
  int64_t dx=(int64_t)to->x-from->x,dz=(int64_t)to->z-from->z;
  if(dx<0)dx=-dx;
@@ -167,14 +177,17 @@ static void recall_blocked(Actor *a){
  if(!(a->flags&HIDDEN))fwfx_recall(a);
  a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
  fw_trail_clear(&fwfield_follower.trail);++FollowingDebug.resets;
- clear_swap();haveSettled=0;FollowingSwapDebug.blocked=1;
+ clear_swap();drop_settled();FollowingSwapDebug.blocked=1;
 }
 static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  unsigned face=fwfield_player->face;
+ int rail=swapOn.rail;
  FwSample start=*sample,end=*sample,pose;
  start.x=swapOn.origin.x;start.y=swapOn.origin.y;start.z=swapOn.origin.z;start.direction=(uint8_t)face;
  end.x=player->x;end.y=player->y;end.z=player->z;end.direction=(uint8_t)face;
- if(fw_trail_reseed(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose))
+ int seeded=rail?fw_trail_reseed_along(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose)
+  :fw_trail_reseed(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose);
+ if(seeded)
   bind_pose(a,pose.x,pose.y,pose.z,face);
  else{
   fw_trail_clear(&fwfield_follower.trail);
@@ -188,9 +201,34 @@ static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);
  animation_gate(a);
 }
+static int near_origin(const FwPoint *p){
+ int64_t dx=(int64_t)p->x-swapOn.origin.x,dy=(int64_t)p->y-swapOn.origin.y,dz=(int64_t)p->z-swapOn.origin.z;
+ if(dy>4096||dy<-4096)return 0;
+ return dx*dx+dz*dz<=(int64_t)4096*4096;
+}
+/* Rail completion is the segment projection only. Tile centers are not rail knots. */
+static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ FwPoint mirrored;
+ int mirror=fw_rail_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored);
+ if(mirror<0){clear_swap();return 0;}
+ Vec vacated={swapOn.origin.x,swapOn.origin.y,swapOn.origin.z};
+ if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
+ if(mirror==1){finish_swap(a,sample,player);return 1;}
+ if(near_origin(player)&&mirror==0&&swapOn.departed){
+  bind_pose(a,swapOn.follower.x,swapOn.follower.y,swapOn.follower.z,swapOn.savedFace);
+  clear_swap();settled=fwfield_player->world;haveSettled=1;animation_gate(a);return 1;
+ }
+ if(!near_origin(player))swapOn.departed=1;
+ bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fw_swap_face(fwfield_player->face,1));
+ FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
+ FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
+ if(fwfield_follower.state==FW_FOLLOWING&&!fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
+ animation_gate(a);return 1;
+}
 /* Returns 1 when this frame belongs to the swap. A -1 mirror falls through
  * so the untouched trail becomes authoritative again. */
 static int drive_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ if(swapOn.rail)return drive_rail_swap(a,sample,player);
  FwPoint mirrored;
  int mirror=fw_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored);
  if(mirror<0){clear_swap();return 0;}
@@ -211,8 +249,22 @@ static int drive_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  if(fwfield_follower.state==FW_FOLLOWING&&!fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
  animation_gate(a);return 1;
 }
+static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player){
+ FwPoint follower={a->world.x,a->world.y,a->world.z},origin={settled.x,settled.y,settled.z};
+ if(player->x==origin.x&&player->y==origin.y&&player->z==origin.z)return 0;
+ if(!fw_rail_swap_match(&fwfield_follower.trail,&follower,&origin))return 0;
+ FwPoint probe;
+ if(fw_rail_swap_mirror(&follower,&origin,player,&probe)<0)return 0;
+ if(probe.x==follower.x&&probe.y==follower.y&&probe.z==follower.z)return 0;
+ Vec vacated={origin.x,origin.y,origin.z};
+ if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
+ swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.savedFace=a->face;
+ FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
+ return drive_swap(a,sample,player);
+}
 static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  if(swapOn.active||!haveSettled||fwfield_follower.state!=FW_FOLLOWING||fwfx_hides_actor())return 0;
+ if(on_rail())return begin_rail_swap(a,sample,player);
  FwPoint follower={a->world.x,a->world.y,a->world.z},origin={settled.x,settled.y,settled.z};
  if(!fw_swap_match(&fwfield_follower.trail,&follower,&origin,fwfield_player->face))return 0;
  int stepping=!centered(&fwfield_player->world);
@@ -238,14 +290,14 @@ static void move(Actor *a) {
  FwSample sample,target;
  player_sample(&sample);
  uint16_t zoneBefore=fwfield_trailZone;uint8_t zoneValid=fwfield_trailZoneValid;
- if(!rebase_connection(a,0,&sample)){a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;++FollowingDebug.resets;clear_swap();haveSettled=0;animation_gate(a);return;}
- if(zoneValid&&fwfield_player->zone!=zoneBefore){clear_swap();haveSettled=0;}
+ if(!rebase_connection(a,0,&sample)){a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;++FollowingDebug.resets;clear_swap();drop_settled();animation_gate(a);return;}
+ if(zoneValid&&fwfield_player->zone!=zoneBefore){clear_swap();drop_settled();}
  FwPoint player={fwfield_player->world.x,fwfield_player->world.y,fwfield_player->world.z};
- if(paused){clear_swap();haveSettled=0;}
+ if(paused){clear_swap();drop_settled();}
  else if(swapOn.active){if(drive_swap(a,&sample,&player))return;}
  else if(begin_swap(a,&sample,&player))return;
  int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
- if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;clear_swap();haveSettled=0;animation_gate(a); return; }
+ if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;clear_swap();drop_settled();animation_gate(a); return; }
  /* An event may own the sprite, but the route has to keep the player's
   * steps or a short pause while running exceeds one tile and the trail drops. */
  if(paused)return;
@@ -295,7 +347,7 @@ static void cleanup_impl(int keepTrail) {
  if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
  fwfield_cyclePending=0;
- clear_swap();haveSettled=0;settled=(Vec){0,0,0};
+ clear_swap();drop_settled();settled=(Vec){0,0,0};
  FollowingDebug.actor=FollowingDebug.visible=0;
 }
 static void cleanup(void) {cleanup_impl(0);}
@@ -380,7 +432,8 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
    species=key>>11;form=(key>>3)&255;gender=(key>>1)&3;shiny=key&1;row=read16(r+4);
   }else{species=read16(r);form=r[2];gender=r[3];shiny=r[4];row=read16(r+6);}
   if(species!=p->species)goto fail;
-  int score=(form==p->form?8:form==0?0:-20)+(gender==p->gender?4:gender==2?2:-20)+(shiny==p->shiny?1:-20);
+  unsigned shown=fw_follower_form(p->species,p->form);
+  int score=(form==shown?8:form==0?0:-20)+(gender==p->gender?4:gender==2?2:-20)+(shiny==p->shiny?1:-20);
   if(score>best){best=score;fallback=FW_CODE_BASE+row-FW_STOCK_ROWS;fwfield_follower.side_gap=fwfield_stride==12?(r[8]>>3)&7:r[15];fwfield_follower.sprite_y=(int8_t)(fwfield_stride==12?r[10]:r[13]);
    artX=(int8_t)(fwfield_stride==12?r[9]:r[12]);
 #ifdef FW_MOUNT
@@ -530,7 +583,7 @@ API uint32_t FollowingSurfPartyAppearance(void *game){
   unsigned form=param(mon,0x6f,0),gender=param(mon,0x6e,0);
   unsigned shiny=!!CALL(0x0201cdd9,int(*)(void*))(mon);
   if(form>255||gender>2)continue;
-  uint32_t appearance=species|(form<<10)|(gender<<18)|(shiny<<26);
+  uint32_t appearance=species|(fw_follower_form(species,form)<<10)|(gender<<18)|(shiny<<26);
   if(!first)first=appearance;
   if(fwfield_follower.has_selection){
    const FwPokemon *selected=&fwfield_follower.selected;
@@ -908,7 +961,7 @@ static void *try_water(void *game,void *field){
      slot,&dir,&attribute))return 0;
  Actor *a=(Actor*)fwfield_follower.actor;
  unsigned appearance=fwfield_follower.selected.species|
-  ((unsigned)fwfield_follower.selected.form<<10)|
+  (fw_follower_form(fwfield_follower.selected.species,fwfield_follower.selected.form)<<10)|
   ((unsigned)fwfield_follower.selected.gender<<18)|
   ((unsigned)fwfield_follower.selected.shiny<<26);
  /* Keep the land rider's texture allocations live while the Surf materials
