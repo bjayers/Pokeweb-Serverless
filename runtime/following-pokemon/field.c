@@ -185,10 +185,13 @@ static void recall_blocked(Actor *a){
  clear_swap();clear_ease();drop_settled();FollowingSwapDebug.blocked=1;
 }
 /* 1 when `natural` is strictly closer than a fresh load, along the reseeded
- * trail. The follower stays there and turns in place; the next walk eases. */
-static int ease_from(const FwPoint *natural,const FwPoint *player){
+ * trail. The follower turns in place on that pose, or on the start floor when
+ * the mirrored end is closer than that. The next walk eases from there. */
+static int ease_from(const FwPoint *natural,const FwPoint *player,FwSample *start){
  uint32_t close=fw_trail_metric_to_point(&fwfield_follower.trail,fwfield_follower.directional_gap,natural->x,natural->z);
  if(!close||close>=FW_TILE){clear_ease();return 0;}
+ if(close<FW_EASE_START_KEEP)close=FW_EASE_START_KEEP;
+ if(!fw_trail_pose_behind(&fwfield_follower.trail,fwfield_follower.directional_gap,close,start)){clear_ease();return 0;}
  ease.active=1;ease.traveled=0;ease.close_keep=close;ease.last=*player;return 1;
 }
 static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,const FwPoint *natural){
@@ -197,16 +200,17 @@ static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,co
   * frame (0 +side, 1 -side, 2 +front, 3 -front); copy it, and reseed every
   * sample with it before this function returns. move() does not push the
   * trail on this frame, so the pre-turn head cannot replace the turn.
-  * The reseed pose is the fresh-load rest. Binding it here is the snap:
-  * keep the mirrored end, which is where this step already arrived. */
+  * The reseed pose is the fresh-load rest. Binding it here is the snap.
+  * Keep the mirrored end when it is already past the start floor. A closer
+  * end starts from that floor, still on the trail, and eases out from there. */
  unsigned face=rail?fw_rail_swap_turn(fwfield_player->face,player->x-swapOn.origin.x,player->z-swapOn.origin.z):fwfield_player->face;
- FwSample start=*sample,end=*sample,pose;
+ FwSample start=*sample,end=*sample,pose,eased;
  start.x=swapOn.origin.x;start.y=swapOn.origin.y;start.z=swapOn.origin.z;start.direction=(uint8_t)face;
  end.x=player->x;end.y=player->y;end.z=player->z;end.direction=(uint8_t)face;
  int seeded=rail?fw_trail_reseed_along(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose)
   :fw_trail_reseed(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose);
- if(seeded&&ease_from(natural,player))
-  bind_pose(a,natural->x,natural->y,natural->z,face);
+ if(seeded&&ease_from(natural,player,&eased))
+  bind_pose(a,eased.x,eased.y,eased.z,face);
  else if(seeded)
   bind_pose(a,pose.x,pose.y,pose.z,face);
  else{

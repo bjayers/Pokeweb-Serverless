@@ -127,6 +127,8 @@ int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *
  * close pose out to one metric tile (the fresh-load rest). Distance, not
  * frames: a run covers it in fewer steps than a walk. */
 #define FW_EASE_TRAVEL (2u * FW_TILE)
+/* Minimum metric keep the post-swap ease starts from. Tunable. Must stay < FW_TILE. */
+#define FW_EASE_START_KEEP (FW_TILE * 5u / 8u)
 /* Smoothstep in 16.16: 0 at the start, 65536 at `length`, flat at both ends. */
 uint32_t fw_ease_smoothstep(uint32_t traveled, uint32_t length);
 /* Metric keep. `full_keep` once `traveled` reaches `length`, or when
