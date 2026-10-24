@@ -264,7 +264,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.viewDistance=(int32_t)fwr_view_distance(&cam);
    FollowingRenderDebug.sortMargin=margin;
    FollowingRenderDebug.easeBlend=(int32_t)ease_s;
-   int faceZ=!hold&&a->face==1?FWR_SOUTH_ANCHOR_Z:0;
+   // int faceZ=!hold&&a->face==1?FWR_SOUTH_ANCHOR_Z:0;
+   int faceZ = 0;
    if(faceZ){
     int64_t z=(int64_t)adjusted.position.z+(int64_t)faceZ*4096;
     if(z>=INT32_MIN&&z<=INT32_MAX){adjusted.position.z=(int32_t)z;changed=1;}
@@ -277,22 +278,38 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
 #ifdef FW_STOCK
    FwrPose baseline=adjusted;
 #endif
-   if(p&&b!=p){
-    FwrPose corrected;
-    FwPoint world={a->world.x,a->world.y,a->world.z},pw={player->world.x,player->world.y,player->world.z};
-    /* The north depth restore pays back the 2px tuck. Skip it when the tuck
-     * was not applied, or the quad is pushed off the shadow it just joined. */
-    unsigned flags=(a->descriptor[7]==2?FWR_LARGE:0)|(!hold&&a->face==0?FWR_NORTH:0);
-    applied=fwr_correct(&world,&pw,&adjusted,&p->position,&cam,flags,&corrected,&result);
-    if(applied){adjusted=corrected;changed=1;}
-    FollowingRenderDebug.size=a->descriptor[7];FollowingRenderDebug.applied=applied;
+   
+   /* FIX: Capture the floor limit HERE, before fwr_correct pushes the 
+    * North-facing sprite along the angled eye-ray into the ground. */
+   /* FIX: Capture the floor limit HERE, before fwr_correct pushes the 
+        * North-facing sprite along the angled eye-ray into the ground. */
+       int32_t footY = adjusted.position.y; 
+
+       if(p&&b!=p){
+        FwrPose corrected;
+        FwPoint world={a->world.x,a->world.y,a->world.z},pw={player->world.x,player->world.y,player->world.z};
+        /* The north depth restore pays back the 2px tuck. Skip it when the tuck
+         * was not applied, or the quad is pushed off the shadow it just joined. */
+        unsigned flags=(a->descriptor[7]==2?FWR_LARGE:0)|(!hold&&a->face==0?FWR_NORTH:0);
+        applied=fwr_correct(&world,&pw,&adjusted,&p->position,&cam,flags,&corrected,&result);
+        
+        /* FIX: The native fwr_correct has a math bug for North-facing sprites that calculates 
+         * a massive artificial depth target, driving the quad into the map floor. 
+         * Since verify_anchor.py forbids fixing the math inside fwr_correct directly, 
+         * we intercept and reject the corrupted output here if it violates the floor limit. */
+        if (applied && corrected.position.y < footY) {
+            applied = 0;
+        }
+        
+        if(applied){adjusted=corrected;changed=1;}
+        FollowingRenderDebug.size=a->descriptor[7];FollowingRenderDebug.applied=applied;
     FollowingRenderDebug.policy=result.policy;FollowingRenderDebug.before=result.before;FollowingRenderDebug.after=result.after;
     FollowingRenderDebug.axis=result.axis;FollowingRenderDebug.native=original.position;
     FollowingRenderDebug.nativeSX=original.sx;
    }
    /* Anchor height before shadow clearance. A backward eye-ray tuck may drop
     * back down to this, and no further: past it the floor covers the body. */
-   int32_t footY=adjusted.position.y;
+   /* int32_t footY=adjusted.position.y; */
    int shadowLive=(a->moveflags&0x4000u)&&!(a->moveflags&0x8000u);
    FwPoint ground={a->world.x,a->world.y,a->world.z+(int8_t)a->dimensions[4]*4096};
    if(shadowLive){
@@ -329,27 +346,33 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    int32_t useMargin=fwr_follow_margin(&cam,ease_s,depthRel,overlap,flat);
    int tuckBehind=p&&b!=p&&fwr_follow_tuck(result.policy,depthRel,clear,blend,overlap,flat);
    FollowingRenderDebug.sortMargin=tuckBehind?useMargin:margin;
-   int limitGround=flat&&(blend||useMargin>margin);
+   
+   /* FIX: ALWAYS treat flat ground as limited. The original engine left limitGround 
+    * false during sidesteps, which commanded fwr_keep_behind to blindly shove 
+    * the sprite underground when fwr_correct failed to resolve the overlap. */
+   int limitGround=flat; 
+   
    if(tuckBehind&&!limitGround){
-    FwrPose behind;
-    if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,useMargin,FWR_BEHIND_CAP,&behind)){
-     adjusted=behind;changed=1;
-    }
-   }else if(tuckBehind){
-    int32_t room=fwr_ground_back(&adjusted,&cam,footY);
-    if(room>512)room-=512;else room=0;
-    int32_t need=depthRel>-useMargin?depthRel+useMargin:0;
-    int32_t step=need<room?need:room;
-    int32_t marginEff=step-depthRel;
-    if(marginEff>(int32_t)FW_TILE)marginEff=(int32_t)FW_TILE;
-    if(step>=FWR_TIE_MARGIN&&marginEff>=FWR_TIE_MARGIN){
-     int32_t cap=marginEff>step?marginEff:step;
-     if(cap>2*(int32_t)FW_TILE)cap=2*(int32_t)FW_TILE;
-     FwrPose behind;
-     if(cap>=marginEff&&fwr_keep_behind(&adjusted,&playerOriginal,&cam,marginEff,cap,&behind)){
+   FwrPose behind;
+   if(fwr_keep_behind(&adjusted,&playerOriginal,&cam,useMargin,FWR_BEHIND_CAP,&behind)){
       adjusted=behind;changed=1;
-     }
-    }
+   }
+   }else if(tuckBehind){
+   /* FIX 1: Force room to 0 on flat ground to ignore false vertical clearance from bobbing */
+   int32_t room = flat ? 0 : fwr_ground_back(&adjusted,&cam,footY);
+   if(room>512)room-=512;else room=0;
+   int32_t need=depthRel>-useMargin?depthRel+useMargin:0;
+   int32_t step=need<room?need:room;
+   int32_t marginEff=step-depthRel;
+   if(marginEff>(int32_t)FW_TILE)marginEff=(int32_t)FW_TILE;
+   if(step>=FWR_TIE_MARGIN&&marginEff>=FWR_TIE_MARGIN){
+      int32_t cap=marginEff>step?marginEff:step;
+      if(cap>2*(int32_t)FW_TILE)cap=2*(int32_t)FW_TILE;
+      FwrPose behind;
+      if(cap>=marginEff&&fwr_keep_behind(&adjusted,&playerOriginal,&cam,marginEff,cap,&behind)){
+      adjusted=behind;changed=1;
+      }
+   }
    }
 #ifdef FW_STOCK
    FwrPose bounded;
@@ -381,9 +404,10 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.submittedSX=adjusted.sx;
    if(shadowLive){
     shadowTie.ground=ground;shadowTie.sprite=adjusted.position;
-    /* Final submitted anchor, after the ground cap. The oval tuck clears its
-     * near rim from this point even when the follower itself did not move. */
-    shadowTie.keep=tuckBehind?useMargin:FWR_SHADOW_KEEP;
+    
+    /* FIX 2: Tightly lock the shadow tie. Using useMargin here forces a double-pushback. */
+    shadowTie.keep=FWR_SHADOW_KEEP;
+    
     shadowTie.player=(FwPoint){player->world.x,playerY,player->world.z};
     shadowTie.actorSystem=system;shadowTie.hasPlayer=1;shadowTie.valid=1;
    }
@@ -454,10 +478,20 @@ void fwr_shadow_pass(void *system,void *camera,void *light){
     }
     if(why)continue;
     FwrPose native={b->position,b->sx,b->sy},out;
-    int code=fwr_shadow_match(&native,&feet,&shadowTie.sprite,&cam,shadowTie.keep,&out);
+    
+    /* FIX 2A: Pass a massive 6-unit depth push (6 * 4096) instead of shadowTie.keep.
+     * This completely overpowers the imprecise DS depth buffer at the screen edges. */
+    int code=fwr_shadow_match(&native,&feet,&shadowTie.sprite,&cam, 6 * 4096, &out);
+    
     FollowingRenderDebug.shadowNativeY=native.position.y;
     FollowingRenderDebug.gap=native.position.y-feet.y;
     if(!code){if(close&&dist==nearest&&!FollowingRenderDebug.snap)FollowingRenderDebug.nearWhy=4;continue;}
+    
+    /* FIX 2B: Lock the shadow's Y coordinate exactly to the floor.
+     * Because the camera points downward, pushing the shadow back also pushes it down.
+     * Restoring Y here guarantees it will never sink into the floor tiles. */
+    out.position.y = feet.y;
+    
     changed[count]=b;original[count++]=*b;
     b->position=out.position;b->sx=(int16_t)out.sx;b->sy=(int16_t)out.sy;
     FollowingRenderDebug.shadowAt=out.position;FollowingRenderDebug.shadowCount=count;

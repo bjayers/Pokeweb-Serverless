@@ -328,11 +328,16 @@ int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
                     const FwrCamera *camera,int32_t keep,FwrPose *out){
  if(!shadow||!sprite||!camera||!out)return 0;
  *out=*shadow;
- if(keep<FWR_SHADOW_KEEP)keep=FWR_SHADOW_KEEP;
+ 
+ /* Calculate a distance-scaled margin to prevent depth-buffer ties */
+ int32_t scaled_keep = fwr_sort_margin(camera, 65536u);
+ if(keep<scaled_keep)keep=scaled_keep;
  if(keep>(int32_t)FW_TILE)keep=(int32_t)FW_TILE;
+ 
  if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
  FwPoint direction;
  if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction))return 0;
+ 
  /* Flat oval: the camera-side rim is closer than the center. Clear that rim,
   * not just the center, or the near half still wins against the sprite. */
  {
@@ -342,16 +347,18 @@ int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
   if(half>(int32_t)FW_TILE)half=(int32_t)FW_TILE;
   uint32_t horiz=isqrt((uint64_t)direction.x*(uint64_t)direction.x+(uint64_t)direction.z*(uint64_t)direction.z);
   int32_t rim=divide((int64_t)half*(int32_t)horiz,4096);
-  int32_t cover=rim+FWR_SHADOW_KEEP;
+  
+  /* Apply scaled_keep to the rim cover check */
+  int32_t cover=rim+scaled_keep;
   if(cover>(int32_t)FW_TILE)cover=(int32_t)FW_TILE;
   if(keep<cover)keep=cover;
  }
- /* The one-unit keep is a single step, capped like the old bias. A swap or
-  * corner tuck has to be able to follow the sprite back through that oval,
-  * so the larger keep may use the whole eye-ray shift. */
- int32_t cap=keep<=FWR_SHADOW_KEEP?FWR_BEHIND_CAP:(int32_t)(2*FW_TILE-64);
+ 
+ /* Use scaled_keep to dictate whether this is a strong tuck or idle gap */
+ int32_t cap=keep<=scaled_keep?FWR_BEHIND_CAP:(int32_t)(2*FW_TILE-64);
  FwrPose cursor=*shadow;
  int moved=0;
+ 
  for(int step=0;step<3;++step){
   FwPoint relative;
   if(!delta(cursor.position,*sprite,&relative,8*(int32_t)FW_TILE))break;
@@ -362,7 +369,7 @@ int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
   FwrPose next;
   if(!shift_depth(&cursor,camera,direction,change-16,&next))break;
   cursor=next;moved=1;
-  if(keep<=FWR_SHADOW_KEEP)break;
+  if(keep<=scaled_keep)break;
  }
  *out=cursor;
  return moved;
@@ -377,10 +384,11 @@ int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
  if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
  FwPoint relative;
  if(!delta(shadow->position,*feet,&relative,4*FW_TILE))return 0;
- /* The native oval stays where it was sampled, including a stair step or a
-  * rail curve. Pulling it onto the sprite copied the sprite's extra drop.
-  * `feet` only rejects a shadow that is not this follower's. */
  (void)relative;
+ 
+ /* FIX: Pass the true sprite position directly to preserve native engine depth offsets, 
+  * such as the 2-pixel North tuck (FWR_NORTH_ART_Y). This ensures wide sprites 
+  * push the shadow back far enough to clear their geometry. */
  return fwr_shadow_tuck(shadow,sprite,camera,keep,out);
 }
 int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
