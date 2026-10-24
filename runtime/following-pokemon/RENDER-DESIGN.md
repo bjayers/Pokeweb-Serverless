@@ -145,9 +145,41 @@ Runtime, one path:
 4. ARM9 `0x0200fe34` is `PokewebFollowingObjectRow`. After publish, `0x3000+` codes become rows 1008+. Overlay 12 `0x02167fb8` stops truncating the descriptor file offset to 16 bits, so `4 + row * 28` still works past 64 KiB. The fixed native cache is not grown.
 5. The engine copies that 28-byte descriptor onto the actor and loads `rom:/a/0/4/8` member `descriptor+16`. Byte 7 is the 32 or 64 draw mode. Byte 9 is 13 (six frames, right mirrored) or 14 (eight frames). The module does not upload that texture on the draw path. Recall’s white flash (`fwfx_prepare`) opens the same member again.
 
-Bob is the engine for every follower. `animation_gate` clears `PAUSE_ANM` while the follower is visible and not inside an effect; the actor renderer then steps the BTX. The idle hop is already in the native billboard when `fwr_draw` runs. `sprite_y` is a constant registry offset on that quad, and descriptor byte 14 stays 0 so the native shadow stays on the ground. Dialogue hop is an interaction motion, also not split by who drew the sheet.
+`animation_gate` only clears `PAUSE_ANM` so the engine may step the sheet. It does not author a hop. Which pixels move, and which quad motion is the engine's, is in [Billboard, bob, and sheet contracts](#billboard-bob-and-sheet-contracts). `sprite_y` is a constant registry offset. Descriptor byte 14 stays 0 so the native shadow stays on the ground.
 
 A map NPC still cannot show an added follower sprite. Its sprite id is a retail object code, so it still resolves to a stock row and that row’s original member. The overworld editor lists those retail ids, not registry rows. Nothing in map data passes `0x3000`. Until publish, that code is row 10 anyway.
+
+## Billboard, bob, and sheet contracts
+
+Measured from the three unpacked strips, then checked against the draw. Background pixels are not feet.
+
+| Sheet | Cells | Foot pad (empty rows under the opaque foot) | Within a facing |
+| --- | --- | --- | --- |
+| Native 6-frame (selector 13) | 32×192, six cells | 2 on every cell | Pairs match. No baked bob. |
+| 8-frame (selector 14) | 32×256, eight cells | 1 on the first four, 2 on the side four | Pairs match. The 1px difference is facing, not a frame. |
+| Module-added source | 32×384, twelve cells | Groups of three: 1, then 0, then 0 | The whole sprite drops one pixel on the two step cells, and those cells touch the bottom row. |
+
+The quad is foot-anchored. `screen_span` in `render_math.c` covers ±8·`sx` sideways and 0..16·`sy` upward from the billboard position. The map preview builds the same quad: bottom edge at Y=0 with texture V=1, top at the cell height with V=0 (`buildNpcSpritePrimitive`). The full cell is on the quad. This module does not crop the bottom texel. A pad of 0 means the foot pixel is the quad’s bottom edge. That pixel is the one the floor mesh can cover. A pad of 1 or 2 is empty cell, so the visible foot sits that many pixels above the anchor until something else moves the quad.
+
+Byte 7 picks the cell: 0 is 32, 2 is 64, 1 is 16 and crops (`followerBillboardDrawMode`). Byte 9 picks the controller. Install forces 13 for six frames and 14 for eight (`followerAnimationSelector`). The editor’s controller table gives both types two frames per direction (`NPC_SPRITE_FRAMES_PER_DIRECTION` in `map3dModel.ts`). Order in the follower preview is up, down, left, then left mirrored for six frames, or an explicit right pair for eight (`followerAnimationFrame`). A twelve-cell strip is four facings times three frames. `validateFollowerResource` rejects that count. Controllers 13 and 14 never index a third frame. The installed member is six or eight of those cells. If the kept pair is the pad-1 cell and a pad-0 cell, the one-pixel drop is what plays.
+
+Bob, per sheet:
+
+- Six-frame native. Nothing in the cells moves. In play, this layout does not hop. `animation_gate` still unpauses it, so the two frames can swap. The native Y curve for controller 13 is not in this repo; the still picture matches a controller with no Y translation. `sprite_y` cannot be that hop, because it is one constant for every frame.
+- Eight-frame. Cells in a pair share a foot. The hop seen in play is the engine moving the quad, already in the billboard Y when `fwr_draw` runs. The same unpause applies as for six frames. The plant then lifts any dip below `world.y + (sprite_y − north pixels)`. The up phase remains. A down phase past that line is flattened onto it.
+- Twelve-cell added art. The sheet drops the sprite by one pixel on the step cells, onto the quad edge. That is independent of the engine. Whichever selector the installed pair uses, the engine hop for that selector still runs, because `animation_gate` does not look at the sheet. The plant never sees the baked drop. A pad-0 frame can sit on the anchor while the quad Y is exactly on the foot line.
+
+`deriveFollowerGrounding` sets registry Y to `-(smallest pad) - 3` for a non-flying follower whose Y was still the default. Smallest pad is 2, 1, and 0 on these three strips, so the constant is −5, −4, or −3. It pulls every frame down, including a frame that already touches the cell edge. Descriptor byte 14 stays 0, so the oval does not follow that pull. The north path in `fwr_draw` subtracts another two pixels, which a side-versus-front pad difference of one cannot absorb.
+
+What a follower changes relative to a map NPC, for height:
+
+- A map NPC keeps its retail controller and its descriptor Y on the actor, so the body and the shadow share it. A follower forces byte 9 to 13 or 14. The artwork apply stores 0 in byte 14; the catalog copy leaves the source byte, which that path treats as 0. Visual Y is only on the body quad (`sprite_y` in `fwr_draw`). The oval stays at actor ground.
+- A map NPC is not passed through `animation_gate`. A visible follower clears `PAUSE_ANM` (flag 16) even while standing on the trail, so that controller keeps running at rest. The player is not on this gate.
+- The foot plant and the north-only two pixels exist only on the follower draw. A map NPC does not have them.
+
+Raising the bob, or `sprite_y`, by one pixel does not fix this. `sprite_y` lifts every frame of that follower by the same amount. With grounding on, the six-frame feet are already three pixels below the anchor (−5 pull against a pad of 2); one more pixel of `sprite_y` only changes that bury from three to two. The eight-frame facing gap stays one pixel. The added sheet still alternates 1/0/0, so the step cells stay one pixel lower and still touch the quad edge. The plant would still only see the quad.
+
+Keep one foot row inside the cell, with at least one transparent row, on every frame of a facing. Let the engine own the hop. Do not add a pixel in `fwr_draw`. The extra three in grounding, and the plant that cancels bob-down, are the module’s own height errors on a sheet that already agrees with itself.
 
 ## Playtest
 
