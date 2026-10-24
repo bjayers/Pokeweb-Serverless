@@ -156,8 +156,8 @@ for face,extra in ((0,-2),(1,0),(2,0),(3,0)):
 for face,world in ((1,(0,65536,-65536)),(0,(0,65536,-65536))):
  setup();half(A+24,face);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
  vec(A+68,world);vec(P+68,(0,0,0));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
- vec(BILL+32,(world[0],0,world[2]))
- expect=(world[0],-2*4096 if face==0 else 0,world[2])
+ vec(BILL+32,(world[0],world[1],world[2]))
+ expect=(world[0],world[1]+(-2*4096 if face==0 else 0),world[2])
  assert draw()[0]==expect,face
  assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
 setup();half(A+24,1);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
@@ -192,7 +192,7 @@ uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\xfb')
 vec(CAM+32,(0,760739,581835));vec(A+68,(0,0,-65536))
 vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152-6*4096))
 submitted,scales,depth=draw()
-assert submitted==(0,-340-5*4096,-49152-6*4096),submitted
+assert submitted==(0,-5*4096,-49152-6*4096),submitted
 assert scales==(64*256,64*256) and depth[0] in (0,2)
 assert player_seen[-1][0]==(0,-6484,0)==read(BILL+4,'3i')
 assert all(draw()==(submitted,scales,depth) for _ in range(5))
@@ -206,7 +206,7 @@ for player_face in range(4):
  vec(CAM+32,(5406720,777123,1466571));vec(CAM+56,(5406720,16384,884736))
  vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584-6*4096))
  initial=bytes(uc.mem_read(BILL,56));submitted,scales,depth=draw()
- assert submitted==(5406720,-340,835584-6*4096),(player_face,submitted)
+ assert submitted==(5406720,0,835584-6*4096),(player_face,submitted)
  assert scales==(64*256,64*256) and depth[0] in (0,2)
  assert player_seen[-1][0]==(5406720,-6484,884736)==read(BILL+4,'3i'),player_face
  assert bytes(uc.mem_read(BILL,56))==initial,player_face
@@ -260,7 +260,9 @@ setup(64);half(A+24,1);put(A+4,0x4000)
 vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
 vec(BILL+4,(0,0,0));vec(BILL+32,(0,65536,-65536))
 submitted,scales,depth=draw()
-assert submitted==(0,65536,-65536) and scales==(64*256,64*256),(submitted,scales)
+# One tile up still overlaps the player, so the ground tie-break slides the
+# quad six units away from this camera. It is not a stair-only ray.
+assert submitted==(0,65536,-65536-6*4096) and scales==(64*256,64*256),(submitted,scales)
 assert depth[0] in (0,2) and player_seen[-1][0]==(0,0,0)
 EFF=0x02226000;ESCENE=EFF+0x100;ESLOTS=EFF+0x180;EQUAD=EFF+0x300
 uc.mem_write(EFF,bytes(0x400))

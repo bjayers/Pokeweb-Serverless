@@ -30,10 +30,13 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 #define FWR_CLEAR_FRONT (4 * 4096)
 /* A biased shadow sits one unit further than the sprite it belongs to. */
 #define FWR_SHADOW_KEEP (1 * 4096)
-/* Idle overlap closer than this, in world units of view depth, slides the
- * follower away from the player on the ground. Camera distance does not
- * scale it. Swap and ease do not use it; their trail pose is the spacing. */
+/* View-depth band where an overlapping pair still needs a tie break.
+ * The slide itself is FWR_PLANE_CAP along the ground, not this wide. */
 #define FWR_WORLD_NUDGE (8 * 4096)
+/* Ground XZ keep that puts the center about four view units behind the
+ * feet at an ordinary field camera, and never as far as half a tile.
+ * Screen half-width (8*sx) is not a world distance. */
+#define FWR_PLANE_CAP (6 * 4096)
 /* Native flat shadows sit about one unit above the ground anchor. A larger
  * gap is a stair step, not that lift. */
 #define FWR_SHADOW_FLAT (2 * 4096)
@@ -116,9 +119,14 @@ int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
  * (0 north, 1 south, 2 west, 3 east). This is a world move, not a camera ray. */
 int fwr_world_apart(const FwPoint *follower,const FwPoint *player,unsigned face,
     int32_t step,FwPoint *output);
-/* Plant a ground oval on `feet` (terrain Y) and slide its center away from
- * the camera along XZ by the oval's near rim. Scale is unchanged. The oval
- * does not leave the ground plane. */
+/* Move `feet` away from the camera along the ground until it is `view_keep`
+ * view-units further, or FWR_PLANE_CAP world units, whichever is smaller.
+ * Y is copied. A camera with no horizontal axis leaves the point planted. */
+int fwr_plane_keep(const FwPoint *feet,const FwrCamera *camera,int32_t view_keep,
+    FwPoint *output);
+/* Plant a ground oval on `feet` (terrain Y) and apply fwr_plane_keep.
+ * Scale is unchanged. The oval does not leave the ground plane, and its
+ * size does not change how far it slides. */
 int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
     const FwrCamera *camera,FwrPose *output);
 /* A loaded static model may occlude part of the original sprite. Reserve its

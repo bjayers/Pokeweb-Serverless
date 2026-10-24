@@ -23,10 +23,10 @@ void fwr_anchor(Actor *a,unsigned face){
  * +128 hold           always 0; slope no longer changes placement
  * Version 3 appends, leaving +128 in place:
  * +132 viewDistance   eye-to-target length, 20.12
- * +136 sortMargin     world XZ nudge when policy is 2, else 0
+ * +136 sortMargin     ground tie-break length when policy is 2, else 0
  * +140 easeBlend      0 on a swap or the close pose, 65536 when idle
  * +144 depthRel       follower view depth vs the player, bob removed
- * policy at +24: 0 feet only, 2 idle world nudge. before/after are that view gap.
+ * policy at +24: 0 feet only, 2 ground tie-break. before/after are that view gap.
  */
 typedef struct {
  uint32_t magic,version,frames,actor,size,applied;int32_t policy,before,after;
@@ -163,6 +163,13 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    int delta=sprite_y-(int8_t)a->descriptor[14]-north;
    int64_t y=(int64_t)adjusted.position.y+(int64_t)delta*4096;
    if(delta&&y>=INT32_MIN&&y<=INT32_MAX){adjusted.position.y=(int32_t)y;changed=1;}
+   /* Bob and the walk cycle share this quad's Y. The art foot line is the
+    * actor's ground plus the registry offset. A dip below that line is
+    * planted; the hop above it stays on the follower. */
+   int64_t footLine=(int64_t)a->world.y+(int64_t)(sprite_y-north)*4096;
+   if(footLine>=INT32_MIN&&footLine<=INT32_MAX&&adjusted.position.y<(int32_t)footLine){
+    adjusted.position.y=(int32_t)footLine;changed=1;
+   }
    int swapping=0,easing=0;uint32_t traveled=0;
    fw_depth_query(&swapping,&easing,&traveled);
    uint32_t ease_s=65536u;
@@ -174,26 +181,30 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.native=original.position;
    FollowingRenderDebug.nativeSX=original.sx;
    if(p&&b!=p){
-    /* Bob lives in the billboard Y. The tie test uses terrain Y so a hop
-     * cannot toggle the nudge. The player quad is only read. */
+    /* Bob lives in the billboard Y. The tie test uses the art foot line so a
+     * hop cannot toggle the keep. The player quad is only read. A tie slides
+     * along the ground, away from the camera, by a few units. It does not
+     * add follow distance, and a swap keeps the mirrored pose. */
     FwrPose feet=adjusted,playerFeet={p->position,p->sx,p->sy};
-    int64_t footY=(int64_t)a->world.y+(int64_t)delta*4096;
-    if(footY>=INT32_MIN&&footY<=INT32_MAX)feet.position.y=(int32_t)footY;
+    if(footLine>=INT32_MIN&&footLine<=INT32_MAX)feet.position.y=(int32_t)footLine;
     playerFeet.position.y=playerY;
     int32_t gap=fwr_view_gap(&feet.position,&playerFeet.position,&cam);
     int overlap=fwr_sprites_overlap(&feet,&playerFeet,&cam);
     FollowingRenderDebug.depthRel=gap;
     FollowingRenderDebug.before=gap;
     FollowingRenderDebug.after=gap;
-    if(!swapping&&!easing&&overlap&&gap>-FWR_WORLD_NUDGE&&gap<FWR_CLEAR_FRONT){
-     FwPoint apart;
-     if(fwr_world_apart(&feet.position,&playerFeet.position,a->face,FWR_WORLD_NUDGE,&apart)){
-      adjusted.position.x=original.position.x+(apart.x-feet.position.x);
-      adjusted.position.z=original.position.z+(apart.z-feet.position.z);
-      changed=1;
-      FollowingRenderDebug.policy=2;
-      FollowingRenderDebug.sortMargin=FWR_WORLD_NUDGE;
-      FollowingRenderDebug.after=fwr_view_gap(&adjusted.position,&playerFeet.position,&cam);
+    if(!swapping&&overlap&&gap>-FWR_WORLD_NUDGE&&gap<FWR_CLEAR_FRONT){
+     FwPoint kept;
+     if(fwr_plane_keep(&feet.position,&cam,FWR_PROP_FOREGROUND_GAP,&kept)){
+      int32_t dx=kept.x-feet.position.x,dz=kept.z-feet.position.z;
+      if(dx||dz){
+       adjusted.position.x=kept.x;adjusted.position.z=kept.z;changed=1;
+       FollowingRenderDebug.policy=2;
+       int32_t ax=dx<0?-dx:dx,az=dz<0?-dz:dz;
+       FollowingRenderDebug.sortMargin=ax>az?ax:az;
+       FwPoint shown=adjusted.position;shown.y=feet.position.y;
+       FollowingRenderDebug.after=fwr_view_gap(&shown,&playerFeet.position,&cam);
+      }
      }
     }
    }
@@ -242,8 +253,8 @@ static int follower_shadow(FwPoint point){
  return 0;
 }
 /* Secondary/shadow pass. Plant the follower oval on the actor's ground
- * under the submitted body and slide the near rim away from the camera
- * along XZ. Restore the native billboard before returning. */
+ * under the submitted body and keep it a few units further from the camera.
+ * Restore the native billboard before returning. */
 void fwr_shadow_pass(void *system,void *camera,void *light){
  Billboard *changed[4],original[4];unsigned count=0;
  FollowingRenderDebug.shadowChange=0;FollowingRenderDebug.shadowCount=0;
@@ -272,9 +283,9 @@ void fwr_shadow_pass(void *system,void *camera,void *light){
     }
     if(why)continue;
     FwrPose native={b->position,b->sx,b->sy},out;
-    /* Same XZ as the submitted body, terrain Y from the actor. The rim
-     * slides on that plane, away from the camera. Y is not put back
-     * afterwards, and the quad is not scaled. */
+    /* Same XZ as the submitted body, terrain Y from the actor. A short
+     * ground keep puts the oval behind the body. Y is not assigned again,
+     * and the quad is not scaled. */
     FwPoint anchor={shadowTie.sprite.x,feet.y,shadowTie.sprite.z};
     int code=fwr_shadow_on_plane(&native,&anchor,&cam,&out);
     FollowingRenderDebug.shadowNativeY=native.position.y;

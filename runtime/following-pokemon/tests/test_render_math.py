@@ -30,6 +30,8 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_shadow_on_feet.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_world_apart.argtypes=[c.POINTER(Point),c.POINTER(Point),c.c_uint,c.c_int32,c.POINTER(Point)]
   cls.lib.fwr_world_apart.restype=c.c_int
+  cls.lib.fwr_plane_keep.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
+  cls.lib.fwr_plane_keep.restype=c.c_int
   cls.lib.fwr_shadow_on_plane.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_shadow_on_plane.restype=c.c_int
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
@@ -637,4 +639,19 @@ class Rendering(unittest.TestCase):
   self.assertEqual(planted.sx,shade.sx);self.assertEqual(planted.sy,shade.sy)
   self.assertLess(planted.position.z,feet.z)
   self.assertEqual(planted.position.x,feet.x)
+  self.assertGreaterEqual(planted.position.z,feet.z-6*4096)
+  wide=Pose(Point(0,9000,-65536),16384,8192);wide_out=Pose()
+  self.assertEqual(self.lib.fwr_shadow_on_plane(c.byref(wide),c.byref(feet),c.byref(cam),c.byref(wide_out)),1)
+  self.assertEqual(xyz(wide_out.position),xyz(planted.position))
+  self.assertEqual(wide_out.sx,16384);self.assertEqual(wide_out.sy,8192)
+  kept=Point()
+  self.assertEqual(self.lib.fwr_plane_keep(c.byref(feet),c.byref(cam),4*4096,c.byref(kept)),1)
+  self.assertEqual(kept.y,feet.y)
+  self.assertEqual(kept.x,planted.position.x);self.assertEqual(kept.z,planted.position.z)
+  north_cam=Camera(Point(0,760739,-581835),Point(),0)
+  north_kept=Point()
+  self.assertEqual(self.lib.fwr_plane_keep(c.byref(feet),c.byref(north_cam),4*4096,c.byref(north_kept)),1)
+  self.assertGreater(north_kept.z,feet.z)
+  self.assertLessEqual(north_kept.z,feet.z+6*4096)
+  self.assertEqual(north_kept.x,feet.x);self.assertEqual(north_kept.y,feet.y)
 if __name__=='__main__':unittest.main()

@@ -10,17 +10,18 @@ Submitted follower quad:
 
 - Start from the native billboard, which already includes the world pose and the idle hop.
 - Apply the registry Y (`sprite_y` minus descriptor byte 14) on this quad only. North-facing art also drops two pixels (`FWR_NORTH_ART_Y`), in world Y, for every camera. South does not add Z.
-- If the draw is idle (not a swap and not the post-swap ease), the screen rects overlap, and the view gap is inside `(-FWR_WORLD_NUDGE, FWR_CLEAR_FRONT)`, slide the follower 8 world units further from the player along horizontal XZ. Y, including the hop, stays. The tie test uses terrain Y, so the hop cannot toggle the slide. A pair already stacked uses the follower's back-facing direction.
+- If the screen rects overlap and the view gap is inside `(-FWR_WORLD_NUDGE, FWR_CLEAR_FRONT)`, slide the follower away from the camera along the ground by at most `FWR_PLANE_CAP` (6 world units). That is a tie break, not follow distance. Y, including the hop, stays. The tie test uses the art foot line, so the hop cannot toggle it. A swap skips it. Ease and idle use the same rule, so the end of the ease does not jump.
+- The art foot line is actor Y plus the registry offset (and the north two pixels). A bob or walk dip below that line is planted on it. The hop above the line stays.
 - Copy the player's light-mask bits onto the follower for the submit, then restore the follower quad. The player billboard, world, moveflags, and animation are not written.
 
-`policy` in `FollowingRenderDebug` is 0 for feet-only and 2 when that nudge ran. `before` / `after` / `depthRel` are view gaps. `hold` is always 0. The debug record layout is unchanged.
+`policy` in `FollowingRenderDebug` is 0 for feet-only and 2 when the ground tie-break ran. `before` / `after` / `depthRel` are view gaps. `sortMargin` is that ground slide. `hold` is always 0. The debug record layout is unchanged.
 
 Shadow pass (`fwr_shadow_pass`):
 
 - The oval is still found by the old window (one XZ tile and two Y of the actor ground, and not the oval nearer the player).
-- `fwr_shadow_on_plane` plants it on the submitted body's XZ and the actor's terrain Y, then slides the center away from the camera along the ground by the near rim (`8 * max(sx, sy)`, capped at one tile). Scale is unchanged. Y is not assigned again after that slide.
+- `fwr_shadow_on_plane` plants it on the submitted body's XZ and the actor's terrain Y, then slides the center away from the camera along the ground by `fwr_plane_keep` (about four view units, capped at 6 world units). The quad's `sx`/`sy` do not change the distance. Scale is unchanged. Y is not assigned again after that slide.
 
-`fwr_world_apart` and `fwr_shadow_on_plane` are the new helpers. `fwr_player_in_front` is gone. The older ray helpers remain for the emote bubble, grass, and the full-variant land/surf draws. The base draw path does not call them.
+`fwr_plane_keep` and `fwr_shadow_on_plane` place the tie-break and the oval. `fwr_world_apart` remains for tests; the draw does not call it. `fwr_player_in_front` is gone. The older ray helpers remain for the emote bubble, grass, and the full-variant land/surf draws. The base draw path does not call them.
 
 The prop walk that used to push quads behind furniture is gone with the ray advance it was capping. A follower is no longer driven through a stair wall to win a Z test, and the player is no longer moved to clear a trashcan.
 
@@ -34,7 +35,7 @@ Those bugs are structurally gone: there is no player write, and the oval never l
 
 ## Behaviors left on the existing owners
 
-- Follow spacing, the post-swap ease (`FW_EASE_*`, about two tiles of travel), and the close face-in stay in the trail. The draw nudge is skipped while a swap or ease is active so it does not pry that pose apart.
+- Follow spacing, the post-swap ease (`FW_EASE_*`, about two tiles of travel), and the close face-in stay in the trail. The draw does not add a follow-line gap on top of that pose. A swap still skips the tie-break.
 - Rail facing, talk reach, and the swap finish stay in the rail and interaction code.
 - NPC contact recall, seamless-transition recall, and the intentional drops stay in the scene policy.
 - Unown form 27 and Arceus form 0 stay in the form table.
@@ -49,6 +50,15 @@ Not fixed on hardware. The draw path does not add a GX submit or a texture uploa
 What did change: `fwfx_emote_begin` no longer copies the live field scene (`fwemote.scene = *scene`). The bubble keeps that scene's heap id and scale, zeroes the rest, and sets polygon id 1. The submit is still the one existing `0x0204ebdd` call.
 
 Still phase 2, and it needs a DS: `fwfx_destroy` / `fwfx_prepare` still release and re-upload texture keys across a loading wipe, and the recall flash still clones a field scene header. Emulators retire that frame cleanly. Do not fold another submit into the sort path to chase it.
+
+## Round 2
+
+The rest snap was draw-only. The trail still rests at the gap-6 metric (about 1.375 tiles, straight-line 90110). Ease already ends on that pose.
+
+- Idle overlap slid the follower 8 world units further along the follow line, and that slide was skipped during ease. Side-by-side sprites overlap at the real rest gap, so every flat rest took the extra half tile and the ease end jumped. Talk still used the actor, which is why the far picture stayed interactive. An NPC could walk the visual gap.
+- The oval then slid by `8 * max(sx, sy)` on every frame. That product is the screen half-width, half a tile to a full tile for a normal quad, not a tie margin. It runs across the camera, so an east-west follower left its oval and a north-facing one wore the oval. On a slope the search often missed, so the native oval stayed under the feet; the flat step found it and moved it.
+
+Bob-down and some walk frames put the billboard under the art foot line. The foot line now plants those frames. The hop above the line is unchanged. One odd southbound incline step is the same ground keep, not a tile exception; if it is still a full step high or low, that is actor Y and needs another trace.
 
 ## Playtest
 

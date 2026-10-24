@@ -421,26 +421,33 @@ int fwr_world_apart(const FwPoint *follower,const FwPoint *player,unsigned face,
  out->x=(int32_t)x;out->y=follower->y;out->z=(int32_t)z;
  return 1;
 }
+int fwr_plane_keep(const FwPoint *feet,const FwrCamera *camera,int32_t viewKeep,FwPoint *out){
+ if(!feet||!camera||!out)return 0;
+ *out=*feet;
+ if(camera->projection>2||viewKeep<FWR_TIE_MARGIN||viewKeep>(int32_t)FW_TILE)return 0;
+ FwPoint view;
+ if(!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
+ int64_t vx=view.x,vz=view.z;
+ uint32_t horiz=isqrt((uint64_t)(vx*vx)+(uint64_t)(vz*vz));
+ if(horiz<256)return 1;
+ int32_t slide=divide((int64_t)viewKeep*4096,(int32_t)horiz);
+ if(slide<FWR_SHADOW_KEEP)slide=FWR_SHADOW_KEEP;
+ if(slide>FWR_PLANE_CAP)slide=FWR_PLANE_CAP;
+ int32_t mx=divide((int64_t)view.x*slide,(int32_t)horiz);
+ int32_t mz=divide((int64_t)view.z*slide,(int32_t)horiz);
+ int64_t x=(int64_t)feet->x-mx,z=(int64_t)feet->z-mz;
+ if(x<INT32_MIN||x>INT32_MAX||z<INT32_MIN||z>INT32_MAX)return 1;
+ out->x=(int32_t)x;out->y=feet->y;out->z=(int32_t)z;
+ return 1;
+}
 int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
                         const FwrCamera *camera,FwrPose *out){
  if(!shadow||!feet||!camera||!out)return 0;
  *out=*shadow;
  if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
- out->position=*feet;
- int32_t half=shadow->sx>shadow->sy?shadow->sx:shadow->sy;
- if(half<1)half=1;
- half*=8;
- if(half>(int32_t)FW_TILE)half=(int32_t)FW_TILE;
- if(half<4096)half=4096;
- int64_t dx=(int64_t)camera->eye.x-feet->x,dz=(int64_t)camera->eye.z-feet->z;
- if(dx>(1<<27)||dx<-(1<<27)||dz>(1<<27)||dz<-(1<<27))return 1;
- uint64_t adx=dx<0?(uint64_t)-dx:(uint64_t)dx,adz=dz<0?(uint64_t)-dz:(uint64_t)dz;
- uint32_t horiz=isqrt(adx*adx+adz*adz);
- if(horiz<4096)return 1;
- int32_t sx=divide(dx*half,(int32_t)horiz),sz=divide(dz*half,(int32_t)horiz);
- int64_t x=(int64_t)feet->x-sx,z=(int64_t)feet->z-sz;
- if(x<INT32_MIN||x>INT32_MAX||z<INT32_MIN||z>INT32_MAX)return 1;
- out->position.x=(int32_t)x;out->position.z=(int32_t)z;out->position.y=feet->y;
+ FwPoint planted;
+ if(!fwr_plane_keep(feet,camera,FWR_PROP_FOREGROUND_GAP,&planted))return 0;
+ out->position=planted;
  return 1;
 }
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
