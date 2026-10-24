@@ -30,6 +30,10 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 #define FWR_CLEAR_FRONT (4 * 4096)
 /* A biased shadow sits one unit further than the sprite it belongs to. */
 #define FWR_SHADOW_KEEP (1 * 4096)
+/* Idle overlap closer than this, in world units of view depth, slides the
+ * follower away from the player on the ground. Camera distance does not
+ * scale it. Swap and ease do not use it; their trail pose is the spacing. */
+#define FWR_WORLD_NUDGE (8 * 4096)
 /* Native flat shadows sit about one unit above the ground anchor. A larger
  * gap is a stair step, not that lift. */
 #define FWR_SHADOW_FLAT (2 * 4096)
@@ -107,11 +111,16 @@ int fwr_head_position(const FwPoint *base,const FwrCamera *camera,
  * `player` may be null. */
 int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
     const FwrCamera *camera,FwrPose *output);
-/* Preserve the player's foreground after follower shadow clearance without
- * putting the follower behind its own shadow or moving either image on screen. */
-int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
-    const FwrCamera *camera,FwPoint axis,int32_t margin,int32_t max_advance,
-    FwrPose *output,int32_t *after);
+/* Slide `follower` further from `player` by `step` along horizontal XZ.
+ * Y is copied. A pair closer than one unit uses `face`'s back direction
+ * (0 north, 1 south, 2 west, 3 east). This is a world move, not a camera ray. */
+int fwr_world_apart(const FwPoint *follower,const FwPoint *player,unsigned face,
+    int32_t step,FwPoint *output);
+/* Plant a ground oval on `feet` (terrain Y) and slide its center away from
+ * the camera along XZ by the oval's near rim. Scale is unchanged. The oval
+ * does not leave the ground plane. */
+int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
+    const FwrCamera *camera,FwrPose *output);
 /* A loaded static model may occlude part of the original sprite. Reserve its
  * complete projected bounding volume before advancing a camera-facing quad. */
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,

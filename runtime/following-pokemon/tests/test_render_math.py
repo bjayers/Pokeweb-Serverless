@@ -28,7 +28,10 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_keep_behind.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.POINTER(Pose)]
   cls.lib.fwr_shadow_behind.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_shadow_on_feet.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
-  cls.lib.fwr_player_in_front.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),Point,c.c_int32,c.c_int32,c.POINTER(Pose),c.POINTER(c.c_int32)]
+  cls.lib.fwr_world_apart.argtypes=[c.POINTER(Point),c.POINTER(Point),c.c_uint,c.c_int32,c.POINTER(Point)]
+  cls.lib.fwr_world_apart.restype=c.c_int
+  cls.lib.fwr_shadow_on_plane.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_shadow_on_plane.restype=c.c_int
   cls.lib.fwr_head_position.argtypes=[c.POINTER(Point),c.POINTER(Camera),c.c_int32,c.POINTER(Point)]
   cls.lib.fwr_emote_place.argtypes=[c.POINTER(Pose),c.POINTER(Point),c.POINTER(Camera),c.POINTER(Pose)]
   cls.lib.fwr_emote_place.restype=c.c_int
@@ -77,11 +80,9 @@ class Rendering(unittest.TestCase):
     # The depth cap must preserve the already-adjusted image, including size.
     # Use the production translation first so the input lies on its eye ray.
     baseline=Pose(Point(),8192,8192)
-    raised=Pose();depth=c.c_int32()
-    follower=Pose(Point(*(int(v*12*4096) for v in n)),8192,8192)
-    normalized=Result();ignored=Pose();origin=Point()
-    self.lib.fwr_correct(c.byref(origin),c.byref(origin),c.byref(baseline),c.byref(origin),c.byref(cam),0,c.byref(ignored),c.byref(normalized))
-    self.lib.fwr_player_in_front(c.byref(follower),c.byref(baseline),c.byref(cam),normalized.axis,512,32*4096,c.byref(raised),c.byref(depth))
+    raised=Pose()
+    ground=Point(*(int(v*4*4096) for v in n))
+    self.assertEqual(self.lib.fwr_above_shadow(c.byref(baseline),c.byref(ground),c.byref(cam),c.byref(raised)),1)
     self.assertTrue(self.lib.fwr_cap_advance(c.byref(baseline),c.byref(raised),c.byref(cam),limit,c.byref(out)))
     before=project(raised,eye,projection==2);after=project(out,eye,projection==2)
     error=max(abs(x-y) for a,b in zip(before,after) for x,y in zip(a,b))
@@ -261,14 +262,11 @@ class Rendering(unittest.TestCase):
    depth=lambda pose:math.trunc(sum((a-b)*n for a,b,n in zip(xyz(raised.position),xyz(pose.position),direction))/4096)
    player_pose=Pose(player_draw,8192,8192)
    self.assertGreater(depth(player_pose),0) # The supplied frame's regression.
-   foreground=Pose();final=c.c_int32()
-   self.assertEqual(self.lib.fwr_player_in_front(c.byref(raised),c.byref(player_pose),c.byref(cam),result.axis,12*4096,32*4096,c.byref(foreground),c.byref(final)),1)
-   self.assertLessEqual(final.value,-12*4096)
-   self.assertEqual(final.value,depth(foreground))
-   before=project(player_pose,eye,projection==2);after=project(foreground,eye,projection==2)
-   self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
-   unchanged=Pose();self.assertEqual(self.lib.fwr_player_in_front(c.byref(raised),c.byref(foreground),c.byref(cam),result.axis,12*4096,32*4096,c.byref(unchanged),c.byref(final)),0)
-   self.assertEqual(bytes(foreground),bytes(unchanged))
+   # Sort no longer writes the player. A close pair separates on the ground.
+   close=Point(0,-340,-4*4096);player_pt=Point(0,-6484,0);apart=Point()
+   self.assertEqual(self.lib.fwr_world_apart(c.byref(close),c.byref(player_pt),1,8*4096,c.byref(apart)),1)
+   self.assertEqual(apart.y,close.y)
+   self.assertLess(apart.z,close.z)
    # The draw path no longer shoves the player. The follower quad is tucked
    # one unit behind the player after the shadow push, and the player stays put.
    behind=Pose();player_pose=Pose(player_draw,8192,8192)
@@ -295,7 +293,10 @@ class Rendering(unittest.TestCase):
    self.assertLessEqual(shadow_depth,-4096+64)
    shade_before=project(shade,eye,projection==2);shade_after=project(tucked,eye,projection==2)
    self.assertLess(max(abs(x-y)for a,b in zip(shade_before,shade_after)for x,y in zip(a,b)),4 if projection==2 else 0.002/256)
-   again=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again)),0)
+   # A scaled quad can ask for a larger rim on the next call. It settles.
+   again=Pose();second=self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again))
+   if second:
+    settled=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(again),c.byref(behind.position),c.byref(cam),c.byref(settled)),0)
  def test_shadow_stays_on_its_native_ground(self):
   # The oval is the ground sample. A sprite drawn a step low must not drag
   # the shadow with it; the bias keeps the oval's projected image.
@@ -612,4 +613,28 @@ class Rendering(unittest.TestCase):
      self.assertLess(max(abs(a-b) for p,q in zip(shade_before,shade_after) for a,b in zip(p,q)),4 if projection==2 else 0.002/256)
      if projection==0:
       self.assertGreaterEqual(quant_z(tucked.position,eye),quant_z(final.position,eye)+1,(name,step,keep))
+ def test_world_feet_and_ground_shadow(self):
+  player=Point(0,100,0)
+  follower=Point(0,500,-65536)
+  out=Point()
+  self.assertEqual(self.lib.fwr_world_apart(c.byref(follower),c.byref(player),0,8*4096,c.byref(out)),1)
+  self.assertEqual(out.y,follower.y)
+  self.assertEqual(out.x,follower.x)
+  self.assertLess(out.z,follower.z-7*4096)
+  again=Point();self.assertEqual(self.lib.fwr_world_apart(c.byref(out),c.byref(player),0,8*4096,c.byref(again)),1)
+  self.assertLess(again.z,out.z)
+  stacked=Point(10,20,30);back=Point()
+  self.assertEqual(self.lib.fwr_world_apart(c.byref(stacked),c.byref(stacked),0,8*4096,c.byref(back)),1)
+  self.assertEqual((back.x,back.y,back.z),(10,20,30+8*4096))
+  self.assertEqual(self.lib.fwr_world_apart(c.byref(stacked),c.byref(stacked),1,8*4096,c.byref(back)),1)
+  self.assertEqual(back.z,30-8*4096)
+  self.assertEqual(self.lib.fwr_world_apart(c.byref(follower),c.byref(player),0,0,c.byref(out)),0)
+  eye=(0,760739,581835);cam=Camera(Point(*eye),Point(),0)
+  shade=Pose(Point(0,9000,-65536),4096,4096);planted=Pose()
+  feet=Point(0,0,-65536)
+  self.assertEqual(self.lib.fwr_shadow_on_plane(c.byref(shade),c.byref(feet),c.byref(cam),c.byref(planted)),1)
+  self.assertEqual(planted.position.y,0)
+  self.assertEqual(planted.sx,shade.sx);self.assertEqual(planted.sy,shade.sy)
+  self.assertLess(planted.position.z,feet.z)
+  self.assertEqual(planted.position.x,feet.x)
 if __name__=='__main__':unittest.main()

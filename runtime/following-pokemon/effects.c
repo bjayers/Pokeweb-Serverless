@@ -222,10 +222,16 @@ int fwfx_emote_begin(Actor *a,unsigned member){
  Scene *scene=PTR(bl,4);unsigned id=*(uint16_t*)a->drawWork;
  if(!scene||id>=*(uint16_t*)((uint8_t*)bl+0x1c))return 0;
  unsigned index=U32(PTR(bl,0x18),id*40);if(index>=scene->actorCount)return 0;
- fwemote.scene=*scene;fwemote.billboard=scene->actors[index];
+ /* Own the header. Copying the live field scene also copies its polygon
+  * id and the unchecked tail, and a second GX submit of that state is the
+  * hardware black-line path. Keep the allocator id and the scale only. */
+ fwemote.billboard=scene->actors[index];
+ fwemote.scene=(Scene){0};
+ fwemote.scene.heap=scene->heap;fwemote.scene.scale=scene->scale;
  fwemote.scene.actors=&fwemote.billboard;fwemote.scene.materials=fwemote.material;
  fwemote.scene.actorCount=1;fwemote.scene.materialCount=2;
  fwemote.scene.diffuse=fwemote.scene.ambient=0x7fff;fwemote.scene.specular=fwemote.scene.emissive=0;
+ fwemote.scene.polygon=1;
  fwemote.billboard.geom&=0xc000;
  /* Retain the follower's selected map lights and enable rendering for the
   * private quad. Clearing 0xf200 made loaded emotes invisible. */

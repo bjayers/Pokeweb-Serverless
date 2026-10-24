@@ -395,25 +395,52 @@ int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
                        const FwPoint *sprite,const FwrCamera *camera,FwrPose *out){
  return fwr_shadow_match(shadow,feet,sprite,camera,FWR_SHADOW_KEEP,out);
 }
-int fwr_player_in_front(const FwrPose *follower,const FwrPose *player,
-                        const FwrCamera *camera,FwPoint direction,int32_t margin,int32_t max_advance,
-                        FwrPose *out,int32_t *after){
- *out=*player;
- if(camera->projection>2||margin<FWR_TIE_MARGIN||margin>FW_TILE||max_advance<=0||
-    max_advance>2*FW_TILE||
-    player->sx<=0||player->sy<=0||player->sx>32767||player->sy>32767)return 0;
- FwPoint relative;
- if(!delta(follower->position,player->position,&relative,8*FW_TILE))return 0;
- int32_t current=dot(relative,direction),target=-margin;
- if(after)*after=current;
- if(current<=target)return 0;
- int32_t advance=current-target+64;
- if(advance>max_advance)advance=max_advance;
- if(!shift_depth(player,camera,direction,advance,out))return 0;
- if(after){
-  if(!delta(follower->position,out->position,&relative,8*FW_TILE)){*out=*player;*after=current;return 0;}
-  *after=dot(relative,direction);
+int fwr_world_apart(const FwPoint *follower,const FwPoint *player,unsigned face,
+                   int32_t step,FwPoint *out){
+ if(!follower||!player||!out)return 0;
+ *out=*follower;
+ if(step<FWR_TIE_MARGIN||step>(int32_t)FW_TILE)return 0;
+ int64_t dx=(int64_t)follower->x-player->x,dz=(int64_t)follower->z-player->z;
+ if(dx>8*(int64_t)FW_TILE||dx<-8*(int64_t)FW_TILE||dz>8*(int64_t)FW_TILE||dz<-8*(int64_t)FW_TILE)return 0;
+ uint64_t adx=dx<0?(uint64_t)-dx:(uint64_t)dx,adz=dz<0?(uint64_t)-dz:(uint64_t)dz;
+ uint32_t horiz=isqrt(adx*adx+adz*adz);
+ int32_t ox,oz;
+ if(horiz<4096){
+  ox=oz=0;
+  if(face==0)oz=step;
+  else if(face==1)oz=-step;
+  else if(face==2)ox=step;
+  else if(face==3)ox=-step;
+  else return 0;
+ }else{
+  ox=divide(dx*step,(int32_t)horiz);
+  oz=divide(dz*step,(int32_t)horiz);
  }
+ int64_t x=(int64_t)follower->x+ox,z=(int64_t)follower->z+oz;
+ if(x<INT32_MIN||x>INT32_MAX||z<INT32_MIN||z>INT32_MAX)return 0;
+ out->x=(int32_t)x;out->y=follower->y;out->z=(int32_t)z;
+ return 1;
+}
+int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
+                        const FwrCamera *camera,FwrPose *out){
+ if(!shadow||!feet||!camera||!out)return 0;
+ *out=*shadow;
+ if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
+ out->position=*feet;
+ int32_t half=shadow->sx>shadow->sy?shadow->sx:shadow->sy;
+ if(half<1)half=1;
+ half*=8;
+ if(half>(int32_t)FW_TILE)half=(int32_t)FW_TILE;
+ if(half<4096)half=4096;
+ int64_t dx=(int64_t)camera->eye.x-feet->x,dz=(int64_t)camera->eye.z-feet->z;
+ if(dx>(1<<27)||dx<-(1<<27)||dz>(1<<27)||dz<-(1<<27))return 1;
+ uint64_t adx=dx<0?(uint64_t)-dx:(uint64_t)dx,adz=dz<0?(uint64_t)-dz:(uint64_t)dz;
+ uint32_t horiz=isqrt(adx*adx+adz*adz);
+ if(horiz<4096)return 1;
+ int32_t sx=divide(dx*half,(int32_t)horiz),sz=divide(dz*half,(int32_t)horiz);
+ int64_t x=(int64_t)feet->x-sx,z=(int64_t)feet->z-sz;
+ if(x<INT32_MIN||x>INT32_MAX||z<INT32_MIN||z>INT32_MAX)return 1;
+ out->position.x=(int32_t)x;out->position.z=(int32_t)z;out->position.y=feet->y;
  return 1;
 }
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
