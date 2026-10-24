@@ -131,6 +131,24 @@ Do this in three playtest steps. Each step is one path, not a facing table.
 
 Black-line texture lifetime stays phase 2 and is not part of footing.
 
+## Sprite sources
+
+The walking body is not a private sheet and not a second loader. Stock species and module-added species take the same spawn. There is no bank0/bank1 branch in this module. Retail object codes already fall into three windows of one descriptor table (`a/0/4/7`, 1008 stock rows) and one model archive (`a/0/4/8`, 975 stock BTX members): codes below `0x179`, `0x1000`–`0x126b`, and `0x2000`–`0x200a`. `fw_stock_row` maps only those windows. Anything else, including `0x3000` before publish, becomes row 10.
+
+Install (`buildGen5FollowerArchives` in `src/pokeweb/followingPokemonProject.ts`) appends descriptor rows at index 1008 and up. Each new row’s object code is `0x3000 + row - 1008`. A stock appearance copies its retail descriptor, including the existing `a/0/4/8` member. Species 494+ and PNG imports append a new BTX member and point only that extension row at it. Stock rows are not retargeted. `rom:/following/` holds the registry, effects, emotes, dialogue, items, and (full variant) mounts. Those NARCs are not the walking body. `following/bundled-assets.narc` is editor preview only.
+
+Runtime, one path:
+
+1. `config()` in `field.c` reads `rom:/following/native.bin` and `rom:/following/runtime-registry.bin`, then `PokewebFollowingPublish` stores how many extension rows exist.
+2. `model()` matches species, form, gender, and shiny to a registry row and returns that `0x3000+` code. It also stores `sprite_y`. It does not load pixels. Editor `source` (`stock`, `hg-engine`, `png`) is not in the runtime row.
+3. Spawn is the retail constructor `0x021668c1` with that code. The same constructor builds map NPCs; their code comes from the map’s retail overworld sprite id.
+4. ARM9 `0x0200fe34` is `PokewebFollowingObjectRow`. After publish, `0x3000+` codes become rows 1008+. Overlay 12 `0x02167fb8` stops truncating the descriptor file offset to 16 bits, so `4 + row * 28` still works past 64 KiB. The fixed native cache is not grown.
+5. The engine copies that 28-byte descriptor onto the actor and loads `rom:/a/0/4/8` member `descriptor+16`. Byte 7 is the 32 or 64 draw mode. Byte 9 is 13 (six frames, right mirrored) or 14 (eight frames). The module does not upload that texture on the draw path. Recall’s white flash (`fwfx_prepare`) opens the same member again.
+
+Bob is the engine for every follower. `animation_gate` clears `PAUSE_ANM` while the follower is visible and not inside an effect; the actor renderer then steps the BTX. The idle hop is already in the native billboard when `fwr_draw` runs. `sprite_y` is a constant registry offset on that quad, and descriptor byte 14 stays 0 so the native shadow stays on the ground. Dialogue hop is an interaction motion, also not split by who drew the sheet.
+
+A map NPC still cannot show an added follower sprite. Its sprite id is a retail object code, so it still resolves to a stock row and that row’s original member. The overworld editor lists those retail ids, not registry rows. Nothing in map data passes `0x3000`. Until publish, that code is row 10 anyway.
+
 ## Playtest
 
 - Castelia outer ring, walking past street NPCs: the player stays behind people who stand nearer the camera. No constant follower pop in/out.
