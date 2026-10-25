@@ -180,14 +180,7 @@ for size,member in ((32,6),(64,314)):
  uc.mem_write(actor,bytes(256));put(actor+136,system);uc.mem_write(actor+244,struct.pack('<H',981))
  uc.mem_write(actor+235,bytes([2 if size==64 else 0]))
  uc.mem_write(bill,struct.pack('<HHiiiHhhHHH',0,0,0,0,0,0,size*256,size*256,0,0x121f,0))
- invoke('fwfx_prepare',[actor])
- warmed=len(calls);invoke('fwfx_warm',[0])
- assert sum(c[0]==0x20493f0 and cstr(c[1])=='rom:/following/emotes.narc' for c in calls[warmed:])==14
- assert sum(c[0]==0x204e55c for c in calls[warmed:])==14,'fade must bind each emote sheet'
- assert not any(c[0]==0x20494d8 and resource_paths.get(c[1])=='rom:/following/emotes.narc' for c in calls[warmed:]),'emote BTX is not a model upload'
- begun=len(calls)
- assert invoke('fwfx_emote_begin',[actor,0])
- assert not any(c[0] in (0x20493f0,0x204964c,0x204e55c,0x20494d8) for c in calls[begun:]),'talk path uploaded an emote sheet'
+ invoke('fwfx_prepare',[actor]);assert invoke('fwfx_emote_begin',[actor,0])
  allocated=len(allocations);loads=len(calls)
  for frame in range(len(art)//(size*size//2)):
   pose=art[frame*size*size//2:(frame+1)*size*size//2]
@@ -205,13 +198,11 @@ for size,member in ((32,6),(64,314)):
    gap=height+(31-bubble_bottom)-(size-visible_top)
    assert abs(gap-8)<0.02,(size,frame,flipped,gap)
  assert len(allocations)==allocated and not any(c[0] in (0x20493f0,0x204964c,0x204e55c) for c in calls[loads:]),'Per-draw texture work'
- again=len(calls)
- assert invoke('fwfx_emote_begin',[actor,0])
- assert not any(c[0] in (0x20493f0,0x204964c,0x204e55c,0x20494d8) for c in calls[again:]),'second emote uploaded'
  invoke('fwfx_emote_end')
  parked,vram=len(frees),vram_frees()
  settle()
- assert len(frees)==parked and vram_frees()==vram,'emote end keeps the warmed sheets'
+ assert len(frees)==parked+2 and vram_frees()==vram+2,'same-session emote end still frees both sheets after two ticks'
+ parked,vram=len(frees),vram_frees()
  invoke('fwfx_destroy');settle()
- assert len(frees)==parked and vram_frees()==vram,'destroy drops emote sheets without a resume free'
+ assert len(frees)==parked and vram_frees()==vram,'destroy drops effect banks without a resume free'
 print('Effect checks passed: I4 row bounds, eight-pixel opaque-edge emote clearance for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')

@@ -65,8 +65,7 @@ def context_archive(before=0,after=0,abi=2,bounds=None):
  narc=ndspy.narc.NARC();narc.files=[bytes(member)];return narc.save()
 assets={"rom:/following/interactions.bin":(HERE.parents[1]/'src/assets/following/interactions.bin').read_bytes(),"rom:/following/emotes.narc":(HERE.parents[1]/'src/assets/following/interaction-emotes.narc').read_bytes(),"rom:/following/contextual-items.narc":gift_archive()}
 files={};calls=[];alloc=[];frees=[];held=pressed=0;free_bytes=131072;provider=0;controller=0;blocked=0;fail='';resource_counter=0;emote_draws=0;print_done=1;close_done=1;rail_span=65536
-emote_sheet={};resident=set();EMOTE_TEX=0x02230000
-native_addresses={0x02006254,0x02070ca8,0x02070ecc,0x02070dec,0x02070e6c,0x02070de0,0x0203a2d4,0x02180578,0x02195728,0x0219a9d0,0x0219aacc,0x0215e4f0,0x02016cb4,0x02016d08,0x02167098,0x02194b88,0x02194f18,0x0215e8e4,0x02194d8c,0x0215e150,0x021676fc,0x0219a5d8,0x0203df4c,0x0203df28,0x02005cbc,0x020069f4,0x02006b5c,0x021804d0,0x02180500,0x0204855c,0x02048590,0x02048640,0x021887d8,0x02188814,0x02188834,0x02188858,0x021888c4,0x02188a08,0x020493f0,0x02049430,0x020494d8,0x02049560,0x0204e598,0x0204e55c,0x0204ebdc,0x0218151c,0x02181aa0,0x02017354,0x0201735c,0x0201fe24,0x0201ff34,0x0201cd24,0x0201ccc4,0x0201ccec,0x0201eef0,0x02008238,0x02008268}
+native_addresses={0x02006254,0x02070ca8,0x02070ecc,0x02070dec,0x02070e6c,0x02070de0,0x0203a2d4,0x02180578,0x02195728,0x0219a9d0,0x0219aacc,0x0215e4f0,0x02016cb4,0x02016d08,0x02167098,0x02194b88,0x02194f18,0x0215e8e4,0x02194d8c,0x0215e150,0x021676fc,0x0219a5d8,0x0203df4c,0x0203df28,0x02005cbc,0x020069f4,0x02006b5c,0x021804d0,0x02180500,0x0204855c,0x02048590,0x02048640,0x021887d8,0x02188814,0x02188834,0x02188858,0x021888c4,0x02188a08,0x020493f0,0x02049430,0x02049560,0x0204e598,0x0204e55c,0x0204ebdc,0x0218151c,0x02181aa0,0x02017354,0x0201735c,0x0201fe24,0x0201ff34,0x0201cd24,0x0201ccc4,0x0201ccec,0x0201eef0,0x02008238,0x02008268}
 bag_adds=[]
 native_addresses.add(0x02008ddc) # SaveData_GetConfig for the Options Off bit.
 native_addresses.add(0x0204964c) # Optional CPU texture data for bubble bounds.
@@ -157,13 +156,9 @@ def native(u,pc,size,user):
  if pc==0x020493f0:
   assert cstr(r0)=='rom:/following/emotes.narc' and r1<14
   resource_counter+=1;result=0 if fail=='emote' else 0x02220000+(resource_counter%100)*0x100
-  if result:
-   alloc.append(('resource',result));emote_sheet[result]=EMOTE_TEX+r1*0x80;resident.add(result)
+  if result:alloc.append(('resource',result))
  if pc==0x02049430:frees.append(('resource',r0))
- if pc==0x020494d8:
-  tex=emote_sheet.get(r0,0);result=0 if not tex else 1
-  if tex:put(tex+8,0x10003000);put(tex+0x2c,0x400000c0)
- if pc==0x0204964c:result=emote_sheet.get(r0,0) # Missing sheet keeps the full-frame inset fallback.
+ if pc==0x0204964c:result=0 # Exercise the safe full-frame fallback here.
  if pc==0x0204e598:assert r1==0 and r2==0x22 and r3==32 and u32(u.reg_read(UC_ARM_REG_SP))==32
  if pc==0x0204e55c:put(r0+32,0 if fail=='vram' else 1);put(r0+36,1)
  if pc==0x0204ebdc:
@@ -208,17 +203,7 @@ def tick():
  return done
 def balanced():
  for _ in range(2):call('fwfx_tick')
- live=collections.Counter(alloc);done=collections.Counter(frees)
- for ptr in resident:
-  key=('resource',ptr)
-  if live[key]>done[key]:
-   live[key]-=1
-   if not live[key]:del live[key]
- assert live==done,(live-done,done-live)
-# Fade-time emote bind. Later bubbles copy that material and do not allocate.
-warmed=len(calls);call('fwfx_warm',[0])
-assert sum(c[0]==0x0204e55c for c in calls[warmed:])==14 and len(resident)==14
-assert not any(c[0]==0x020494d8 for c in calls[warmed:]),'emote BTX is not a model upload'
+ assert collections.Counter(alloc)==collections.Counter(frees),(collections.Counter(alloc)-collections.Counter(frees),collections.Counter(frees)-collections.Counter(alloc))
 # Actual branch veneers forward native providers and leave retail event priority intact.
 provider=FOREIGN
 for name,args in [('THUMB_BRANCH_LINK_36_0x021818bc',[GAME,FIELD,SNAP,SNAP+4]),('THUMB_BRANCH_LINK_36_0x02181a6c',[GAME,FIELD])]:assert call(name,args)==FOREIGN
@@ -404,9 +389,7 @@ setup();half(bill+24,0x1600);half(bill+18,8192);half(bill+20,8192)
 uc.mem_write(0x02210000+32,struct.pack('<3i',0,200*4096,140*4096));uc.mem_write(0x02210000+56,bytes(12))
 shared=bytes(uc.mem_read(mat,40))+bytes(uc.mem_read(bill,28))
 for member in range(0,14,2):
- before=len(calls)
  assert call('fwfx_emote_begin',[A,member])
- assert not any(c[0] in (0x020493f0,0x0204e55c,0x020494d8) for c in calls[before:]),'talk path uploaded an emote sheet'
  for frame in (0,1,0,1):call('fwfx_emote_frame',[A,frame]);call('fwfx_draw',[0x02210000,0x02211000])
  call('fwfx_emote_end');balanced()
 assert emote_draws==28,emote_draws

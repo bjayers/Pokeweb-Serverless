@@ -9,8 +9,8 @@ void fwfx_recall(Actor *actor);
 void fwfx_tick(void);
 void fwfx_cancel(void);
 void fwfx_destroy(void);
-/* Effect-bank upload and emote billboard bind while a door or return fade is up.
- * Not a billboard submit, and not the follower body sheet. */
+/* Effect-bank upload while a door or return fade is up. Not a billboard submit,
+ * and not an emote VRAM bind. The talk path owns that material. */
 void fwfx_warm(uint32_t heap);
 int fwfx_hides_actor(void);
 int fwfx_busy(void);
