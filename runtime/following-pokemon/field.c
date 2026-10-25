@@ -83,13 +83,13 @@ static uint8_t fwfield_population;
 static uint8_t fwfield_page[FW_REGISTRY_PAGE];
 static uint16_t fwfield_index[FW_MAX_SPECIES+2];
 static unsigned fwfield_registrySize,fwfield_stride,fwfield_pageFirst,fwfield_pageCount;
-/* FWCG v4. stage, registryBytes, cacheBytes, and reads are the registry load.
+/* FWCG v5. stage, registryBytes, cacheBytes, and reads are the registry load.
  * insert, uid, and mat are the MapSpawnFinish LoadStaticBlact result. covered
  * is the actor created before that routine's render: 1 means the billboard
  * slot was real and HIDDEN was clear, so the covered render submits it with
- * the zone NPCs. Search RAM for 46 57 43 47. Word +4 is version 4. Word +24
+ * the zone NPCs. Search RAM for 46 57 43 47. Word +4 is version 5. Word +24
  * is insert. Word +36 is covered. */
-API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads,insert,uid,mat,covered;} FollowingConfigDebug={.magic=0x47435746,.version=4,.cacheBytes=FW_REGISTRY_PAGE,.mat=0xffffffffu};
+API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads,insert,uid,mat,covered;} FollowingConfigDebug={.magic=0x47435746,.version=5,.cacheBytes=FW_REGISTRY_PAGE,.mat=0xffffffffu};
 /* Searchable emulator diagnostics; values never become save data. */
 API volatile struct { uint32_t magic,version,ticks,spawns,deletes,reason,species,fwfield_code,actor,fwfield_player,visible,resets,system,systemFlags,field,cameraYaw,cameraPitch,depthClass,depthX,depthY,depthZ,modelSize; } FollowingDebug={.magic=0x47445746,.version=2};
 API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags,actorFlags; } FollowingShadowDebug={.magic=0x48535746,.version=1};
@@ -628,6 +628,10 @@ static void covered_spawn(void *field, ActorSystem *sys, uint16_t code, const Fw
  fwfield_code=code;
  FollowingDebug.actor=(uint32_t)a; FollowingDebug.visible=1; FollowingDebug.species=mon->species; FollowingDebug.fwfield_code=code;
  FollowingConfigDebug.covered=body_sheet_ready(a)?1:4;
+ /* White sheet for the later recall flash. Same window as the body upload,
+  * before this routine swaps the new picture. A repeat from the field update
+  * sees the id and does not upload again. */
+ fwfx_prepare(a);
 }
 #endif
 /* MapSpawnFinish case 0 has finished the actor and weather drains.
@@ -649,6 +653,10 @@ API void FollowingPreloadFollower(void *field, void *actorSystem) {
  if(followers_off(game)){FollowingConfigDebug.insert=3;return;}
  int fresh=!fwfield_configState;
  if(!config()){if(fresh)fwfield_configState=0;FollowingConfigDebug.insert=4;return;}
+ /* Effect-bank upload (0x020494d9 inside fwfx_warm). The entrance fade is a
+  * live 3D scan, and this hook is the last field work before that picture is
+  * swapped. Doing it here keeps the write off the frames the fade reveals. */
+ fwfx_warm(((ActorSystem*)actorSystem)->resourceHeap);
  FwPokemon selected;int slot=-1;
  if(!select(game,field,&selected,0,0,&slot)){FollowingConfigDebug.insert=5;return;}
  uint16_t code=model(&selected);
@@ -1047,8 +1055,9 @@ API void FollowingUpdate(ActorSystem *sys) {
    * move-start attribute pass never registers its shadow. The audited native
    * shadow helper owns the effect task, billboard, visibility and teardown. */
   /* First raster of the body is the retail billboard only. Shadow-task birth
-   * and the white-sheet bind wait until the next update. Neither runs during
-   * a fade: reason bit 16 returns before this block. */
+   * and a repeat white-sheet bind wait until the next update. The entrance
+   * upload itself is the MapSpawnFinish hook; fwfx_prepare returns once that
+   * id is already bound. */
   int shown=!(a->flags&HIDDEN);
   int firstBody=shown && !fwfield_shownNow;
   fwfield_reveal=firstBody;
