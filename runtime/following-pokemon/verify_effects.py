@@ -52,6 +52,8 @@ def native(u,address,size,user):
  if address==0x204964c:result=emote_texture if resource_paths.get(r0)=='rom:/following/emotes.narc' else body_texture
  if address==0x20652e4:result=32
  if address==0x204974c:result=PALETTE
+ if address==0x20494d8 and resource_paths.get(r0)=='rom:/following/emotes.narc':
+  put(emote_texture+8,0x10003000);put(emote_texture+0x2c,0x400000c0)
  if address==0x204e55c:
   put(r0,r1);put(r0+12,0x18000);put(r0+16,0x600);put(r0+32,0x10003000);put(r0+36,0x400000c0)
  if address==0x204ebdc:
@@ -180,7 +182,13 @@ for size,member in ((32,6),(64,314)):
  uc.mem_write(actor,bytes(256));put(actor+136,system);uc.mem_write(actor+244,struct.pack('<H',981))
  uc.mem_write(actor+235,bytes([2 if size==64 else 0]))
  uc.mem_write(bill,struct.pack('<HHiiiHhhHHH',0,0,0,0,0,0,size*256,size*256,0,0x121f,0))
- invoke('fwfx_prepare',[actor]);assert invoke('fwfx_emote_begin',[actor,0])
+ invoke('fwfx_prepare',[actor])
+ warmed=len(calls);invoke('fwfx_warm',[0])
+ assert sum(c[0]==0x20494d8 and resource_paths.get(c[1])=='rom:/following/emotes.narc' for c in calls[warmed:])==14
+ assert not any(c[0]==0x204e55c for c in calls[warmed:]),'fade emote warm allocated a live material'
+ begun=len(calls)
+ assert invoke('fwfx_emote_begin',[actor,0])
+ assert not any(c[0] in (0x20493f0,0x204964c,0x204e55c,0x20494d8) for c in calls[begun:]),'talk path uploaded an emote sheet'
  allocated=len(allocations);loads=len(calls)
  for frame in range(len(art)//(size*size//2)):
   pose=art[frame*size*size//2:(frame+1)*size*size//2]
@@ -198,11 +206,13 @@ for size,member in ((32,6),(64,314)):
    gap=height+(31-bubble_bottom)-(size-visible_top)
    assert abs(gap-8)<0.02,(size,frame,flipped,gap)
  assert len(allocations)==allocated and not any(c[0] in (0x20493f0,0x204964c,0x204e55c) for c in calls[loads:]),'Per-draw texture work'
+ again=len(calls)
+ assert invoke('fwfx_emote_begin',[actor,0])
+ assert not any(c[0] in (0x20493f0,0x204964c,0x204e55c,0x20494d8) for c in calls[again:]),'second emote uploaded'
  invoke('fwfx_emote_end')
  parked,vram=len(frees),vram_frees()
  settle()
- assert len(frees)==parked+2 and vram_frees()==vram+2,'same-session emote end still frees both sheets after two ticks'
- parked,vram=len(frees),vram_frees()
+ assert len(frees)==parked and vram_frees()==vram,'emote end keeps the warmed sheets'
  invoke('fwfx_destroy');settle()
- assert len(frees)==parked and vram_frees()==vram,'destroy drops effect banks without a resume free'
+ assert len(frees)==parked and vram_frees()==vram,'destroy drops emote sheets without a resume free'
 print('Effect checks passed: I4 row bounds, eight-pixel opaque-edge emote clearance for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')

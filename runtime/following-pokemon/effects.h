@@ -9,7 +9,8 @@ void fwfx_recall(Actor *actor);
 void fwfx_tick(void);
 void fwfx_cancel(void);
 void fwfx_destroy(void);
-/* Effect-bank upload while a door or return fade is up. Not a billboard submit. */
+/* Effect-bank and emote-sheet upload while a door or return fade is up.
+ * Not a billboard submit, and not the follower body sheet. */
 void fwfx_warm(uint32_t heap);
 int fwfx_hides_actor(void);
 int fwfx_busy(void);

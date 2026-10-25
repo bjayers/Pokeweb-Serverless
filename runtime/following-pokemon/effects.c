@@ -70,12 +70,13 @@ int fwfx_outline(const void *texture,unsigned size,uint8_t *top,uint8_t *bottom)
  }
  return (int)frames;
 }
-/* Texture keys stay named by the GPU's queued frame. Land already waits two
- * field ticks before 0x02049561. Emote end and the white-sprite reload do too.
- * Map teardown does not: the field clock stops while a load, battle, or menu
- * has the overlay, so a two-tick wait fires on the first visible frames of
- * the next field and streaks that picture. Those pointers belong to the old
- * allocator. Drop them. The next 3D setup reclaims the banks. */
+/* Texture keys stay named by the GPU's queued frame. The white-sprite reload
+ * waits two field ticks before 0x02049561. Map teardown does not: the field
+ * clock stops while a load, battle, or menu has the overlay, so a two-tick
+ * wait fires on the first visible frames of the next field and streaks that
+ * picture. Those pointers belong to the old allocator. Drop them. The next
+ * 3D setup reclaims the banks. Emote sheets are not in this queue. The fade
+ * uploads them once, and unload drops the pointers without 0x02049561. */
 #define FWFX_HELD 4
 typedef struct {
  void *white,*animation;
@@ -147,20 +148,66 @@ void fwfx_set_resource_count(unsigned count){
  if(fwfx_resourceCount!=count)free_white();
  fwfx_resourceCount=(uint16_t)count;
 }
+/* Installed rom:/following/emotes.narc: seven bubbles, two BTX members each.
+ * Bubble i names member i*2. Do not probe past the archive. */
+#define FWFX_EMOTE_BANK 14
+/* TEX0 padding that NNS_G3dResDefaultSetup fills. +0x14 stays the pixel
+ * offset, so the outline read still sees the file header. */
+#define FWFX_TEX_KEY 0x08u
+#define FWFX_PLTT_KEY 0x2cu
+typedef struct {
+ void *resource;
+ uint32_t tex,pltt,texKey,plttKey;
+ uint8_t bottomInset;
+} FwEmoteSheet;
+static FwEmoteSheet fwemote_bank[FWFX_EMOTE_BANK];
+static int fwemote_bank_state;
+static int emote_key_ok(uint32_t key){return key && key!=0xffffffffu;}
+static void emote_bank_drop(void){
+ memset(fwemote_bank,0,sizeof fwemote_bank);fwemote_bank_state=0;
+}
+/* Drop every sheet uploaded so far. A VRAM free under the fade is the
+ * load-screen streak. The caller already released a sheet that never uploaded. */
+static void emote_bank_fail(void){
+ emote_bank_drop();fwemote_bank_state=-1;
+}
+static int emote_warm_bank(void){
+ if(fwemote_bank_state)return fwemote_bank_state>0;
+ for(unsigned i=0;i<FWFX_EMOTE_BANK;++i){
+  void *res=CALL(0x020493f1,void*(*)(const char*,unsigned))("rom:/following/emotes.narc",i);
+  if(!res){emote_bank_fail();return 0;}
+  fwemote_bank[i].resource=res;
+  void *tex=CALL(0x0204964d,void*(*)(void*))(res);
+  uint8_t top[8],bottom[8];
+  fwemote_bank[i].bottomInset=(uint8_t)(tex && fwfx_outline(tex,32,top,bottom)==1 && top[0]<32?31-bottom[0]:1);
+  if(!CALL(0x020494d9,int(*)(void*))(res)){
+   CALL(0x02049431,void(*)(void*))(res);fwemote_bank[i].resource=0;emote_bank_fail();return 0;
+  }
+  tex=CALL(0x0204964d,void*(*)(void*))(res);
+  uint32_t texKey=tex?U32(tex,FWFX_TEX_KEY):0,plttKey=tex?U32(tex,FWFX_PLTT_KEY):0;
+  if(!emote_key_ok(texKey)||!emote_key_ok(plttKey)){emote_bank_fail();return 0;}
+  fwemote_bank[i].texKey=texKey;fwemote_bank[i].plttKey=plttKey;
+  fwemote_bank[i].tex=(texKey&0xffffu)<<3;fwemote_bank[i].pltt=(plttKey&0xffffu)<<3;
+ }
+ fwemote_bank_state=1;return 1;
+}
 void fwfx_destroy(void){
  /* Unload, battle, and a new actor system all come through here. The clock
   * does not advance while this overlay is gone, so a deferred 0x02049561
   * would run on the first frames the overworld is visible again. */
  fwfx_player=0;fwfx_drop=1;fwfx_emote_end();
- fwfx_cancel();hold_effects();held_pump();fwfx_drop=0;
+ fwfx_cancel();hold_effects();emote_bank_drop();held_pump();fwfx_drop=0;
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
 }
 void fwfx_warm(uint32_t heap){
- /* Effect banks only, during a door or return fade. A follower billboard
-  * submit in that window is not covered: it put the load-screen lines back. */
- if(fwfx.ready)return;
- if(heap && CALL(0x0203a2d5,uint32_t(*)(uint32_t))(heap)<65536u)return;
- init();
+ /* Door or return fade. Effect banks, then the emote archive, upload only.
+  * No billboard submit and no a/0/4/8 bind: a submit in this window put the
+  * load-screen lines back. */
+ if(!fwfx.ready){
+  if(heap && CALL(0x0203a2d5,uint32_t(*)(uint32_t))(heap)<65536u)return;
+  init();
+ }
+ emote_warm_bank();
 }
 static int init_stop(void){
  /* A deferred free can still own the previous map's heap. Drop this partial
@@ -303,7 +350,7 @@ void fwfx_emote_end(void){
 }
 int fwfx_emote_begin(Actor *a,unsigned member){
  fwfx_emote_end();
- if(member>=28 || CALL(0x0203a2d5,uint32_t(*)(uint32_t))(((ActorSystem*)a->system)->resourceHeap)<32768)return 0;
+ if(member>=FWFX_EMOTE_BANK || member+1>=FWFX_EMOTE_BANK || fwemote_bank_state!=1 || CALL(0x0203a2d5,uint32_t(*)(uint32_t))(((ActorSystem*)a->system)->resourceHeap)<32768)return 0;
  void *fieldBl=PTR(a->system,0x28);if(!fieldBl)return 0;
  void *bl=PTR(fieldBl,4);if(!bl)return 0;
  Scene *scene=PTR(bl,4);unsigned id=*(uint16_t*)a->drawWork;
@@ -321,14 +368,14 @@ int fwfx_emote_begin(Actor *a,unsigned member){
  fwemote.billboard.flags=(fwemote.billboard.flags|0x0200u)&~0x0c00u;
  fwemote.billboard.sx=fwemote.billboard.sy=8192;fwemote.billboard.face=0;
  for(unsigned i=0;i<2;++i){
+  FwEmoteSheet *sheet=&fwemote_bank[member+i];
   fwemote.material[i]=(Material){0};
-  fwemote.resources[i]=CALL(0x020493f1,void*(*)(const char*,unsigned))("rom:/following/emotes.narc",member+i);
-  if(!fwemote.resources[i]){fwfx_emote_end();return 0;}
-  uint8_t top[8],bottom[8];
-  void *tex=CALL(0x0204964d,void*(*)(void*))(fwemote.resources[i]);
-  fwemote.bottomInset[i]=fwfx_outline(tex,32,top,bottom)==1&&top[0]<32?(uint8_t)(31-bottom[0]):1;
+  fwemote.bottomInset[i]=sheet->bottomInset;
+  /* Size and format only. The fade already owns the VRAM keys. */
   CALL(0x0204e599,void(*)(void*,unsigned,unsigned,unsigned,unsigned))(&fwemote.material[i],0,0x22,32,32);
-  CALL(0x0204e55d,void(*)(void*,void*))(&fwemote.material[i],fwemote.resources[i]);
+  fwemote.material[i].resource=sheet->resource;
+  fwemote.material[i].tex=sheet->tex;fwemote.material[i].pltt=sheet->pltt;
+  fwemote.material[i].texKey=sheet->texKey;fwemote.material[i].plttKey=sheet->plttKey;
   if(!fwemote.material[i].texKey||!fwemote.material[i].plttKey){fwfx_emote_end();return 0;}
  }
  fwemote.active=1;fwemote.actor=a;fwfx_emote_frame(a,0);return 1;
