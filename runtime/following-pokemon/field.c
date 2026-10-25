@@ -30,6 +30,12 @@ static ActorSystem *fwfield_owner;
 static Actor *fwfield_player;
 static uint32_t fwfield_tick, fwfield_generation;
 static uint16_t fwfield_code;
+static uint16_t fwfield_sheet;
+static uint8_t fwfield_sheetSize,fwfield_sheetValid;
+/* 1 = this hidden actor still needs one submit. 2 = that submit is in the
+ * current or previous frame and must be hidden again before the player sees it. */
+static uint8_t fwfield_prime,fwfield_priming,fwfield_held,fwfield_primeParked;
+static Vec fwfield_primePos;
 static uint8_t fwfield_flying;
 static uint32_t fwfield_registryCrc;
 static uint16_t fwfield_descriptorCount;
@@ -320,6 +326,9 @@ static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
 }
 static void move(Actor *a) {
  if ((uintptr_t)a!=fwfield_follower.actor || !fwfield_player || a->system!=fwfield_owner) return;
+ /* The covered preload frame is not a send-out. Leave the actor where the
+  * fade placed it so the retail submit can upload the sheet. */
+ if(fwfield_priming||fwfield_held)return;
 #ifdef FW_MOUNT
  if(fwland_active()){fwland_follow_player(a,fwfield_player);a->flags&=~PAUSE_ANM;return;}
 #endif
@@ -409,6 +418,7 @@ static void cleanup_impl(int keepTrail) {
  if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
  fwfield_cyclePending=0;
+ fwfield_prime=fwfield_priming=fwfield_held=fwfield_primeParked=0;
  clear_swap();clear_ease();drop_settled();settled=(Vec){0,0,0};
  FollowingDebug.actor=FollowingDebug.visible=0;
 }
@@ -474,7 +484,7 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
  if(fwfield_configState!=1||!p||!p->species||p->species>FW_MAX_SPECIES)return 0;
  unsigned first=fwfield_index[p->species],end=fwfield_index[p->species+1];
  fwfield_follower.side_gap=0;fwfield_follower.sprite_y=0;
- uint16_t fallback=0x3000;int best=-100,opened=0,artX=0;uint32_t file[32];
+ uint16_t fallback=0x3000,sheet=0;unsigned sheetSize=32;int haveSheet=0,best=-100,opened=0,artX=0;uint32_t file[32];
  for(unsigned i=first;i<end;++i){
   if(i<fwfield_pageFirst||i-fwfield_pageFirst>=fwfield_pageCount){
    if(!opened){
@@ -496,7 +506,7 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
   if(species!=p->species)goto fail;
   unsigned shown=fw_follower_form(p->species,p->form);
   int score=(form==shown?8:form==0?0:-20)+(gender==p->gender?4:gender==2?2:-20)+(shiny==p->shiny?1:-20);
-  if(score>best){best=score;fallback=FW_CODE_BASE+row-FW_STOCK_ROWS;fwfield_follower.side_gap=fwfield_stride==12?(r[8]>>3)&7:r[15];fwfield_follower.sprite_y=(int8_t)(fwfield_stride==12?r[10]:r[13]);
+  if(score>best){best=score;fallback=FW_CODE_BASE+row-FW_STOCK_ROWS;sheet=fwfield_stride==12?read16(r+6):read16(r+8);sheetSize=fwfield_stride==12?(r[8]&2?64u:32u):(r[10]==64?64u:32u);haveSheet=1;fwfield_follower.side_gap=fwfield_stride==12?(r[8]>>3)&7:r[15];fwfield_follower.sprite_y=(int8_t)(fwfield_stride==12?r[10]:r[13]);
    artX=(int8_t)(fwfield_stride==12?r[9]:r[12]);
 #ifdef FW_MOUNT
    fwland_animation_profile(fwfield_stride==12?(r[8]&4u):r[11]);
@@ -510,6 +520,7 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
  if(gap>maximum)gap=maximum;
  if(gap>FW_MAX_DIRECTIONAL_GAP)gap=FW_MAX_DIRECTIONAL_GAP;
  for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)gap;
+ if(haveSheet){fwfield_sheet=sheet;fwfield_sheetSize=(uint8_t)sheetSize;fwfield_sheetValid=1;}
  if(first<end&&fallback>=FW_CODE_BASE){
   uint8_t positions[12];
   if(fwp_land(fallback-FW_CODE_BASE,fwfield_descriptorCount-FW_STOCK_ROWS,fwfield_registryCrc,positions)){
@@ -660,6 +671,77 @@ API uint32_t FollowingSurfPartyAppearance(void *game){
  return preferred?preferred:first;
 }
 #endif
+static void resolve_selection(void *game,void *field){
+ FwPokemon selected;
+ if(!select(game,field,&selected,0,0,0))return;
+ if(fwfield_follower.has_selection && fw_same_identity(&selected,&fwfield_follower.selected) && fwfield_code && fwfield_sheetValid)return;
+ uint16_t code=model(&selected);
+ if(!code)return;
+ Actor *keep=fwfield_player;
+ if(fwfield_follower.actor)cleanup();
+ fwfield_player=keep;
+ fwfield_follower.selected=selected;fwfield_follower.has_selection=1;fwfield_code=code;
+}
+/* Retail constructor. The sheet bind happens here, before any visible submit. */
+static Actor *spawn_waiting(ActorSystem *sys){
+ unsigned free=0;
+ for(unsigned i=0;i<sys->capacity;++i)if(!(sys->actors[i].flags&USE))++free;
+ if(free<2){FollowingDebug.reason=128;return 0;}
+ unsigned id;
+ for(id=0xf0;id<=0xf8;++id){unsigned i;for(i=0;i<sys->capacity;++i)if((sys->actors[i].flags&USE)&&sys->actors[i].id==id)break;if(i==sys->capacity)break;}
+ if(id>0xf8){FollowingDebug.reason=256;return 0;}
+ if(CALL(0x0203a2d5,uint32_t(*)(uint32_t))(sys->resourceHeap)<32768){FollowingDebug.reason=512;return 0;}
+ Actor *a=CALL(0x021668c1,Actor*(*)(ActorSystem*,int,int,unsigned,unsigned,unsigned,unsigned,unsigned))(sys,fwfield_player->grid[0],fwfield_player->grid[2],fwfield_player->face,id,fwfield_code,0,fwfield_player->zone);
+ if(!a)return 0;
+ a->flags|=HIDDEN|NONBLOCKING|NO_QUERY|KEEP_ZONE; a->moveflags|=NOT_SAVE|NO_EFFECT; a->moveflags&=~(8u|2048u|4096u);
+ a->callbacks=&fwfield_moves; a->world=fwfield_player->world;
+ fwr_anchor(a,fwfield_player->face);
+ fwfield_follower.actor=(uintptr_t)a; fwfield_follower.state=FW_WAITING;
+ if(a->system)fwfx_prepare(a);
+ FollowingDebug.actor=(uint32_t)a; ++FollowingDebug.spawns;
+ if(!fwfield_prime)fwfield_prime=1;
+ return a;
+}
+/* One retail submit while the fade still covers the picture. The actor is
+ * hidden again before the overworld is shown, so the player still sees the
+ * usual delayed call-out. */
+static int stage_covered(ActorSystem *sys,void *field){
+ void *game=field?PTR(field,8):0;
+ if(game && fwfield_configState==1 && !fwfield_follower.actor && !fwfield_cyclePending)resolve_selection(game,field);
+ if(fwfield_sheetValid)fwfx_warm_sheet(sys->resourceHeap,fwfield_sheet,fwfield_sheetSize);
+ if(!fwfield_follower.actor && fwfield_code && fwfield_player && !fwfield_cyclePending
+#ifdef FW_MOUNT
+    && !fwtm_return_pending()
+#endif
+    ){
+  if(!spawn_waiting(sys))return 0;
+  fwfield_held=1;
+ }
+ if(!fwfield_held || !owned())return fwfield_held;
+ Actor *a=(Actor*)fwfield_follower.actor;
+ if(fwfield_prime==1){a->flags&=~HIDDEN;fwfield_prime=2;fwfield_priming=1;}
+ return 1;
+}
+static void finish_prime(void){
+ if(fwfield_prime!=2 || !owned())return;
+ Actor *a=(Actor*)fwfield_follower.actor;
+ if(fwfield_primeParked){a->world=fwfield_primePos;fwfield_primeParked=0;}
+ a->flags|=HIDDEN;
+ if(fwfield_follower.state!=FW_FOLLOWING){fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;}
+ fwfield_prime=3;fwfield_priming=0;
+}
+static void park_prime(void){
+ if(fwfield_prime!=1 || fwfield_priming || !owned())return;
+ Actor *a=(Actor*)fwfield_follower.actor;
+ if(!(a->flags&HIDDEN)){fwfield_prime=3;return;}
+ /* No fade is covering this frame. Submit once below the ground so the
+  * retail sheet uploads before the real call-out, without drawing the body. */
+ fwfield_primePos=a->world;
+ a->world.y-=30*(int32_t)FW_TILE;
+ fwfield_primeParked=1;
+ a->flags&=~HIDDEN;
+ fwfield_prime=2;
+}
 static void before(ActorSystem *sys) {
  fwt_poll_input();
  ++fwfield_tick; FollowingDebug.ticks=fwfield_tick;
@@ -741,8 +823,20 @@ static void before(ActorSystem *sys) {
   if(fwland_active()){((Actor*)fwfield_follower.actor)->flags|=HIDDEN;fwland_end();}
   fwfield_landCarry=0;
 #endif
-  if(!(reason&4096)&&(reason&16))fwfx_warm(sys->resourceHeap);
+  int held=0;
+  if(!(reason&4096)&&(reason&16)){
+   fwfx_warm(sys->resourceHeap);
+   if(!(reason&(1|2|4|8|32|64|2048)))held=stage_covered(sys,field);
+  }
+  if(held)return;
   if(owned() && !( ((Actor*)fwfield_follower.actor)->flags&HIDDEN) && (reason&(8|16|32)))fwfx_recall((Actor*)fwfield_follower.actor);else if(fwfield_follower.actor)fwfx_cancel();cleanup();return;}
+ if(fwfield_held && owned() && fwfield_player){
+  Actor *a=(Actor*)fwfield_follower.actor;
+  /* The fade moved the player after the covered submit. Start the call-out
+   * from where they are now, the same pose a spawn at fade end would use. */
+  if((a->flags&HIDDEN)&&fwfield_follower.state==FW_WAITING)a->world=fwfield_player->world;
+ }
+ fwfield_held=0;
 #ifdef FW_MOUNT
  if(fwland_invalid()&&owned()){
   Actor *a=(Actor*)fwfield_follower.actor;
@@ -778,19 +872,8 @@ static void before(ActorSystem *sys) {
  #endif
  if(!fwfield_follower.actor) {
   if(fwfx_busy()){cycle_track();return;}
-  /* Native allocation asserts on a full pool. Check capacity and leave room. */
-  unsigned free=0; for(unsigned i=0;i<sys->capacity;++i)if(!(sys->actors[i].flags&USE))++free;
-  if(free<2){FollowingDebug.reason=128;return;}
-  unsigned id;
-  for(id=0xf0;id<=0xf8;++id) { unsigned i; for(i=0;i<sys->capacity;++i)if((sys->actors[i].flags&USE) && sys->actors[i].id==id)break; if(i==sys->capacity)break; }
-  if(id>0xf8){FollowingDebug.reason=256;return;}
-  if(CALL(0x0203a2d5,uint32_t(*)(uint32_t))(sys->resourceHeap)<32768){FollowingDebug.reason=512;return;}
-  Actor *a=CALL(0x021668c1,Actor*(*)(ActorSystem*,int,int,unsigned,unsigned,unsigned,unsigned,unsigned))(sys,fwfield_player->grid[0],fwfield_player->grid[2],fwfield_player->face,id,fwfield_code,0,fwfield_player->zone);
+  Actor *a=spawn_waiting(sys);
   if(!a)return;
-  a->flags|=HIDDEN|NONBLOCKING|NO_QUERY|KEEP_ZONE; a->moveflags|=NOT_SAVE|NO_EFFECT; a->moveflags&=~(8u|2048u|4096u);
-  a->callbacks=&fwfield_moves; a->world=fwfield_player->world;
-  fwr_anchor(a,fwfield_player->face);
-  fwfield_follower.actor=(uintptr_t)a; fwfield_follower.state=FW_WAITING;
 #ifdef FW_MOUNT
   if(fwtm_return_pending()){
    int ready=fwtm_return_ready(PTR(field,8),&fwfield_follower.selected);
@@ -834,7 +917,6 @@ static void before(ActorSystem *sys) {
 #endif
   }
   clear_restore();
-  FollowingDebug.actor=(uint32_t)a; ++FollowingDebug.spawns;
  }
 }
 static void terrain_update(void) {
@@ -881,6 +963,7 @@ static void terrain_update(void) {
   CALL(0x02194d8d,void*(*)(Actor*,uint32_t))(a,attr);
 }
 API void FollowingUpdate(ActorSystem *sys) {
+ finish_prime();
  fwfx_tick();before(sys);
 #ifdef FW_ARCEUS_SURF
  unsigned surfing=0;
@@ -926,10 +1009,13 @@ API void FollowingUpdate(ActorSystem *sys) {
    CALL(0x02194df5,void(*)(Actor*))(a);
    FollowingShadowDebug.attached=!!(a->moveflags&SHADOW_SET);
   }
-  /* A hidden door actor is not on screen yet. Binding its sheet here is the
-   * frame the overworld has just appeared. Wait until the follower is shown. */
-  if(!(a->flags&HIDDEN)){fwfx_prepare(a);fwfx_snapshot(a);}
+  /* The sheet bind is staged at spawn, under the fade when there is one.
+   * A later visible frame with the same member does not upload again.
+   * The recall snapshot still waits until the body is on screen. */
+  fwfx_prepare(a);
+  if(!(a->flags&HIDDEN))fwfx_snapshot(a);
  }
+ park_prime();
 }
 API void FollowingDraw(void *system,void *camera,void *light){
 #ifdef FW_MOUNT
