@@ -73,8 +73,12 @@ static FweRestore fwfield_restore;
 static uint8_t fwfield_page[FW_REGISTRY_PAGE];
 static uint16_t fwfield_index[FW_MAX_SPECIES+2];
 static unsigned fwfield_registrySize,fwfield_stride,fwfield_pageFirst,fwfield_pageCount;
-/* FWCG v2: stage, total registry bytes, cache capacity, native read count. */
-API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads;} FollowingConfigDebug={.magic=0x47435746,.version=2,.cacheBytes=FW_REGISTRY_PAGE};
+/* FWCG v3. stage, registryBytes, cacheBytes, and reads are the registry load.
+ * insert, uid, and mat are the MapSpawnFinish LoadStaticBlact result. insert
+ * stays until the next map's preload. uid is the object code passed in. mat's
+ * low 16 bits are the cached material and its high 16 bits are the cache flags.
+ * Search RAM for 46 57 43 47. Word +4 is version 3. Word +24 is insert. */
+API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads,insert,uid,mat;} FollowingConfigDebug={.magic=0x47435746,.version=3,.cacheBytes=FW_REGISTRY_PAGE,.mat=0xffffffffu};
 /* Searchable emulator diagnostics; values never become save data. */
 API volatile struct { uint32_t magic,version,ticks,spawns,deletes,reason,species,fwfield_code,actor,fwfield_player,visible,resets,system,systemFlags,field,cameraYaw,cameraPitch,depthClass,depthX,depthY,depthZ,modelSize; } FollowingDebug={.magic=0x47445746,.version=2};
 API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags,actorFlags; } FollowingShadowDebug={.magic=0x48535746,.version=1};
@@ -116,6 +120,14 @@ static void removed(Actor *a) {
 static void animation_gate(Actor *a) {
  if(fw_idle_animation_enabled(fwfield_follower.state,!(a->flags&HIDDEN),fwfx_busy()))a->flags&=~PAUSE_ANM;
  else a->flags|=PAUSE_ANM;
+}
+/* onCreate stores the billboard slot in drawWork. 0xFFFF is BLACT_NONE, so
+ * the retail actor draws no quad until async setup writes a real slot. */
+static int body_sheet_ready(const Actor *a){
+ return *(const uint16_t*)a->drawWork!=0xffffu;
+}
+static void reveal_follower(Actor *a){
+ if(!fwfx_hides_actor()&&body_sheet_ready(a))a->flags&=~HIDDEN;
 }
 static int coord_ok(int64_t v){return v>=INT32_MIN&&v<=INT32_MAX;}
 static int add_coord(Vec *v,int32_t dx,int32_t dy,int32_t dz){
@@ -230,7 +242,7 @@ static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,co
  for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
  clear_swap();FollowingSwapDebug.face=face;
  settled=fwfield_player->world;haveSettled=centered(&settled)?1:0;
- if(!fwfx_hides_actor())a->flags&=~HIDDEN;
+ reveal_follower(a);
  fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);
  animation_gate(a);
 }
@@ -265,7 +277,7 @@ static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fw_swap_face(fwfield_player->face,1));
  FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
  FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
- if(fwfield_follower.state==FW_FOLLOWING&&!fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
+ if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
  animation_gate(a);return 1;
 }
 /* Returns 1 when this frame belongs to the swap. A -1 mirror falls through
@@ -291,7 +303,7 @@ static int drive_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fwfield_player->face^1u);
  FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
  FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
- if(fwfield_follower.state==FW_FOLLOWING&&!fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
+ if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
  animation_gate(a);return 1;
 }
 static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player){
@@ -349,7 +361,7 @@ static void move(Actor *a) {
   * steps or a short pause while running exceeds one tile and the trail drops.
   * Pause and a full stop do not advance the ease, so a held gap stays put. */
  if(paused)return;
- if(fwfield_follower.state==FW_FOLLOWING && !fwfx_hides_actor()){a->flags&=~HIDDEN;FollowingDebug.visible=1;}
+ if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
  if(result!=1){note_settled();animation_gate(a);return;}
  if(ease.active){
   if(!fwfield_follower.trail.count)clear_ease();
@@ -392,7 +404,7 @@ static void move(Actor *a) {
 #endif
   fwfx_out(a);
  }
- if(!fwfx_hides_actor())a->flags&=~HIDDEN;
+ reveal_follower(a);
  fwfield_follower.state=FW_FOLLOWING; FollowingDebug.visible=!(a->flags&HIDDEN);
  /* This dispatcher belongs to a native movement context absent from our
   * synthetic stock actor. Calling it on a grid follower with flag 0x400
@@ -584,19 +596,32 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
  * field+8 is GameData. field+0x40 is the actor system. The entrance fade
  * has not run, so LoadStaticBlact is the covered retail upload.
  * A config miss on this first try is cleared; the field update can retry.
- * Emote sheets stay off this path. */
+ * Emote sheets stay off this path.
+ * FollowingConfigDebug.insert records this call. 8 means FindCachedObjMat
+ * found uid with a material and flags bit 2 clear, which is the exist-mat
+ * spawn. Read it from RAM after the entrance fade, before the next zone. */
 #ifdef FW_STOCK
 API void FollowingPreloadFollower(void *field, void *actorSystem) {
+ FollowingConfigDebug.insert=1;FollowingConfigDebug.uid=0;FollowingConfigDebug.mat=0xffffffffu;
  if(!field||!actorSystem)return;
  void *game=PTR(field,8);
- if(!game||followers_off(game))return;
+ if(!game){FollowingConfigDebug.insert=2;return;}
+ if(followers_off(game)){FollowingConfigDebug.insert=3;return;}
  int fresh=!fwfield_configState;
- if(!config()){if(fresh)fwfield_configState=0;return;}
+ if(!config()){if(fresh)fwfield_configState=0;FollowingConfigDebug.insert=4;return;}
  FwPokemon selected;
- if(!select(game,field,&selected,0,0,0))return;
+ if(!select(game,field,&selected,0,0,0)){FollowingConfigDebug.insert=5;return;}
  uint16_t code=model(&selected);
- if(!code)return;
+ if(!code){FollowingConfigDebug.insert=6;return;}
  CALL(0x0219386d,void(*)(void*,unsigned))(actorSystem,code);
+ uint16_t found[2]={0xffffu,0};
+ void *blact=PTR(actorSystem,40);
+ int hit=blact&&CALL(0x02193e05,int(*)(void*,unsigned,uint16_t*,uint16_t*))(blact,code,&found[0],&found[1]);
+ FollowingConfigDebug.uid=code;
+ FollowingConfigDebug.mat=(uint32_t)found[0]|((uint32_t)found[1]<<16);
+ if(hit&&found[0]!=0xffffu&&!(found[1]&2u))FollowingConfigDebug.insert=8;
+ else if(hit)FollowingConfigDebug.insert=9;
+ else FollowingConfigDebug.insert=7;
 }
 #endif
 static void cycle_follower(void *game,void *field){
@@ -788,9 +813,18 @@ static void before(ActorSystem *sys) {
     ||fwfield_restore.player.y!=fwfield_player->world.y||fwfield_restore.player.z!=fwfield_player->world.z))clear_restore();
  if(paused&&fwfield_restore.magic!=FWE_RESTORE_MAGIC)return;
  #ifdef FW_MOUNT
+ if(fwfield_landCarry&&owned()&&body_sheet_ready((Actor*)fwfield_follower.actor)){
+  Actor *a=(Actor*)fwfield_follower.actor;
+  if(fwland_begin(sys,a,fwfield_player,field,fwfield_code,fwfield_registryCrc,fwfield_descriptorCount,&fwfield_follower.selected,fwfield_follower.slot)){
+   fw_trail_clear(&fwfield_follower.trail);clear_ease();fwland_follow_player(a,fwfield_player);
+  }
+  fwfield_landCarry=0;
+ }
  if(fwtm_return_pending()&&owned()){
   Actor *a=(Actor*)fwfield_follower.actor;
   int ready=fwtm_return_ready(PTR(field,8),&fwfield_follower.selected);
+  /* The rider waits for the same billboard slot a walking body waits for. */
+  if(ready&&!body_sheet_ready(a))return;
   fwsurf_destroy();
   if(ready){
    a->flags&=~HIDDEN;fwfield_follower.state=FW_FOLLOWING;
@@ -822,6 +856,7 @@ static void before(ActorSystem *sys) {
 #ifdef FW_MOUNT
   if(fwtm_return_pending()){
    int ready=fwtm_return_ready(PTR(field,8),&fwfield_follower.selected);
+   if(!(ready&&!body_sheet_ready(a))){
    fwsurf_destroy();
    if(ready){
     a->flags&=~HIDDEN;fwfield_follower.state=FW_FOLLOWING;
@@ -832,6 +867,7 @@ static void before(ActorSystem *sys) {
     }else{a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;}
    }
    fwtm_return_done();
+   }
   }else
 #endif
   if(fwfield_cyclePending){
@@ -842,7 +878,7 @@ static void before(ActorSystem *sys) {
     CALL(0x02167099,void(*)(Actor*,uint32_t))(a,fwfield_cycleFace);
     fwr_anchor(a,fwfield_cycleFace);
     fwfx_out(a);
-    if(!fwfx_hides_actor())a->flags&=~HIDDEN;
+    reveal_follower(a);
     fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);
    }
   }else if(fwfield_restore.magic==FWE_RESTORE_MAGIC&&fwfield_restore.zone==fwfield_player->zone
@@ -851,9 +887,9 @@ static void before(ActorSystem *sys) {
    for(unsigned i=0;i<3;++i)a->grid[i]=a->previous[i]=fwfield_restore.grid[i];
    CALL(0x02167099,void(*)(Actor*,uint32_t))(a,fwfield_restore.face);
    fwr_anchor(a,fwfield_restore.face);
-   a->flags&=~HIDDEN;fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=1;fws_restored();
+   reveal_follower(a);fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);fws_restored();
 #ifdef FW_MOUNT
-   if(fwfield_landCarry){
+   if(fwfield_landCarry&&body_sheet_ready(a)){
     if(fwland_begin(sys,a,fwfield_player,field,fwfield_code,fwfield_registryCrc,fwfield_descriptorCount,&fwfield_follower.selected,fwfield_follower.slot)){
      fw_trail_clear(&fwfield_follower.trail);clear_ease();fwland_follow_player(a,fwfield_player);
     }
@@ -938,6 +974,12 @@ API void FollowingUpdate(ActorSystem *sys) {
  terrain_update();
  if(owned()){
   Actor *a=(Actor*)fwfield_follower.actor;
+  /* move() can run before async setup writes the billboard slot. This pass
+   * clears HIDDEN on the frame that slot becomes real. The VBlank task owns
+   * the upload; this pass does not call FinishAsyncMatLoad. */
+  if((a->flags&HIDDEN)&&(fwfield_follower.state==FW_FOLLOWING||fwfield_follower.state==FW_EVENT_PAUSED)){
+   reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);
+  }
   /* This actor's route callback writes coordinates directly, so the retail
    * move-start attribute pass never registers its shadow. The audited native
    * shadow helper owns the effect task, billboard, visibility and teardown. */
