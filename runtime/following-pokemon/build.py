@@ -178,7 +178,8 @@ def build(rom, publish=False):
     verify_imports(field_dll,events_dll,output,options_dll)
     targets=re.findall(r'Target: (\S+) @ (\S+) :: (\S+)',field_dump.decode())
     mount_hook_ids={'surf-mount-draw','surf-entry-mount-draw','mounted-surf-entry-step','mounted-surf-entry-finish','mounted-surf-shore-span','mounted-surf-exit-step','mounted-surf-exit-finish','land-mount-flat-step'}
-    expected_field=sorted((h['kind'],h['segment'],hex(h['address'])) for h in contract_data['hooks'] if h.get('module')=='field' and (VARIANT=='full' or h['id'] not in mount_hook_ids) and (PROFILE=='stock' or h['id']!='field-terrain-billboard-draw'))
+    stock_only_hooks={'field-terrain-billboard-draw','field-follower-matcache'}
+    expected_field=sorted((h['kind'],h['segment'],hex(h['address'])) for h in contract_data['hooks'] if h.get('module')=='field' and (VARIANT=='full' or h['id'] not in mount_hook_ids) and (PROFILE=='stock' or h['id'] not in stock_only_hooks))
     if sorted(t for t in targets if t[1]!='base')!=expected_field:raise ValueError('Unexpected field hooks')
     if field_dll.stat().st_size<1024:raise ValueError('Field DLL was not generated')
     run(os.environ.get('PYTHON','python3'),HERE/'verify_battle_intro.py',rom)

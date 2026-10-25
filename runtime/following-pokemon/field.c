@@ -580,6 +580,25 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
  }
  return 1;
 }
+/* Stock Field_InitActorSystem has loaded the map NPCs and the player.
+ * field+8 is GameData from Field_Create. The picture is not the revealed
+ * scan yet, so this is the retail MatCache upload, not a fade bind.
+ * A config miss on this first try is cleared; the field update can retry.
+ * Emote sheets stay off this path. */
+#ifdef FW_STOCK
+API void FollowingPreloadFollower(void *field, void *actorSystem) {
+ if(!field||!actorSystem)return;
+ void *game=PTR(field,8);
+ if(!game||followers_off(game))return;
+ int fresh=!fwfield_configState;
+ if(!config()){if(fresh)fwfield_configState=0;return;}
+ FwPokemon selected;
+ if(!select(game,field,&selected,0,0,0))return;
+ uint16_t code=model(&selected);
+ if(!code)return;
+ CALL(0x0219386d,void(*)(void*,unsigned))(actorSystem,code);
+}
+#endif
 static void cycle_follower(void *game,void *field){
 #ifdef FW_MOUNT
  if(fwland_active())return;

@@ -112,3 +112,22 @@ THUMB_BRANCH_LINK_36_0x021811b0:
  pop {r4,pc}
 .size THUMB_BRANCH_LINK_36_0x021811b0,.-THUMB_BRANCH_LINK_36_0x021811b0
 .endif
+
+/* After the player LoadStaticBlact in Field_InitActorSystem. r5 is Field*,
+ * r4 is the actor system. Replay the fes-gimmick pair this BL replaces. */
+.ifdef FW_STOCK
+.thumb
+.balign 4
+.global THUMB_BRANCH_LINK_36_0x02180aea
+.type THUMB_BRANCH_LINK_36_0x02180aea,%function
+.thumb_func
+THUMB_BRANCH_LINK_36_0x02180aea:
+ push {r4, r5, r6, lr}
+ movs r0, r5
+ movs r1, r4
+ bl FollowingPreloadFollower
+ ldr r0, [r5, #0x38]
+ adds r1, r4, #0
+ pop {r4, r5, r6, pc}
+.size THUMB_BRANCH_LINK_36_0x02180aea,.-THUMB_BRANCH_LINK_36_0x02180aea
+.endif

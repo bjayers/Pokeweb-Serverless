@@ -92,6 +92,27 @@
       "module": "field"
     },
     {
+      "id": "field-follower-matcache",
+      "segment": "36",
+      "address": 35130090,
+      "expectedHex": "a86b211c",
+      "patchBytes": 4,
+      "instructionSizes": [
+        2,
+        2
+      ],
+      "kind": "THUMB_BRANCH_LINK",
+      "abi": "r5=Field*; r4=MMSys after the player LoadStaticBlact; preserve r4-r6; call FollowingPreloadFollower then replay ldr r0,[r5,#0x38] and adds r1,r4,#0. Following-on only. Does not replace the player load.",
+      "displaced": [
+        "ldr r0, [r5, #0x38]",
+        "adds r1, r4, #0"
+      ],
+      "continuation": "0x02180aee",
+      "conflicts": "Field_InitActorSystem fes-gimmick setup after the player material load",
+      "status": "Pinned on the supplied US White 2 overlay 36; stock DLL only; hardware playtest pending",
+      "module": "field"
+    },
+    {
       "id": "field-unload",
       "segment": "36",
       "address": 35127780,
