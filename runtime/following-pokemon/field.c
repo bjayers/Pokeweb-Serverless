@@ -580,9 +580,9 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
  }
  return 1;
 }
-/* Stock Field_InitActorSystem has loaded the map NPCs and the player.
- * field+8 is GameData from Field_Create. The picture is not the revealed
- * scan yet, so this is the retail MatCache upload, not a fade bind.
+/* MapSpawnFinish case 0 has finished the actor and weather drains.
+ * field+8 is GameData. field+0x40 is the actor system. The entrance fade
+ * has not run, so LoadStaticBlact is the covered retail upload.
  * A config miss on this first try is cleared; the field update can retry.
  * Emote sheets stay off this path. */
 #ifdef FW_STOCK

@@ -94,22 +94,20 @@
     {
       "id": "field-follower-matcache",
       "segment": "36",
-      "address": 35130090,
-      "expectedHex": "a86b211c",
+      "address": 35126920,
+      "expectedHex": "00f0fcfc",
       "patchBytes": 4,
       "instructionSizes": [
-        2,
-        2
+        4
       ],
       "kind": "THUMB_BRANCH_LINK",
-      "abi": "r5=Field*; r4=MMSys after the player LoadStaticBlact; preserve r4-r6; call FollowingPreloadFollower then replay ldr r0,[r5,#0x38] and adds r1,r4,#0. Following-on only. Does not replace the player load.",
+      "abi": "r5=Field* in MapSpawnFinish case 0 after the actor and weather drains; actor system is [r5,#0x40]; preserve r5-r6; call FollowingPreloadFollower then FieldG3D_Update. Following-on only.",
       "displaced": [
-        "ldr r0, [r5, #0x38]",
-        "adds r1, r4, #0"
+        "bl 0x02180884"
       ],
-      "continuation": "0x02180aee",
-      "conflicts": "Field_InitActorSystem fes-gimmick setup after the player material load",
-      "status": "Pinned on the supplied US White 2 overlay 36 (a86b211c at 0x02180aea). Stock field DLL exports FollowingPreloadFollower and relocates THUMB_BRANCH_LINK there. Hardware playtest pending.",
+      "continuation": "0x0217fe8c",
+      "conflicts": "FieldRoutine_MapSpawnFinish FieldG3D_Update callsite",
+      "status": "Pinned on the supplied US White 2 overlay 36 (00f0fcfc at 0x0217fe88, bl FieldG3D_Update). Stock field DLL exports FollowingPreloadFollower and relocates THUMB_BRANCH_LINK there. Hardware playtest pending.",
       "module": "field"
     },
     {
