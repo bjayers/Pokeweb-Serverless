@@ -100,6 +100,19 @@ int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
  * on the native ground sample. Returns 1 when the bias runs. */
 int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
     const FwPoint *sprite,const FwrCamera *camera,FwrPose *output);
+/* Push this ground oval away from the camera by its near-rim depth plus
+ * eight world pixels, then stop at one tile. Perspective scale keeps the
+ * picture on the ground sample. Orthographic and unknown cameras are left
+ * alone. Does not follow the body. */
+int fwr_oval_behind(const FwrPose *shadow,const FwrCamera *camera,FwrPose *output);
+/* 60-byte private billboard header for a second GX submit. Copies heap,
+ * scale, and the four light colors from the live field scene. Zeroes the
+ * 20-byte tail and does not copy the live polygon id: that pair is the 3DS
+ * black-line state, which emulators do not keep. Polygon id is 1, or 2 when
+ * the live scene is already 1. A later hardware pass changes this function
+ * only. `actors` and `materials` are stored as 32-bit addresses. */
+void fwr_private_scene(void *dst,const void *live,const void *actors,const void *materials,
+                       uint16_t actorCount,uint16_t materialCount);
 /* Camera-facing grass clears its owner, but stays behind a nearer body. */
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
     const FwrPose *other,const FwrCamera *camera,FwrPose *output);

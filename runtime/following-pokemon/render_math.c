@@ -395,6 +395,48 @@ int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
                        const FwPoint *sprite,const FwrCamera *camera,FwrPose *out){
  return fwr_shadow_match(shadow,feet,sprite,camera,FWR_SHADOW_KEEP,out);
 }
+int fwr_oval_behind(const FwrPose *shadow,const FwrCamera *camera,FwrPose *out){
+ if(!shadow||!camera||!out)return 0;
+ *out=*shadow;
+ /* Orthographic shift_depth cannot hold the picture still. Unknown modes
+  * are not a field camera. */
+ if(camera->projection>=2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
+ FwPoint direction;
+ if(!delta(camera->eye,camera->target,&direction,1<<27)||!axis(direction,&direction))return 0;
+ /* The oval is flat. Its camera-side rim is closer than the center, and a
+  * bob can drop the body onto that center. Cover both, and never chase the
+  * sprite: a large keep is what walked the oval up the body. */
+ int32_t half=shadow->sx>shadow->sy?shadow->sx:shadow->sy;
+ if(half<1)half=1;
+ half*=8;
+ if(half>(int32_t)FW_TILE)half=(int32_t)FW_TILE;
+ uint32_t horiz=isqrt((uint64_t)direction.x*(uint64_t)direction.x+(uint64_t)direction.z*(uint64_t)direction.z);
+ int32_t rim=divide((int64_t)half*(int32_t)horiz,4096);
+ int32_t back=rim+8*4096;
+ if(back<FWR_SHADOW_KEEP)back=FWR_SHADOW_KEEP;
+ if(back>(int32_t)FW_TILE)back=(int32_t)FW_TILE;
+ return shift_depth(shadow,camera,direction,-back,out);
+}
+void fwr_private_scene(void *dst,const void *live,const void *actors,const void *materials,
+                       uint16_t actorCount,uint16_t materialCount){
+ uint8_t *d=dst;const uint8_t *s=live;unsigned i;
+ if(!d)return;
+ for(i=0;i<60;++i)d[i]=0;
+ if(!s)return;
+ d[0]=s[0];d[1]=s[1];
+ for(i=0;i<12;++i)d[16+i]=s[16+i];
+ for(i=0;i<8;++i)d[28+i]=s[28+i];
+ {
+  uintptr_t material=(uintptr_t)materials,actor=(uintptr_t)actors;
+  d[4]=(uint8_t)material;d[5]=(uint8_t)(material>>8);d[6]=(uint8_t)(material>>16);d[7]=(uint8_t)(material>>24);
+  d[8]=(uint8_t)actor;d[9]=(uint8_t)(actor>>8);d[10]=(uint8_t)(actor>>16);d[11]=(uint8_t)(actor>>24);
+ }
+ d[12]=(uint8_t)materialCount;d[13]=(uint8_t)(materialCount>>8);
+ d[14]=(uint8_t)actorCount;d[15]=(uint8_t)(actorCount>>8);
+ /* Same polygon id as the field scene, plus the copied tail, is what the
+  * 3DS edge buffer draws as black lines. Stay off the live id. */
+ d[36]=s[36]==1?2:1;
+}
 int fwr_world_apart(const FwPoint *follower,const FwPoint *player,unsigned face,
                    int32_t step,FwPoint *out){
  if(!follower||!player||!out)return 0;

@@ -16,9 +16,9 @@ void fwr_anchor(Actor *a,unsigned face){
  * +100 shadowNativeY  billboard Y before the depth bias
  * +104 groundY        follower ground the sprite is anchored to
  * +108 gap            shadowNativeY - groundY
- * +112 snap           always 0; the oval is the engine sample
+ * +112 snap           1 when this frame's follower oval was depth-biased
  * +116 nearY +120 nearGeom +124 nearWhy
- *     unused while the oval is left alone; kept so the record layout holds
+ *     nearY/nearGeom record the biased oval; nearWhy is 1 when the bias ran
  * +128 hold           always 0; slope no longer changes placement
  * Version 3 appends, leaving +128 in place:
  * +132 viewDistance   eye-to-target length, 20.12
@@ -44,8 +44,8 @@ _Static_assert(offsetof(FwrDebug,sortMargin)==136,"sort margin");
 _Static_assert(offsetof(FwrDebug,easeBlend)==140,"ease blend");
 _Static_assert(offsetof(FwrDebug,depthRel)==144,"relative depth");
 __attribute__((visibility("default"))) volatile FwrDebug FollowingRenderDebug={.magic=0x44525746,.version=3};
-/* The effect pass submits the engine oval unchanged. The actor pass still
- * records the submitted sprite and the terrain feet for the debug record. */
+/* Filled in the actor pass. The shadow pass uses it once, then clears it.
+ * `sprite` is the submitted body. The oval bias does not follow it. */
 static struct {
  FwPoint ground,sprite,player;int32_t keep;void *actorSystem;uint8_t valid,hasPlayer;
 } shadowTie;
@@ -54,8 +54,6 @@ static struct {
  FwrEffectPose submitted;
  Actor *player;Vec playerWorld;FwrEffectPose playerSubmitted;
 } effectPose;
-/* Set when the oval scene was submitted before the actor scene this frame. */
-static int shadowAhead;
 /* Work points 24 bytes into a fixed-pool task; leave the complete checked
  * task span inside real RAM, including the original 192-byte tail margin. */
 int fwr_grass_work_valid(const void *work){
@@ -216,29 +214,89 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
 }
-/* The retail field draw loads actor billboards from field+0xc0 and the
- * shadow billboards from field+0xc4, then submits actors first. A tie
- * therefore paints the oval over the feet, and a bob that drops the body
- * onto the oval makes that tie. Submit the oval scene first so the body
- * wins the tie. The oval's coordinates are not edited. */
-int fwr_shadow_before_actors(void *actorBl,void *camera,void *light,Actor *follower){
- shadowAhead=0;
- if(!actorBl||!camera||!light||!follower||!follower->system)return 0;
- void *field=((ActorSystem*)follower->system)->field;
- if(!field||PTR(field,0xc0)!=actorBl)return 0;
- void *shadow=PTR(field,0xc4);
- if(!shadow||shadow==actorBl)return 0;
- CALL(0x0204f685,void(*)(void*,void*,void*))(shadow,camera,light);
- shadowAhead=1;return 1;
+/* Nearest live quad within half a tile (XZ) and two tiles (Y) of actor
+ * ground. An oval that sits on the player, inside six world pixels, is not
+ * the follower's. The actor scene is never walked: this system is field+0xc4. */
+static Billboard *follower_oval(void *system){
+ void *scene=PTR(system,4);
+ uint8_t *slots=PTR(system,0x18);
+ unsigned capacity=*(uint16_t*)((uint8_t*)system+0x1c);
+ if(!scene||!slots||capacity>256||!PTR(scene,8))return 0;
+ unsigned actors=*(uint16_t*)((uint8_t*)scene+14);
+ Billboard *bills=(Billboard*)PTR(scene,8),*chosen=0;
+ uint64_t best=~(uint64_t)0;
+ int32_t half=(int32_t)(FW_TILE/2),tall=2*(int32_t)FW_TILE;
+ for(unsigned i=0;i<capacity;++i){
+  unsigned index=U32(slots,i*40);
+  if(index>=actors)continue;
+  Billboard *b=bills+index;
+  if((b->geom>>14)!=0||(b->geom&0x3fffu)==0x3fffu||!(b->flags&512))continue;
+  int64_t dx=(int64_t)b->position.x-shadowTie.ground.x;
+  int64_t dy=(int64_t)b->position.y-shadowTie.ground.y;
+  int64_t dz=(int64_t)b->position.z-shadowTie.ground.z;
+  if(dx>half||dx<-(int64_t)half||dz>half||dz<-(int64_t)half||dy>tall||dy<-(int64_t)tall)continue;
+  if(shadowTie.hasPlayer){
+   int64_t px=(int64_t)b->position.x-shadowTie.player.x;
+   int64_t pz=(int64_t)b->position.z-shadowTie.player.z;
+   if(px<=6*4096&&px>=-6*4096&&pz<=6*4096&&pz>=-6*4096){
+    uint64_t pd=(uint64_t)(px*px)+(uint64_t)(pz*pz);
+    uint64_t fd=(uint64_t)(dx*dx)+(uint64_t)(dz*dz);
+    if(pd<=(uint64_t)6*4096*(uint64_t)6*4096&&pd<fd)continue;
+   }
+  }
+  uint64_t dist=(uint64_t)(dx*dx)+(uint64_t)(dz*dz);
+  if(dist<best){best=dist;chosen=b;}
+ }
+ return chosen;
 }
-/* Secondary/shadow pass. The engine oval is submitted as the engine built
- * it. This hook does not search, plant, or slide that quad. When the oval
- * scene was already submitted before the bodies, skip the second submit. */
+/* Move along (eye-target), scaled by that vector's largest component.
+ * Negative means the quad moved away from the camera. */
+static int32_t view_push(const FwrCamera *cam,FwPoint from,FwPoint to){
+ int64_t vx=(int64_t)cam->eye.x-cam->target.x;
+ int64_t vy=(int64_t)cam->eye.y-cam->target.y;
+ int64_t vz=(int64_t)cam->eye.z-cam->target.z;
+ int64_t span=vx<0?-vx:vx,ay=vy<0?-vy:vy,az=vz<0?-vz:vz;
+ if(ay>span)span=ay;
+ if(az>span)span=az;
+ if(span<4096)return 0;
+ int64_t depth=((int64_t)(to.x-from.x)*vx+(int64_t)(to.y-from.y)*vy+(int64_t)(to.z-from.z)*vz)/span;
+ if(depth>INT32_MAX)return INT32_MAX;
+ if(depth<INT32_MIN)return INT32_MIN;
+ return (int32_t)depth;
+}
+/* Retail shadow pass. Actors have already been submitted. This call is the
+ * one oval submit, in the shadow pass's own depth state. The follower oval
+ * is pushed away from the camera for that submit and then restored. The
+ * body, the player, and every other oval stay on the engine sample. */
 void fwr_shadow_pass(void *system,void *camera,void *light){
+ Billboard *chosen=0,saved={0};
+ int applied=0;
  FollowingRenderDebug.shadowChange=0;FollowingRenderDebug.shadowCount=0;
  FollowingRenderDebug.shadowNativeY=0;FollowingRenderDebug.groundY=shadowTie.valid?shadowTie.ground.y:0;FollowingRenderDebug.gap=0;
  FollowingRenderDebug.snap=0;FollowingRenderDebug.nearY=0;FollowingRenderDebug.nearGeom=-1;FollowingRenderDebug.nearWhy=0;
- if(!shadowAhead)CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
- shadowAhead=0;
+ if(shadowTie.valid&&system&&camera&&system!=shadowTie.actorSystem){
+  chosen=follower_oval(system);
+  if(chosen){
+   FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
+   FwrPose native={chosen->position,chosen->sx,chosen->sy},out;
+   if(fwr_oval_behind(&native,&cam,&out)){
+    saved=*chosen;
+    chosen->position=out.position;
+    chosen->sx=(int16_t)out.sx;chosen->sy=(int16_t)out.sy;
+    applied=1;
+    FollowingRenderDebug.shadowCount=1;
+    FollowingRenderDebug.shadowAt=out.position;
+    FollowingRenderDebug.shadowNativeY=native.position.y;
+    FollowingRenderDebug.gap=native.position.y-shadowTie.ground.y;
+    FollowingRenderDebug.snap=1;
+    FollowingRenderDebug.shadowChange=view_push(&cam,native.position,out.position);
+    FollowingRenderDebug.nearY=native.position.y;
+    FollowingRenderDebug.nearGeom=saved.geom;
+    FollowingRenderDebug.nearWhy=1;
+   }
+  }
+ }
+ CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
+ if(applied)*chosen=saved;
  shadowTie.valid=shadowTie.hasPlayer=0;shadowTie.keep=FWR_SHADOW_KEEP;
 }

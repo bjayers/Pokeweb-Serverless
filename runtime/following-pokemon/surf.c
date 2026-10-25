@@ -299,9 +299,7 @@ void fwsurf_draw(void *system,void *camera,void *light,unsigned afterPlayer){
   surf.billboard.pos=(Vec){adjusted.position.x,adjusted.position.y,adjusted.position.z};
   surf.billboard.sx=(int16_t)adjusted.sx;surf.billboard.sy=(int16_t)adjusted.sy;
  }
- surf.scene=*native;
- surf.scene.actors=&surf.billboard;surf.scene.materials=surf.materials;
- surf.scene.actorCount=1;surf.scene.materialCount=16;
+ fwr_private_scene(&surf.scene,native,&surf.billboard,surf.materials,1,16);
  CALL(0x0204ebdd,void(*)(void*,void*,void*))(&surf.scene,camera,light);
  FollowingSurfDebug.frame=frame;++FollowingSurfDebug.draws;
 }

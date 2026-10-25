@@ -150,9 +150,9 @@ void fwfx_snapshot(Actor *a){
  if(index>=scene->actorCount)return;
  Billboard *actor=&scene->actors[index]; unsigned mat=actor->geom&0x3fff;
  if(mat>=scene->materialCount)return;
- fwfx.scene=*scene;fwfx.billboard=*actor;fwfx.material=scene->materials[mat];
- fwfx.scene.actors=&fwfx.billboard;fwfx.scene.materials=&fwfx.material;
- fwfx.scene.actorCount=fwfx.scene.materialCount=1;
+ fwfx.billboard=*actor;fwfx.material=scene->materials[mat];
+ /* Do not clone the field header. The recall flash is a second GX submit. */
+ fwr_private_scene(&fwfx.scene,scene,&fwfx.billboard,&fwfx.material,1,1);
  fwfx.scene.diffuse=fwfx.scene.ambient=0x7fff;
  fwfx.scene.specular=fwfx.scene.emissive=0;
  fwfx.billboard.geom&=0xc000;
@@ -222,16 +222,12 @@ int fwfx_emote_begin(Actor *a,unsigned member){
  Scene *scene=PTR(bl,4);unsigned id=*(uint16_t*)a->drawWork;
  if(!scene||id>=*(uint16_t*)((uint8_t*)bl+0x1c))return 0;
  unsigned index=U32(PTR(bl,0x18),id*40);if(index>=scene->actorCount)return 0;
- /* Own the header. Copying the live field scene also copies its polygon
-  * id and the unchecked tail, and a second GX submit of that state is the
-  * hardware black-line path. Keep the allocator id and the scale only. */
+ /* Own the header. The live polygon id and the 20-byte tail are the 3DS
+  * black-line state. fwr_private_scene is the only place that chooses the
+  * replacement id. */
  fwemote.billboard=scene->actors[index];
- fwemote.scene=(Scene){0};
- fwemote.scene.heap=scene->heap;fwemote.scene.scale=scene->scale;
- fwemote.scene.actors=&fwemote.billboard;fwemote.scene.materials=fwemote.material;
- fwemote.scene.actorCount=1;fwemote.scene.materialCount=2;
+ fwr_private_scene(&fwemote.scene,scene,&fwemote.billboard,fwemote.material,1,2);
  fwemote.scene.diffuse=fwemote.scene.ambient=0x7fff;fwemote.scene.specular=fwemote.scene.emissive=0;
- fwemote.scene.polygon=1;
  fwemote.billboard.geom&=0xc000;
  /* Retain the follower's selected map lights and enable rendering for the
   * private quad. Clearing 0xf200 made loaded emotes invisible. */

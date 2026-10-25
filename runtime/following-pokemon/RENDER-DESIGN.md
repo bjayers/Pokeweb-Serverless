@@ -1,6 +1,6 @@
 # Follower render: world feet
 
-The draw submits the native billboard plus one registry Y and two world pixels, on every facing. It does not plant bob-down, does not add the north-only two pixels, and does not slide the body or the oval. The trail, swap, ease, rail, recall, and talk code are unchanged. The player quad is not written.
+The draw submits the native billboard plus one registry Y and two world pixels, on every facing. It does not plant bob-down, does not add the north-only two pixels, and does not slide the body. The oval's picture stays on the engine ground sample. The trail, swap, ease, rail, recall, and talk code are unchanged. The player quad is not written.
 
 ## What the frame does now
 
@@ -12,11 +12,15 @@ Submitted follower quad:
 - Apply the registry Y (`sprite_y` minus descriptor byte 14) plus two world pixels on this quad only. Every facing uses that same offset. Nothing adds Z.
 - Copy the player's light-mask bits onto the follower for the submit, then restore the follower quad. The player billboard, world, moveflags, and animation are not written.
 
-`policy` and `sortMargin` stay 0. `before` / `after` / `depthRel` are the submitted view gap, hop included. `hold` is always 0. `snap` is always 0. The debug record layout is unchanged.
+`policy` and `sortMargin` stay 0. `before` / `after` / `depthRel` are the submitted view gap, hop included. `hold` is always 0. `snap` is 1 on a frame that depth-biased the follower oval, and 0 when that oval was left alone. The debug record layout is unchanged.
 
 Shadow pass:
 
-- `FollowingDraw` submits the oval scene (`field+0xc4`) before the actor scene when that pointer is this field's shadow system (`field+0xc0` is the actor system just passed in). The later hook then does not submit it again. Grass still runs after the bodies. The oval coordinates are not edited: no search, no plant, no slide. A depth tie now belongs to the body, which is the map-NPC order (sprite over its ground oval) without moving the oval off the ground.
+Retail order is actors (`FollowingDraw`, `field+0xc0`), then grass (`field+0xc8`), then shadows (`FollowingEffectsDraw`, `field+0xc4`). The shadow submit is a different pass. The setup in front of `0x0218122e` is what makes that oval a ground decal. `59ae58c` called `0x0204f685` on `field+0xc4` from `FollowingDraw` and then skipped the real shadow submit. That drew the oval in the actor pass, with actor depth state, before the engine placed the decal. The oval won the depth test more often. That early submit is gone.
+
+The oval still shares the actor's ground Y. It is a flat disc, so its camera-side rim is closer than its center, and a bob can drop the body onto that center. The shadow pass draws after the body. A fragment that passes the depth test paints over the feet. Position is the sort key. This scene has no per-quad polygon id.
+
+`fwr_shadow_pass` still submits `field+0xc4` once, after the bodies. When the follower's shadow is live, it keeps the one oval within half a tile of actor ground (two tiles of Y) that is not the player's, and pushes that quad away from the camera by its near-rim depth plus eight world pixels, capped at one tile (`fwr_oval_behind`). Perspective scale keeps the picture on the engine's ground sample. The quad is restored after `0x0204f685`. The body is not moved. The player quad is not written. An orthographic camera leaves the engine sample. The push does not follow the sprite, so rest and bob-down get the same oval.
 
 Install grounding (`deriveFollowerGrounding`) sets non-Flying automatic Y to 0, the same value as descriptor byte 14 and a map NPC. A stored `-pad` or `-(pad)-3` is rewritten to 0. Explicit offsets stay. Flying rows are left untouched. Descriptor byte 14 is not written, so the oval's actor anchor does not take a registry Y.
 
@@ -44,11 +48,11 @@ Stairs, mats, and Center lips use the actor's Y. There is no flat-versus-slope r
 
 ## Black lines
 
-Not fixed on hardware. The draw path does not add a GX submit or a texture upload.
+On a 3DS, a second billboard submit (`0x0204ebdd`) that still carries the live field scene's polygon id and the 20-byte tail draws black lines on the follower. The edge buffer is hardware state. Emulators retire the frame without it, so the same build looks clean there and lined on a 3DS.
 
-What did change: `fwfx_emote_begin` no longer copies the live field scene (`fwemote.scene = *scene`). The bubble keeps that scene's heap id and scale, zeroes the rest, and sets polygon id 1. The submit is still the one existing `0x0204ebdd` call.
+`fwr_private_scene` is the only header for that second submit. It copies the allocator id, the scale, and the four light colors, zeroes the tail, and sets polygon id 1 (or 2 when the field scene is already 1). The recall flash, the emote bubble, the mounted rider, and the Surf rider all go through it. None of them copy `scene` with `*scene` anymore. The walking body is still the retail actor submit. This pass does not add a GX submit or a texture upload.
 
-Still phase 2, and it needs a DS: `fwfx_destroy` / `fwfx_prepare` still release and re-upload texture keys across a loading wipe, and the recall flash still clones a field scene header. Emulators retire that frame cleanly. Do not fold another submit into the sort path to chase it.
+If a line remains on hardware, change the polygon byte inside `fwr_private_scene` only. Do not open a new draw path for it. The loading-wipe case is the other leftover: `fwfx_destroy` / `fwfx_prepare` still release and re-upload texture keys while a queued submit can still name them. That stays in those two functions. It is the full-screen flicker, not this edge buffer.
 
 ## Round 2
 
@@ -115,8 +119,8 @@ Shipped in the draw. The body is the native billboard plus registry Y. Automatic
 Use the pose that already matches on a slope, a stair, and mid-step. Stop maintaining a second foot line.
 
 - Body: native billboard plus the registry Y (`sprite_y - descriptor[14]`) plus two world pixels, for every facing. No north-only pixels, no foot-line plant, no `fwr_plane_keep` on the body. Idle bob stays the engine's bob. Flat, slope, stair, and rail all take this path.
-- Oval: leave the engine sample. Do not search it, do not retarget its XZ, do not assign `world.y` over it, do not run a camera keep. The slope looks seated when this sample survives. The shadow hook still submits the scene it already submits. No new GX upload.
-- Sort. The oval scene is submitted before the actor scene, and the later shadow hook does not submit it again. The body wins a depth tie, including the bob that drops the quad onto the oval. The oval is not moved. No world slide, and no return of the eye-ray stack or the player write.
+- Oval: the engine sample stays on actor ground. The shadow hook submits that scene once, after the bodies. For that submit only, `fwr_oval_behind` pushes the follower oval away from the camera and scales it so the picture stays on the sample. The quad is restored after the call. No plant, no XZ retarget, no camera keep, and the push does not follow the body.
+- Sort. Early submit of `field+0xc4` from the actor hook is reverted. It drew the oval in the actor pass, which put it in front more often. The late pass plus the one depth bias is the order. No world slide, and no return of the eye-ray stack or the player write.
 - Props, monitors, counters, and angled floor texels: a later depth budget against static mesh, reading bounds the way `fwr_box_advance_limit` already knows how to read them. It does not write the player, and it does not grow a per-facing table.
 - Trail gap: unchanged unless a separate decision shortens gap 6.
 
@@ -127,7 +131,7 @@ The same helpers stay available to full-variant land and surf. This draw does no
 Steps 1 and 2 shipped together. Each is one path, not a facing table. Step 3 and the prop budget are not in this change.
 
 1. Body. The foot-line raise, the face-0 two pixels, and the body `fwr_plane_keep` are gone. Registry Y stays on the billboard. Automatic Y is 0: a stored `-pad` and the older `-(pad)-3` are rewritten there, and no second constant is added. `verify_render.py` expectations that locked the plant and the six-unit stair slide now expect the native billboard plus whatever registry Y is stored. Host math tests still cover the helpers; the draw does not call them.
-2. Oval. The engine sample is what submits, and it submits before the bodies. `fwr_shadow_pass` does not move quads. A second submit of that scene is skipped.
+2. Oval. The engine sample is what the shadow hook submits, after the bodies. `fwr_shadow_pass` depth-biases the follower oval for that one call and restores it. `59ae58c`'s early submit is not the order.
 3. Not in this change. Prop and floor-mesh clips stay a later static-bounds step, still without writing the player. Do not add a slide to chase a remaining clip.
 
 Black-line texture lifetime stays phase 2 and is not part of footing.
@@ -202,7 +206,7 @@ Proof, from code this module runs:
 - The NPC event record stores map X and map Z as tiles and height as an fx32 (`map3dModel.ts`). Registry byte 14 is `wPosOffY`, the same descriptor byte `fwr_draw` subtracts. `actor_set_g_pos` (`0x6d`) documents Y as height and Z as the north/south axis.
 - `docs/map-blender-export.md` says the exported map is Y-up and Blender's importer converts it to Z-up. A height nudge typed into Blender's Z is this module's Y. A nudge typed into Blender's Y is not height. Do not swap again on import (`docs/map-glb-import-plan.md`).
 
-The oval is not on that billboard Y. Nothing in the shadow pass writes it. Descriptor byte 14 stays 0 so the engine sample stays on the actor. `FollowingRenderDebug.groundY` (`+104`) is `world.y` when the shadow is live. The emote bubble reads the submitted body, not this ground Y: `fwr_effect_pose` keeps the draw-only lift (`submitted.y - native.y`) on the live quad, so the bubble rises with the two-pixel body instead of sitting on the restored foot.
+The oval is not on that billboard Y. Descriptor byte 14 stays 0, so the engine sample stays on actor ground. The shadow pass does not raise that sample and does not store a new Y: for one submit it depth-biases the follower oval along the eye ray, scales it so the picture stays, and writes the engine sample back. `FollowingRenderDebug.groundY` (`+104`) is `world.y` when the shadow is live. `snap` (`+112`) is 1 when that bias ran. The emote bubble reads the submitted body, not this ground Y: `fwr_effect_pose` keeps the draw-only lift (`submitted.y - native.y`) on the live quad, so the bubble rises with the two-pixel body instead of sitting on the restored foot.
 
 ## The foot gap
 
@@ -220,10 +224,13 @@ The debug subtraction still reads the result. `submitted.y` is at `FollowingRend
 
 ## Playtest
 
+Cold-boot the DLL. This tip does not rewrite `following/runtime-registry.bin` or any other install file.
+
 - Castelia outer ring, walking past street NPCs: the player stays behind people who stand nearer the camera. No constant follower pop in/out.
 - Pokémon Center lower floor, both sides of the bad tiles: the follower hops, the player does not, and the oval stays on the ground under the follower. At rest and on bob-down, all four facings, the oval is under the feet, not across the body. Height stays the two-pixel body lift. The follower does not vanish.
 - A wide species beside you, and one specific sprite that used to lose to its oval.
-- Talk until the emote bubble appears. The bubble sits with the raised head, not on the old foot line. A full-screen black flicker is the phase-2 GPU lifecycle, not this anchor.
+- Talk until the emote bubble appears. The bubble sits with the raised head, not on the old foot line.
+- 3DS hardware, cold boot: the follower's recall flash, the emote, and a mounted or Surf rider should show fewer black lines. A line that remains on a plain walk, with no emote and no recall, is the next polygon byte in `fwr_private_scene`, not a new draw path. A full-screen black flicker across a loading wipe is still the texture-key release in `fwfx_destroy` / `fwfx_prepare`.
 - Stairs and a stairwell: the follower is not buried in the step, and is not floating off it. Height follows the floor.
 - Reverse-step swap: close, facing you, then easing out to the usual gap over about two tiles. Stop and talk hold the gap.
 - A rail curve: facing, talk, and the swap finish on the settled step.

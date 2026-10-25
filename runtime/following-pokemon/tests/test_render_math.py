@@ -299,6 +299,52 @@ class Rendering(unittest.TestCase):
    again=Pose();second=self.lib.fwr_shadow_behind(c.byref(tucked),c.byref(behind.position),c.byref(cam),c.byref(again))
    if second:
     settled=Pose();self.assertEqual(self.lib.fwr_shadow_behind(c.byref(again),c.byref(behind.position),c.byref(cam),c.byref(settled)),0)
+ def test_oval_stays_on_screen_and_behind(self):
+  self.lib.fwr_oval_behind.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
+  self.lib.fwr_oval_behind.restype=c.c_int
+  for eye in ((0,760739,581835),(0,200*4096,140*4096)):
+   for projection in (0,1):
+    cam=Camera(Point(*eye),Point(),projection)
+    shade=Pose(Point(),4096,4096);out=Pose()
+    self.assertEqual(self.lib.fwr_oval_behind(c.byref(shade),c.byref(cam),c.byref(out)),1)
+    before=project(shade,eye,False);after=project(out,eye,False)
+    self.assertLess(max(abs(x-y)for a,b in zip(before,after)for x,y in zip(a,b)),0.002/256)
+    move=(out.position.x,out.position.y,out.position.z)
+    depth=sum(m*v for m,v in zip(move,eye))/math.sqrt(sum(v*v for v in eye))
+    self.assertLess(depth,-4096)
+    self.assertGreater(depth,-(16*4096+256))
+    self.assertLess(out.position.y,0)
+    self.assertGreaterEqual(out.sx,4096);self.assertGreaterEqual(out.sy,4096)
+  for projection in (2,3):
+   cam=Camera(Point(0,760739,581835),Point(),projection)
+   shade=Pose(Point(1,2,3),4096,4096);out=Pose()
+   self.assertEqual(self.lib.fwr_oval_behind(c.byref(shade),c.byref(cam),c.byref(out)),0)
+   self.assertEqual(xyz(out.position),(1,2,3));self.assertEqual((out.sx,out.sy),(4096,4096))
+ def test_private_scene_drops_the_field_tail(self):
+  self.lib.fwr_private_scene.argtypes=[c.c_void_p,c.c_void_p,c.c_void_p,c.c_void_p,c.c_uint16,c.c_uint16]
+  live=bytearray(60)
+  live[0]=0x34;live[1]=0x12
+  for i,b in enumerate(b'\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\xcc'):live[16+i]=b
+  for i in range(8):live[28+i]=0x40+i
+  live[36]=0
+  for i in range(20):live[40+i]=0xab
+  live_buf=c.create_string_buffer(bytes(live));dst_buf=c.create_string_buffer(60)
+  actors=0x22223333;materials=0x44445555
+  self.lib.fwr_private_scene(dst_buf,live_buf,actors,materials,1,12)
+  dst=dst_buf.raw
+  self.assertEqual(dst[0:2],b'\x34\x12')
+  self.assertEqual(dst[4:8],materials.to_bytes(4,'little'))
+  self.assertEqual(dst[8:12],actors.to_bytes(4,'little'))
+  self.assertEqual(int.from_bytes(dst[12:14],'little'),12)
+  self.assertEqual(int.from_bytes(dst[14:16],'little'),1)
+  self.assertEqual(dst[16:28],live[16:28])
+  self.assertEqual(dst[28:36],live[28:36])
+  self.assertEqual(dst[36],1)
+  self.assertEqual(dst[37:60],bytes(23))
+  live[36]=1;live_buf=c.create_string_buffer(bytes(live))
+  self.lib.fwr_private_scene(dst_buf,live_buf,actors,materials,2,16)
+  self.assertEqual(dst_buf.raw[36],2)
+  self.assertEqual(dst_buf.raw[40:60],bytes(20))
  def test_shadow_stays_on_its_native_ground(self):
   # The oval is the ground sample. A sprite drawn a step low must not drag
   # the shadow with it; the bias keeps the oval's projected image.

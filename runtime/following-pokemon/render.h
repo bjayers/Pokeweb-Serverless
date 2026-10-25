@@ -10,12 +10,8 @@ void fwr_draw(void *system,void *camera,void *light,Actor *follower,Actor *playe
 /* Swap and post-swap ease, for the depth blend. Zeros when neither is active.
  * `traveled` is world units along the ease, and only while an ease is active. */
 void fw_depth_query(int *swapping, int *easing, uint32_t *traveled);
-/* Submit field+0xc4 before the actor scene when it is this field's shadow
- * system. Returns 1 when that submit ran. The later shadow hook must not
- * submit the oval scene again. */
-int fwr_shadow_before_actors(void *actorBl,void *camera,void *light,Actor *follower);
-/* Draw the secondary pass. Skips the native submit when the oval scene was
- * already submitted before the bodies. Does not move the oval. */
+/* Retail shadow pass. Submits field+0xc4 after the bodies. The follower oval
+ * is depth-biased behind the sprite for that submit and then restored. */
 void fwr_shadow_pass(void *system,void *camera,void *light);
 /* Last submitted body, including registry Y and the two-pixel lift.
  * `live` is the quad at the call. An exact native match returns that pose.

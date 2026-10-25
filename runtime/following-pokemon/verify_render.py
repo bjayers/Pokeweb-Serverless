@@ -26,7 +26,8 @@ def call(name,args):
  assert uc.reg_read(UC_ARM_REG_PC)==STOP and uc.reg_read(UC_ARM_REG_SP)==STACK
  for i,r in enumerate(range(UC_ARM_REG_R4,UC_ARM_REG_R11+1)):assert uc.reg_read(r)==0x12340000+i
 P=0x02220000;A=P+256;SYS=P+0x1000;FBL=SYS+0x100;BL=SYS+0x200;SCENE=SYS+0x300;SLOTS=SYS+0x400;BILL=SYS+0x500;CAM=SYS+0x600;LIGHT=SYS+0x700
-seen=[];player_seen=[];npc_seen=[];light_seen=[];expected_args=[BL,CAM,LIGHT];pending=[]
+EFF=0x02226000;EQUAD=0
+seen=[];player_seen=[];npc_seen=[];light_seen=[];expected_args=[BL,CAM,LIGHT];pending=[];shadow_live=[]
 EFFBL=0x02223800;GQUAD=0x02223a00;grass_seen=[]
 def spy(u,pc,size,user):
  if pc!=0x0204f684:return
@@ -38,6 +39,8 @@ def spy(u,pc,size,user):
  npc_seen.append(read(BILL+56+4,'3i'))
  light_seen.append((read(BILL+24,'H')[0],read(BILL+28+24,'H')[0]))
  if expected_args[0]==EFFBL:grass_seen.append((read(GQUAD+4,'3i'),read(GQUAD+18,'2h')))
+ if EQUAD and args[0]==EFF:
+  shadow_live.append((read(EQUAD+4,'3i'),read(EQUAD+18,'2h'),read(EQUAD+32,'3i'),read(EQUAD+28+18,'2h')))
  u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
 uc.hook_add(UC_HOOK_CODE,spy,begin=0x0204f684,end=0x0204f684)
 F=addr('fwfield_follower')
@@ -268,66 +271,128 @@ for bob in (0,6144):
  assert player_depth>=4*4096-32,(bob,player_seen[-1],npc_seen[-1],player_depth)
  assert bytes(uc.mem_read(BILL,84))==native
 # A follower one tile up and one tile north keeps the native billboard.
-# The effect pass submits the engine ovals and does not move them.
+# The shadow hook submits after the body. Only the follower oval is biased
+# for that submit; the far oval and both quads are restored afterwards.
+def plant_ovals(follower,other):
+ uc.mem_write(EFF,bytes(0x400))
+ put(EFF+4,ESCENE);put(EFF+0x18,ESLOTS);half(EFF+0x1c,2)
+ put(ESLOTS,0);put(ESLOTS+40,1)
+ put(ESCENE+8,EQUAD);half(ESCENE+14,2)
+ half(EQUAD,13);half(EQUAD+18,4096);half(EQUAD+20,4096);half(EQUAD+24,0x021f)
+ vec(EQUAD+4,follower)
+ half(EQUAD+28,13);half(EQUAD+28+18,4096);half(EQUAD+28+20,4096);half(EQUAD+28+24,0x021f)
+ vec(EQUAD+28+4,other)
+def assert_near_biased(origin):
+ assert shadow_live,'shadow scene was not submitted'
+ live,live_s,far_live,far_s=shadow_live[-1]
+ eye=read(CAM+32,'3i');target=read(CAM+56,'3i')
+ view=[eye[i]-target[i] for i in range(3)]
+ move=[live[i]-origin[i] for i in range(3)]
+ depth=sum(m*v for m,v in zip(move,view))
+ assert depth<0,(live,origin,depth)
+ assert live_s[0]>4096 and live_s[1]>4096,(live_s)
+ assert live[1]<=origin[1],(live,origin)
+ return live,live_s,far_live,far_s
 setup(64);half(A+24,1);put(A+4,0x4000)
 vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
 vec(BILL+4,(0,0,0));vec(BILL+32,(0,65536,-65536))
 submitted,scales,depth=draw()
 assert submitted==(0,65536+BODY_LIFT,-65536) and scales==(64*256,64*256),(submitted,scales)
 assert depth[0]==0 and player_seen[-1][0]==(0,0,0)
-EFF=0x02226000;ESCENE=EFF+0x100;ESLOTS=EFF+0x180;EQUAD=EFF+0x300
-uc.mem_write(EFF,bytes(0x400))
-put(EFF+4,ESCENE);put(EFF+0x18,ESLOTS);half(EFF+0x1c,2)
-put(ESLOTS,0);put(ESLOTS+40,1)
-put(ESCENE+8,EQUAD);half(ESCENE+14,2)
-half(EQUAD,13);half(EQUAD+18,4096);half(EQUAD+20,4096);half(EQUAD+24,0x021f)
-vec(EQUAD+4,(0,65536,-65536))
-half(EQUAD+28,13);half(EQUAD+28+18,4096);half(EQUAD+28+20,4096);half(EQUAD+28+24,0x021f)
-vec(EQUAD+28+4,(0,65536,65536))
+ESCENE=EFF+0x100;ESLOTS=EFF+0x180;EQUAD=EFF+0x300
+plant_ovals((0,65536,-65536),(0,65536,65536))
 near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
-expected_args=[EFF,CAM,LIGHT]
+body_before=bytes(uc.mem_read(BILL,56))
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
 call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
-biased=read(addr('FollowingRenderDebug')+84,'i')[0]
+count=read(addr('FollowingRenderDebug')+84,'i')[0]
+change=read(addr('FollowingRenderDebug')+80,'i')[0]
 shadow=read(addr('FollowingRenderDebug')+88,'3i')
 native_y,ground_y,gap,snap=read(addr('FollowingRenderDebug')+100,'4i')
 hold=read(addr('FollowingRenderDebug')+128,'i')[0]
-assert biased==0 and snap==0 and hold==0 and ground_y==65536,(biased,shadow,submitted,native_y,ground_y,gap,snap,hold)
-assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
-call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
-assert read(addr('FollowingRenderDebug')+84,'i')[0]==0
-# The oval scene goes out before the body when field+0xc0 is this actor
-# system and field+0xc4 is the shadow system. The oval is not moved, and the
-# later hook does not submit it again. A mismatched actor slot does not.
-setup(64);half(A+24,1);put(A+4,0x4000)
-vec(A+68,(0,65536,-65536));vec(BILL+32,(0,65536,-65536))
-FIELDW=0x02225000
-uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL);put(FIELDW+0xc4,EFF)
-uc.mem_write(EFF,bytes(0x400))
-put(EFF+4,ESCENE);put(EFF+0x18,ESLOTS);half(EFF+0x1c,2)
-put(ESLOTS,0);put(ESLOTS+40,1)
-put(ESCENE+8,EQUAD);half(ESCENE+14,2)
-half(EQUAD,13);half(EQUAD+18,4096);half(EQUAD+20,4096);half(EQUAD+24,0x021f)
-vec(EQUAD+4,(0,65536,-65536))
-half(EQUAD+28,13);half(EQUAD+28+18,4096);half(EQUAD+28+20,4096);half(EQUAD+28+24,0x021f)
-vec(EQUAD+28+4,(0,65536,65536))
-near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
-body_before=bytes(uc.mem_read(BILL,56))
-pending=[[EFF,CAM,LIGHT],[BL,CAM,LIGHT]]
-n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
-assert pending==[] and len(seen)==n+2,(pending,len(seen)-n)
-assert seen[-1][0]==(0,65536+BODY_LIFT,-65536),seen[-1]
+live,live_s,far_live,far_s=assert_near_biased((0,65536,-65536))
+assert count==1 and change<0 and snap==1 and hold==0 and ground_y==65536 and gap==0,(count,change,shadow,native_y,ground_y,gap,snap,hold)
+assert native_y==65536 and shadow==live
+assert far_live==(0,65536,65536) and far_s==(4096,4096)
 assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
 assert bytes(uc.mem_read(BILL,56))==body_before
+shadow_live.clear();call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert read(addr('FollowingRenderDebug')+84,'i')[0]==0
+assert read(addr('FollowingRenderDebug')+112,'i')[0]==0
+assert shadow_live[-1][0]==(0,65536,-65536) and shadow_live[-1][2]==(0,65536,65536)
+# Same camera and oval at rest and on the bob. The bias does not follow the body.
+rest=live
+expected_args=[BL,CAM,LIGHT]
+vec(BILL+32,(0,65536+6144,-65536));draw();shadow_live.clear()
+expected_args=[EFF,CAM,LIGHT];call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+bob_live=assert_near_biased((0,65536,-65536))[0]
+assert bob_live==rest,(rest,bob_live)
+assert seen[-1][0][1]==65536+6144+BODY_LIFT
+# Every facing. The oval stays the ground sample; the body keeps the lift.
+for face in range(4):
+ setup(64);half(A+24,face);put(A+4,0x4000)
+ vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+ vec(BILL+32,(0,65536,-65536));expected_args=[BL,CAM,LIGHT];draw()
+ plant_ovals((0,65536,-65536),(0,65536,65536))
+ expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+ call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+ assert_near_biased((0,65536,-65536))
+ assert read(addr('FollowingRenderDebug')+112,'i')[0]==1
+ assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(BILL+4,12))==bytes(12)
+# The player's oval is the nearer one to the player. It is not biased.
+setup(64);put(A+4,0x4000)
+vec(P+68,(0,0,0));vec(A+68,(0,0,8000));vec(BILL+32,(0,BODY_LIFT,8000))
+vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+expected_args=[BL,CAM,LIGHT];draw()
+plant_ovals((0,0,8000),(0,0,0))
+player_oval=bytes(uc.mem_read(EQUAD+28,28))
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert_near_biased((0,0,8000))
+assert shadow_live[-1][2]==(0,0,0) and shadow_live[-1][3]==(4096,4096)
+assert bytes(uc.mem_read(EQUAD+28,28))==player_oval
+# An orthographic camera is not a field camera. The engine oval submits as built.
+setup(64);put(A+4,0x4000);put(CAM,2)
+vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(BILL+32,(0,65536,-65536))
+expected_args=[BL,CAM,LIGHT];draw()
+plant_ovals((0,65536,-65536),(0,65536,65536))
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert shadow_live[-1][0]==(0,65536,-65536) and shadow_live[-1][1]==(4096,4096)
+assert read(addr('FollowingRenderDebug')+112,'i')[0]==0
+assert bytes(uc.mem_read(EQUAD,56))==near+far
+# The actor draw never submits the oval scene, even when field+0xc0 is this
+# actor system and field+0xc4 is the shadow system. The shadow hook submits
+# it once. A mismatched field pointer does not change that.
+setup(64);half(A+24,1);put(A+4,0x4000)
+vec(A+68,(0,65536,-65536));vec(BILL+32,(0,65536,-65536))
+vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+FIELDW=0x02225000
+uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL);put(FIELDW+0xc4,EFF)
+plant_ovals((0,65536,-65536),(0,65536,65536))
+near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
+body_before=bytes(uc.mem_read(BILL,56))
+expected_args=[BL,CAM,LIGHT]
+n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
+assert len(seen)==n+1 and seen[-1][0]==(0,65536+BODY_LIFT,-65536),seen[-1]
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+assert bytes(uc.mem_read(BILL,56))==body_before
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
 n=len(seen);call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
-assert len(seen)==n,'oval scene was submitted twice'
+assert len(seen)==n+1
+assert_near_biased((0,65536,-65536))
 assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
 setup(64);put(A+4,0x4000);vec(BILL+32,(0,65536,-65536))
+vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
 uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL+4);put(FIELDW+0xc4,EFF)
+plant_ovals((0,65536,-65536),(0,65536,65536))
+expected_args=[BL,CAM,LIGHT]
 n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0][1]==65536+BODY_LIFT
-expected_args=[EFF,CAM,LIGHT]
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
 n=len(seen);call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
-assert len(seen)==n+1,'mismatched field still owes the oval submit'
+assert len(seen)==n+1
+assert_near_biased((0,65536,-65536))
 expected_args=[BL,CAM,LIGHT]
 # Invalid/stale/unsupported objects forward once without mutating the scene.
 for invalid in ('hidden','unused','lost','foreign','slot','index','mode','camera','zero-camera','scale'):

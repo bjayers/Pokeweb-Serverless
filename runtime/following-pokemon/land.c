@@ -210,8 +210,7 @@ static void draw_rider(void *system,void *camera,void *light,LandBillboard *moun
   land.rider.pos=(Vec){adjusted.position.x,adjusted.position.y,adjusted.position.z};
   land.rider.sx=(int16_t)adjusted.sx;land.rider.sy=(int16_t)adjusted.sy;
  }
- land.scene=*native;land.scene.actors=&land.rider;land.scene.materials=land.materials;
- land.scene.actorCount=1;land.scene.materialCount=12;
+ fwr_private_scene(&land.scene,native,&land.rider,land.materials,1,12);
  CALL(0x0204ebdd,void(*)(void*,void*,void*))(&land.scene,camera,light);
  ++FollowingLandDebug.draws;
 }
