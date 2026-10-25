@@ -189,14 +189,14 @@ for size,member in ((32,6),(64,314)):
    uc.mem_write(bill+16,struct.pack('<H',frame));uc.mem_write(bill+24,struct.pack('<H',0x121f|(0x0800 if flipped else 0)))
    invoke('fwfx_emote_frame',[actor,frame&1]);invoke('fwfx_draw',[camera,0x02222000])
    # The bubble is pushed toward the camera after the lift. Undo that scale
-   # so the one-pixel gap is still measured in the follower's plane.
+   # so the head clearance is still measured in the follower's plane.
    view=(0,200*4096,140*4096);pos=emote_poses[-1]
    along=sum(pos[i]*view[i] for i in range(3));span=sum(v*v for v in view)
    scale=1-along/span
    height=sum(pos[i]*up[i] for i in range(3))/4096/(scale if scale>0.05 else 0.05)
    visible_top=size-1-max(rows) if flipped else min(rows)
    gap=height+(31-bubble_bottom)-(size-visible_top)
-   assert abs(gap-1)<0.02,(size,frame,flipped,gap)
+   assert abs(gap-8)<0.02,(size,frame,flipped,gap)
  assert len(allocations)==allocated and not any(c[0] in (0x20493f0,0x204964c,0x204e55c) for c in calls[loads:]),'Per-draw texture work'
  invoke('fwfx_emote_end')
  parked,vram=len(frees),vram_frees()
@@ -205,4 +205,4 @@ for size,member in ((32,6),(64,314)):
  parked,vram=len(frees),vram_frees()
  invoke('fwfx_destroy');settle()
  assert len(frees)==parked and vram_frees()==vram,'destroy drops effect banks without a resume free'
-print('Effect checks passed: I4 row bounds, one-pixel opaque-edge emote placement for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')
+print('Effect checks passed: I4 row bounds, eight-pixel opaque-edge emote clearance for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')

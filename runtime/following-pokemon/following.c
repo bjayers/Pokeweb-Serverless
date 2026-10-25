@@ -420,6 +420,38 @@ int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint
     out->z = follower->z + mul_div((int32_t)rz, (int32_t)clamped, (int32_t)span);
     return clamped == span;
 }
+int fw_trail_height_at(const FwTrail *t, int32_t x, int32_t z, int32_t *y) {
+    /* The chord from follower to settled origin cuts a stair riser: too low
+     * onto the upper tread, too high onto the lower one. Samples are the
+     * heights the player already walked. Flat ground matches the chord. */
+    if (!t || !y || t->count < 2) return 0;
+    int32_t tol = (int32_t)FW_TILE / 4;
+    uint64_t bestLat = ~(uint64_t)0;
+    int32_t bestY = 0;
+    int found = 0;
+    for (unsigned i = 0; i + 1 < t->count; ++i) {
+        const FwSample *a = trail_sample(t, i);
+        const FwSample *b = trail_sample(t, i + 1);
+        int64_t sx = (int64_t)b->x - a->x, sz = (int64_t)b->z - a->z;
+        uint32_t span = segment_span(sx, sz);
+        if (!span) continue;
+        int64_t mx = (int64_t)x - a->x, mz = (int64_t)z - a->z;
+        int32_t proj = div_s64(mx * sx + mz * sz, span);
+        if (proj < 0 || (uint32_t)proj > span) continue;
+        int64_t lat2 = mx * mx + mz * mz - (int64_t)proj * proj;
+        if (lat2 < 0) lat2 = 0;
+        if (lat2 > (int64_t)tol * tol) continue;
+        if (found && (uint64_t)lat2 > bestLat) continue;
+        int64_t dy64 = (int64_t)b->y - a->y;
+        if (dy64 > INT32_MAX || dy64 < INT32_MIN) continue;
+        bestY = a->y + scale_step((int32_t)dy64, (uint32_t)proj, span);
+        bestLat = (uint64_t)lat2;
+        found = 1;
+    }
+    if (!found) return 0;
+    *y = bestY;
+    return 1;
+}
 int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player,
                     const uint8_t gaps[4], FwSample *out) {
     /* Forty units covers a gap of 12 (about 28 units to one metric tile)

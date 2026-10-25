@@ -619,6 +619,48 @@ int main(void) {
     FwPoint ledge=half;ledge.y=3*(int32_t)FW_TILE;
     assert(fw_swap_mirror(&follower,&origin,&ledge,&mid)==-1);
     assert(fw_swap_mirror(&follower,&origin,&origin,&mid)==0&&mid.x==follower.x&&mid.y==follower.y&&mid.z==follower.z);
+    /* A stair tread is not the straight chord. Walked samples sit on the
+     * tread; the chord floats over the lower one and cuts the upper one.
+     * Mirror X is the other end of the segment from the player. */
+    {
+        const int32_t step=(int32_t)FW_TILE/2;
+        fw_trail_clear(&t);t.head=0;t.count=17;
+        for(int i=0;i<=16;++i){
+            int32_t x=i*(int32_t)FW_TILE/16;
+            t.samples[i]=sample(x,x<step?0:step,center,1,FW_WORLD);
+        }
+        int32_t walked=-1;
+        assert(fw_trail_height_at(&t,step-4096,center,&walked)==1&&walked==0);
+        assert(fw_trail_height_at(&t,step,center,&walked)==1&&walked==step);
+        assert(fw_trail_height_at(&t,step,center+(int32_t)FW_TILE,&walked)==0);
+        FwPoint stairFollower={0,0,center},stairOrigin={(int32_t)FW_TILE,step,center};
+        /* Player on the upper side: the follower is mirrored onto the lower tread. */
+        FwPoint playerUpper={step+4096,0,center};
+        assert(fw_swap_mirror(&stairFollower,&stairOrigin,&playerUpper,&mid)==0);
+        assert(fw_trail_height_at(&t,mid.x,mid.z,&walked)==1&&walked==0&&mid.y>walked);
+        /* Player at the riser: the follower is mirrored onto the upper tread. */
+        FwPoint playerRiser={step,0,center};
+        assert(fw_swap_mirror(&stairFollower,&stairOrigin,&playerRiser,&mid)==0);
+        assert(fw_trail_height_at(&t,mid.x,mid.z,&walked)==1&&walked==step&&walked>mid.y);
+        /* Descending: the chord stays high over the lower tread. */
+        for(int i=0;i<=16;++i){
+            int32_t x=i*(int32_t)FW_TILE/16;
+            t.samples[i]=sample(x,x<step?step:0,center,1,FW_WORLD);
+        }
+        stairFollower=(FwPoint){0,step,center};
+        stairOrigin=(FwPoint){(int32_t)FW_TILE,0,center};
+        FwPoint playerHigh={4096,0,center};
+        assert(fw_swap_mirror(&stairFollower,&stairOrigin,&playerHigh,&mid)==0);
+        assert(fw_trail_height_at(&t,mid.x,mid.z,&walked)==1&&walked==0&&mid.y>walked);
+        /* Flat history matches the chord, so a level swap does not move. */
+        stairFollower=(FwPoint){0,0,center};
+        t.samples[0]=sample(0,0,center,1,FW_WORLD);
+        t.samples[1]=sample((int32_t)FW_TILE,0,center,1,FW_WORLD);
+        t.count=2;
+        assert(fw_trail_height_at(&t,(int32_t)FW_TILE/2,center,&walked)==1&&walked==0);
+        FwPoint flatOrigin={(int32_t)FW_TILE,0,center},flatPlayer={(int32_t)FW_TILE/2,0,center};
+        assert(fw_swap_mirror(&stairFollower,&flatOrigin,&flatPlayer,&mid)==0&&mid.y==walked);
+    }
     FwSample start=sample(origin.x,origin.y,origin.z,1,FW_WORLD);start.direction=2;
     FwSample end=sample(follower.x,follower.y,follower.z,1,FW_WORLD);end.direction=2;
     const uint8_t nogap[4]={0,0,0,0};

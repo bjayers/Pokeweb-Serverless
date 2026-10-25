@@ -48,6 +48,10 @@ static uint16_t fwfield_terrainZone;
  * translates the trail instead of clearing it. */
 static uint16_t fwfield_trailZone;
 static uint8_t fwfield_trailZoneValid;
+/* 1 after a draw has seen this actor unhidden. The update that first clears
+ * HIDDEN still has 0 here, which is the body's first raster. */
+static uint8_t fwfield_shownNow;
+static uint8_t fwfield_reveal;
 typedef struct {
  uint32_t reserved[2];uint16_t oldTerrain,terrain;
  uint32_t extra[2];void *controller;
@@ -247,6 +251,8 @@ static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  int stepSettled=swapOn.departed&&dx<=256&&dz<=256;
  int mirror=fw_rail_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored,stepSettled);
  if(mirror<0){clear_swap();return 0;}
+ int32_t walked;
+ if(fw_trail_height_at(&fwfield_follower.trail,mirrored.x,mirrored.z,&walked))mirrored.y=walked;
  Vec vacated={swapOn.origin.x,swapOn.origin.y,swapOn.origin.z};
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
  if(mirror==1){finish_swap(a,sample,player,&mirrored);return 1;}
@@ -269,6 +275,8 @@ static int drive_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  FwPoint mirrored;
  int mirror=fw_swap_mirror(&swapOn.follower,&swapOn.origin,player,&mirrored);
  if(mirror<0){clear_swap();return 0;}
+ int32_t walked;
+ if(fw_trail_height_at(&fwfield_follower.trail,mirrored.x,mirrored.z,&walked))mirrored.y=walked;
  Vec vacated={swapOn.origin.x,swapOn.origin.y,swapOn.origin.z};
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
  int onFollower=centered(&fwfield_player->world)&&same_tile(player->x,player->z,swapOn.follower.x,swapOn.follower.z);
@@ -406,6 +414,7 @@ static void cleanup_impl(int keepTrail) {
  fwt_cancel();
  if(owned()) CALL(0x02166981,void(*)(Actor*))((Actor*)fwfield_follower.actor);
  fwfield_follower.actor=0; fwfield_player=0; fwfield_follower.state=FW_ABSENT;
+ fwfield_shownNow=fwfield_reveal=0;
  if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
  fwfield_cyclePending=0;
@@ -913,11 +922,17 @@ API void FollowingUpdate(ActorSystem *sys) {
   /* This actor's route callback writes coordinates directly, so the retail
    * move-start attribute pass never registers its shadow. The audited native
    * shadow helper owns the effect task, billboard, visibility and teardown. */
+  /* First raster of the body is the retail billboard only. Shadow-task birth
+   * and the white-sheet bind wait until the next update. Neither runs during
+   * a fade: reason bit 16 returns before this block. */
+  int shown=!(a->flags&HIDDEN);
+  int firstBody=shown && !fwfield_shownNow;
+  fwfield_reveal=firstBody;
   if(
 #ifdef FW_MOUNT
      !fwland_active() &&
 #endif
-     !(a->flags&HIDDEN) && fwfield_player && (fwfield_player->moveflags&SHADOW_SET) &&
+     shown && !firstBody && fwfield_player && (fwfield_player->moveflags&SHADOW_SET) &&
      !(fwfield_player->moveflags&SHADOW_VANISH) && !(a->moveflags&SHADOW_SET)){
    FollowingShadowDebug.actor=(uint32_t)a;
    FollowingShadowDebug.playerFlags=fwfield_player->moveflags;
@@ -926,12 +941,14 @@ API void FollowingUpdate(ActorSystem *sys) {
    CALL(0x02194df5,void(*)(Actor*))(a);
    FollowingShadowDebug.attached=!!(a->moveflags&SHADOW_SET);
   }
-  /* A hidden door actor is not on screen yet. Binding its sheet here is the
-   * frame the overworld has just appeared. Wait until the follower is shown. */
-  if(!(a->flags&HIDDEN)){fwfx_prepare(a);fwfx_snapshot(a);}
+  /* A hidden door actor is not on screen yet. Binding its sheet on the frame
+   * the world reappears, or on the body's first raster, is the scanline. */
+  if(shown && !firstBody){fwfx_prepare(a);fwfx_snapshot(a);}
  }
 }
+int fwfield_first_body(void){return fwfield_reveal;}
 API void FollowingDraw(void *system,void *camera,void *light){
+ fwfield_shownNow=owned()&&!(((Actor*)fwfield_follower.actor)->flags&HIDDEN);
 #ifdef FW_MOUNT
  if(fwland_active()){
   fwland_draw(system,camera,light,owned()?(Actor*)fwfield_follower.actor:0,fwfield_player,fwfield_follower.sprite_y,fwfield_tick);

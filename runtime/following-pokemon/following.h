@@ -87,6 +87,10 @@ int fw_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *
  * follower's walk from `follower` back to `origin`. Returns 1 at the far
  * end, 0 while still on the segment, -1 if the player left it. */
 int fw_swap_mirror(const FwPoint *follower, const FwPoint *origin, const FwPoint *player, FwPoint *out);
+/* Walked Y at (x, z). 1 when a recorded segment covers that point.
+ * The swap chord is straight between the follower and the settled tile.
+ * Stairs and inclines are not, so only the swap transient should use this. */
+int fw_trail_height_at(const FwTrail *trail, int32_t x, int32_t z, int32_t *y);
 /* Rail points are not grid tiles. The follower is the next recorded point
  * behind `origin`, at any world spacing up to eight tiles. */
 int fw_rail_swap_match(const FwTrail *trail, const FwPoint *follower, const FwPoint *origin);

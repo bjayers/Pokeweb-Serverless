@@ -3,6 +3,8 @@ __attribute__((visibility("hidden"))) void *memset(void *to,int value,unsigned l
 #include "effects_assets.h"
 #include "render.h"
 #include "render_math.h"
+/* Field sets this on the update that first shows the body. Same DLL. */
+extern int fwfield_first_body(void);
 /* Freestanding aggregate copies; no dependency on a gameplay module's libc. */
 __attribute__((visibility("hidden"))) void *memcpy(void *to,const void *from,unsigned length){
  uint8_t *d=to;const uint8_t *s=from;while(length--)*d++=*s++;return to;
@@ -154,8 +156,8 @@ void fwfx_destroy(void){
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
 }
 void fwfx_warm(uint32_t heap){
- /* Door and return fades cover the picture. Upload the effect banks then,
-  * not on the first uncovered frame and not before Following is on. */
+ /* Effect banks only, during a door or return fade. A follower billboard
+  * submit in that window is not covered: it put the load-screen lines back. */
  if(fwfx.ready)return;
  if(heap && CALL(0x0203a2d5,uint32_t(*)(uint32_t))(heap)<65536u)return;
  init();
@@ -282,6 +284,9 @@ void fwfx_draw(void *camera,void *light){
  }else if((fwfx.mode==1 && fwfx.age<2) || fwfx.mode==2){
   CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
  }else{
+  /* The body's first raster is the retail billboard alone. The flash model
+   * starts on the next frame, so the two submits do not share that scan. */
+  if(fwfield_first_body())return;
   int32_t frame=(fwfx.age-2)*4096;
   CALL(0x02049a11,int(*)(void*,unsigned,void*))(fwfx.actors[1],0,&frame);
   CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[1],&fwfx.transform);
@@ -359,9 +364,10 @@ static void draw_emote(void *camera,void *light){
   top=body->flags&0x0800u?size-1-fwfx.outlineBottom[body->face]:fwfx.outlineTop[body->face];
   if(top>=size)top=0;
  }
- /* Align opaque edges: one source pixel of clear air above the follower's
-  * current pose, accounting for padding below the bubble's visible tip. */
- int32_t height=(int32_t)(size-top+1)*(large?pose.sy/4:pose.sy/2)
+ /* Eight source pixels of air above the opaque head. One pixel still cut
+  * the raised body. The outline top stays the per-pose measurement. */
+ enum { headClear = 8 };
+ int32_t height=(int32_t)(size-top+headClear)*(large?pose.sy/4:pose.sy/2)
   -(int32_t)fwemote.bottomInset[fwemote.frame&1]*(fwemote.billboard.sy/2);
  if(pose.sy<=0||!fwr_head_position(&base,&view,height,&head))return;
  /* Stay in this 3D pass, after the map. A later text window still covers the
