@@ -151,23 +151,22 @@ void fwfx_set_resource_count(unsigned count){
 /* Installed rom:/following/emotes.narc: seven bubbles, two BTX members each.
  * Bubble i names member i*2. Do not probe past the archive. */
 #define FWFX_EMOTE_BANK 14
-/* TEX0 padding that NNS_G3dResDefaultSetup fills. +0x14 stays the pixel
- * offset, so the outline read still sees the file header. */
-#define FWFX_TEX_KEY 0x08u
-#define FWFX_PLTT_KEY 0x2cu
+/* A finished billboard material, bound once under the fade. 0x020494d9 is the
+ * model upload used by the effect banks. These sheets are BTX billboards, and
+ * copying guessed TEX0 keys after that call left 0x0204e55d's material empty,
+ * so the bubble never drew. */
 typedef struct {
  void *resource;
- uint32_t tex,pltt,texKey,plttKey;
+ Material material;
  uint8_t bottomInset;
 } FwEmoteSheet;
 static FwEmoteSheet fwemote_bank[FWFX_EMOTE_BANK];
 static int fwemote_bank_state;
-static int emote_key_ok(uint32_t key){return key && key!=0xffffffffu;}
 static void emote_bank_drop(void){
  memset(fwemote_bank,0,sizeof fwemote_bank);fwemote_bank_state=0;
 }
-/* Drop every sheet uploaded so far. A VRAM free under the fade is the
- * load-screen streak. The caller already released a sheet that never uploaded. */
+/* Drop every sheet bound so far. A VRAM free under the fade is the
+ * load-screen streak. */
 static void emote_bank_fail(void){
  emote_bank_drop();fwemote_bank_state=-1;
 }
@@ -180,14 +179,10 @@ static int emote_warm_bank(void){
   void *tex=CALL(0x0204964d,void*(*)(void*))(res);
   uint8_t top[8],bottom[8];
   fwemote_bank[i].bottomInset=(uint8_t)(tex && fwfx_outline(tex,32,top,bottom)==1 && top[0]<32?31-bottom[0]:1);
-  if(!CALL(0x020494d9,int(*)(void*))(res)){
-   CALL(0x02049431,void(*)(void*))(res);fwemote_bank[i].resource=0;emote_bank_fail();return 0;
-  }
-  tex=CALL(0x0204964d,void*(*)(void*))(res);
-  uint32_t texKey=tex?U32(tex,FWFX_TEX_KEY):0,plttKey=tex?U32(tex,FWFX_PLTT_KEY):0;
-  if(!emote_key_ok(texKey)||!emote_key_ok(plttKey)){emote_bank_fail();return 0;}
-  fwemote_bank[i].texKey=texKey;fwemote_bank[i].plttKey=plttKey;
-  fwemote_bank[i].tex=(texKey&0xffffu)<<3;fwemote_bank[i].pltt=(plttKey&0xffffu)<<3;
+  fwemote_bank[i].material=(Material){0};
+  CALL(0x0204e599,void(*)(void*,unsigned,unsigned,unsigned,unsigned))(&fwemote_bank[i].material,0,0x22,32,32);
+  CALL(0x0204e55d,void(*)(void*,void*))(&fwemote_bank[i].material,res);
+  if(!fwemote_bank[i].material.texKey||!fwemote_bank[i].material.plttKey){emote_bank_fail();return 0;}
  }
  fwemote_bank_state=1;return 1;
 }
@@ -200,7 +195,8 @@ void fwfx_destroy(void){
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
 }
 void fwfx_warm(uint32_t heap){
- /* Door or return fade. Effect banks, then the emote archive, upload only.
+ /* Door or return fade. Effect banks use their model upload. Emote sheets
+  * get the billboard bind here, once, so the talk path can copy it.
   * No billboard submit and no a/0/4/8 bind: a submit in this window put the
   * load-screen lines back. */
  if(!fwfx.ready){
@@ -369,13 +365,10 @@ int fwfx_emote_begin(Actor *a,unsigned member){
  fwemote.billboard.sx=fwemote.billboard.sy=8192;fwemote.billboard.face=0;
  for(unsigned i=0;i<2;++i){
   FwEmoteSheet *sheet=&fwemote_bank[member+i];
-  fwemote.material[i]=(Material){0};
+  /* The fade already ran 0x0204e599 and 0x0204e55d. Copy that material.
+   * Calling 0x0204e599 again would rebuild it without the bind. */
+  fwemote.material[i]=sheet->material;
   fwemote.bottomInset[i]=sheet->bottomInset;
-  /* Size and format only. The fade already owns the VRAM keys. */
-  CALL(0x0204e599,void(*)(void*,unsigned,unsigned,unsigned,unsigned))(&fwemote.material[i],0,0x22,32,32);
-  fwemote.material[i].resource=sheet->resource;
-  fwemote.material[i].tex=sheet->tex;fwemote.material[i].pltt=sheet->pltt;
-  fwemote.material[i].texKey=sheet->texKey;fwemote.material[i].plttKey=sheet->plttKey;
   if(!fwemote.material[i].texKey||!fwemote.material[i].plttKey){fwfx_emote_end();return 0;}
  }
  fwemote.active=1;fwemote.actor=a;fwfx_emote_frame(a,0);return 1;

@@ -52,8 +52,6 @@ def native(u,address,size,user):
  if address==0x204964c:result=emote_texture if resource_paths.get(r0)=='rom:/following/emotes.narc' else body_texture
  if address==0x20652e4:result=32
  if address==0x204974c:result=PALETTE
- if address==0x20494d8 and resource_paths.get(r0)=='rom:/following/emotes.narc':
-  put(emote_texture+8,0x10003000);put(emote_texture+0x2c,0x400000c0)
  if address==0x204e55c:
   put(r0,r1);put(r0+12,0x18000);put(r0+16,0x600);put(r0+32,0x10003000);put(r0+36,0x400000c0)
  if address==0x204ebdc:
@@ -184,8 +182,9 @@ for size,member in ((32,6),(64,314)):
  uc.mem_write(bill,struct.pack('<HHiiiHhhHHH',0,0,0,0,0,0,size*256,size*256,0,0x121f,0))
  invoke('fwfx_prepare',[actor])
  warmed=len(calls);invoke('fwfx_warm',[0])
- assert sum(c[0]==0x20494d8 and resource_paths.get(c[1])=='rom:/following/emotes.narc' for c in calls[warmed:])==14
- assert not any(c[0]==0x204e55c for c in calls[warmed:]),'fade emote warm allocated a live material'
+ assert sum(c[0]==0x20493f0 and cstr(c[1])=='rom:/following/emotes.narc' for c in calls[warmed:])==14
+ assert sum(c[0]==0x204e55c for c in calls[warmed:])==14,'fade must bind each emote sheet'
+ assert not any(c[0]==0x20494d8 and resource_paths.get(c[1])=='rom:/following/emotes.narc' for c in calls[warmed:]),'emote BTX is not a model upload'
  begun=len(calls)
  assert invoke('fwfx_emote_begin',[actor,0])
  assert not any(c[0] in (0x20493f0,0x204964c,0x204e55c,0x20494d8) for c in calls[begun:]),'talk path uploaded an emote sheet'

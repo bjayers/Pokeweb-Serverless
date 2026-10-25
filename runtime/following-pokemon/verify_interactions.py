@@ -215,10 +215,10 @@ def balanced():
    live[key]-=1
    if not live[key]:del live[key]
  assert live==done,(live-done,done-live)
-# Fade-time emote upload. Later bubbles reuse these keys and do not allocate.
+# Fade-time emote bind. Later bubbles copy that material and do not allocate.
 warmed=len(calls);call('fwfx_warm',[0])
-assert sum(c[0]==0x020494d8 for c in calls[warmed:])==14 and len(resident)==14
-assert not any(c[0]==0x0204e55c for c in calls[warmed:]),'fade emote warm allocated a live material'
+assert sum(c[0]==0x0204e55c for c in calls[warmed:])==14 and len(resident)==14
+assert not any(c[0]==0x020494d8 for c in calls[warmed:]),'emote BTX is not a model upload'
 # Actual branch veneers forward native providers and leave retail event priority intact.
 provider=FOREIGN
 for name,args in [('THUMB_BRANCH_LINK_36_0x021818bc',[GAME,FIELD,SNAP,SNAP+4]),('THUMB_BRANCH_LINK_36_0x02181a6c',[GAME,FIELD])]:assert call(name,args)==FOREIGN
