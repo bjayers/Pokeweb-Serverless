@@ -109,7 +109,7 @@
       ],
       "continuation": "0x02180aee",
       "conflicts": "Field_InitActorSystem fes-gimmick setup after the player material load",
-      "status": "Pinned on the supplied US White 2 overlay 36; stock DLL only; hardware playtest pending",
+      "status": "Pinned on the supplied US White 2 overlay 36 (a86b211c at 0x02180aea). Stock field DLL exports FollowingPreloadFollower and relocates THUMB_BRANCH_LINK there. Hardware playtest pending.",
       "module": "field"
     },
     {
