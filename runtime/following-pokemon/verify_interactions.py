@@ -390,6 +390,9 @@ uc.mem_write(0x02210000+32,struct.pack('<3i',0,200*4096,140*4096));uc.mem_write(
 shared=bytes(uc.mem_read(mat,40))+bytes(uc.mem_read(bill,28))
 for member in range(0,14,2):
  assert call('fwfx_emote_begin',[A,member])
+ skipped=emote_draws
+ call('fwfx_draw',[0x02210000,0x02211000])
+ assert emote_draws==skipped,'bind frame does not submit the bubble'
  for frame in (0,1,0,1):call('fwfx_emote_frame',[A,frame]);call('fwfx_draw',[0x02210000,0x02211000])
  call('fwfx_emote_end');balanced()
 assert emote_draws==28,emote_draws

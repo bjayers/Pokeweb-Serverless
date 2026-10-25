@@ -181,6 +181,8 @@ for size,member in ((32,6),(64,314)):
  uc.mem_write(actor+235,bytes([2 if size==64 else 0]))
  uc.mem_write(bill,struct.pack('<HHiiiHhhHHH',0,0,0,0,0,0,size*256,size*256,0,0x121f,0))
  invoke('fwfx_prepare',[actor]);assert invoke('fwfx_emote_begin',[actor,0])
+ held_poses=len(emote_poses);invoke('fwfx_draw',[camera,0x02222000])
+ assert len(emote_poses)==held_poses,'bind frame does not submit the bubble'
  allocated=len(allocations);loads=len(calls)
  for frame in range(len(art)//(size*size//2)):
   pose=art[frame*size*size//2:(frame+1)*size*size//2]

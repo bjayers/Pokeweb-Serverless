@@ -296,10 +296,10 @@ void fwfx_draw(void *camera,void *light){
  }
 }
 
-static struct {void *resources[2];Scene scene;Billboard billboard;Material material[2];int active;unsigned frame;Actor *actor;uint8_t bottomInset[2];} fwemote;
+static struct {void *resources[2];Scene scene;Billboard billboard;Material material[2];int active;unsigned frame;Actor *actor;uint8_t bottomInset[2];uint8_t hold;} fwemote;
 void fwfx_set_player(Actor *player){fwfx_player=player;}
 void fwfx_emote_end(void){
- fwemote.active=0;fwemote.actor=0;
+ fwemote.active=0;fwemote.actor=0;fwemote.hold=0;
  if(!fwemote.resources[0]&&!fwemote.resources[1])return;
  FwfxHeld *h=held_open();
  for(unsigned i=0;i<2;++i){h->emote[i]=fwemote.resources[i];fwemote.resources[i]=0;}
@@ -336,7 +336,9 @@ int fwfx_emote_begin(Actor *a,unsigned member){
   CALL(0x0204e55d,void(*)(void*,void*))(&fwemote.material[i],fwemote.resources[i]);
   if(!fwemote.material[i].texKey||!fwemote.material[i].plttKey){fwfx_emote_end();return 0;}
  }
- fwemote.active=1;fwemote.actor=a;fwfx_emote_frame(a,0);return 1;
+ /* The bind and the first submit must not share a scan. The next draw
+  * submits this same material. */
+ fwemote.hold=1;fwemote.active=1;fwemote.actor=a;fwfx_emote_frame(a,0);return 1;
 }
 void fwfx_emote_frame(Actor *a,unsigned frame){
  if(!fwemote.active)return;
@@ -345,6 +347,7 @@ void fwfx_emote_frame(Actor *a,unsigned frame){
 }
 static void draw_emote(void *camera,void *light){
  if(!fwemote.active||!fwemote.actor||!camera)return;
+ if(fwemote.hold){fwemote.hold=0;return;}
  Actor *a=fwemote.actor;
  void *fieldBl=PTR(a->system,0x28),*bl=fieldBl?PTR(fieldBl,4):0;
  Scene *scene=bl?PTR(bl,4):0;unsigned id=*(uint16_t*)a->drawWork;
