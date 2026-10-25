@@ -153,51 +153,12 @@ void fwfx_destroy(void){
  fwfx_cancel();hold_effects();held_pump();fwfx_drop=0;
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
 }
-static int bind_white(uint16_t id,unsigned size){
- if(fwfx.white && fwfx.whiteID==id && fwfx.outlineSize==(size==64?64:32))return 1;
- free_white();fwfx.whiteID=id;
- if(!fwfx_resourceCount || id>=fwfx_resourceCount)return 0;
- fwfx.white=CALL(0x020493f1,void*(*)(const char*,unsigned))("rom:/a/0/4/8",id);
- if(!fwfx.white)return 0;
- void *tex=CALL(0x0204964d,void*(*)(void*))(fwfx.white);
- if(!tex){free_white();return 0;}
- fwfx.outlineSize=size==64?64:32;
- fwfx.outlineFrames=(uint8_t)fwfx_outline(tex,fwfx.outlineSize,fwfx.outlineTop,fwfx.outlineBottom);
- unsigned length=CALL(0x020652e5,unsigned(*)(void*))(tex);
- uint16_t *palette=CALL(0x0204974d,uint16_t*(*)(void*))(fwfx.white);
- if(!palette || length>512 || !length){free_white();return 0;}
- unsigned count=length/2,minLight=~0u,maxLight=0;
- for(unsigned i=1;i<count;++i){
-  unsigned color=palette[i];
-  unsigned light=3u*(color&31u)+6u*((color>>5)&31u)+((color>>10)&31u);
-  if(light<minLight)minLight=light;
-  if(light>maxLight)maxLight=light;
- }
- unsigned middle=minLight+(maxLight-minLight)/2u;
- for(unsigned i=0;i<count;++i){
-  unsigned color=palette[i];
-  unsigned light=3u*(color&31u)+6u*((color>>5)&31u)+((color>>10)&31u);
-  palette[i]=(uint16_t)(i&&((minLight==maxLight)?(i&1u):(light>middle))?FWFX_WHITE:FWFX_LIGHT_CYAN);
- }
- CALL(0x0204e55d,void(*)(void*,void*))(&fwfx.whiteMaterial,fwfx.white);
- if(!fwfx.whiteMaterial.texKey || !fwfx.whiteMaterial.plttKey){free_white();return 0;}
- return 1;
-}
 void fwfx_warm(uint32_t heap){
  /* Door and return fades cover the picture. Upload the effect banks then,
   * not on the first uncovered frame and not before Following is on. */
  if(fwfx.ready)return;
  if(heap && CALL(0x0203a2d5,uint32_t(*)(uint32_t))(heap)<65536u)return;
  init();
-}
-void fwfx_warm_sheet(uint32_t heap,unsigned id,unsigned size){
- /* Same covered window as the effect banks. The show frame then finds this
-  * member already bound and does not upload it while the sprite is scanning. */
- if(fwfx.mode)return;
- if(fwfx.white && fwfx.whiteID==id && fwfx.outlineSize==(size==64?64:32))return;
- if(heap && CALL(0x0203a2d5,uint32_t(*)(uint32_t))(heap)<65536u)return;
- if(!init())return;
- bind_white((uint16_t)id,size);
 }
 static int init_stop(void){
  /* A deferred free can still own the previous map's heap. Drop this partial
@@ -229,7 +190,34 @@ static int init(void){
 }
 void fwfx_prepare(Actor *actor){
  if(fwfx.mode || CALL(0x0203a2d5,uint32_t(*)(uint32_t))(((ActorSystem*)actor->system)->resourceHeap)<65536 || !init())return;
- bind_white(*(uint16_t*)(actor->descriptor+16),actor->descriptor[7]==2?64u:32u);
+ uint16_t id=*(uint16_t*)(actor->descriptor+16);
+ if(fwfx.white && fwfx.whiteID==id)return;
+ free_white();fwfx.whiteID=id;
+ if(!fwfx_resourceCount || id>=fwfx_resourceCount)return;
+ fwfx.white=CALL(0x020493f1,void*(*)(const char*,unsigned))("rom:/a/0/4/8",id);
+ if(!fwfx.white)return;
+ void *tex=CALL(0x0204964d,void*(*)(void*))(fwfx.white);
+ if(!tex){free_white();return;}
+ fwfx.outlineSize=actor->descriptor[7]==2?64:32;
+ fwfx.outlineFrames=(uint8_t)fwfx_outline(tex,fwfx.outlineSize,fwfx.outlineTop,fwfx.outlineBottom);
+ unsigned length=CALL(0x020652e5,unsigned(*)(void*))(tex);
+ uint16_t *palette=CALL(0x0204974d,uint16_t*(*)(void*))(fwfx.white);
+ if(!palette || length>512 || !length){free_white();return;}
+ unsigned count=length/2,minLight=~0u,maxLight=0;
+ for(unsigned i=1;i<count;++i){
+  unsigned color=palette[i];
+  unsigned light=3u*(color&31u)+6u*((color>>5)&31u)+((color>>10)&31u);
+  if(light<minLight)minLight=light;
+  if(light>maxLight)maxLight=light;
+ }
+ unsigned middle=minLight+(maxLight-minLight)/2u;
+ for(unsigned i=0;i<count;++i){
+  unsigned color=palette[i];
+  unsigned light=3u*(color&31u)+6u*((color>>5)&31u)+((color>>10)&31u);
+  palette[i]=(uint16_t)(i&&((minLight==maxLight)?(i&1u):(light>middle))?FWFX_WHITE:FWFX_LIGHT_CYAN);
+ }
+ CALL(0x0204e55d,void(*)(void*,void*))(&fwfx.whiteMaterial,fwfx.white);
+ if(!fwfx.whiteMaterial.texKey || !fwfx.whiteMaterial.plttKey)free_white();
 }
 void fwfx_snapshot(Actor *a){
  if(!fwfx.white || fwfx.mode==2 || (a->flags&4))return;
