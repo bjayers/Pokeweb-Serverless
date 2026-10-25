@@ -107,7 +107,7 @@
       ],
       "continuation": "0x0217fe8c",
       "conflicts": "FieldRoutine_MapSpawnFinish FieldG3D_Update callsite",
-      "status": "Pinned on the supplied US White 2 overlay 36 (00f0fcfc at 0x0217fe88, bl FieldG3D_Update). Stock field DLL exports FollowingPreloadFollower, relocates THUMB_BRANCH_LINK there, records the MatCache lookup in FollowingConfigDebug.insert, and keeps the body hidden until drawWork is a real billboard. Hardware playtest pending.",
+      "status": "Pinned on the supplied US White 2 overlay 36 (00f0fcfc at 0x0217fe88, bl FieldG3D_Update). After a MatCache hit, FollowingPreloadFollower creates the follower with CreateNewActorByParam before FieldG3D_RenderPhase1. Hardware playtest pending.",
       "module": "field"
     },
     {

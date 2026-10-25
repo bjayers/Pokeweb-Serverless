@@ -69,16 +69,27 @@ static uint8_t fwfield_cyclePending;
 static uint32_t fwfield_surfAppearance;
 #endif
 static FweRestore fwfield_restore;
+/* Actor built in MapSpawnFinish, before FollowingUpdate owns the system.
+ * fw_init clears the follower struct; these statics keep the actor. */
+static Actor *fwfield_covered;
+static FwPokemon fwfield_coveredMon;
+static uint16_t fwfield_coveredCode;
+static int8_t fwfield_coveredSlot;
+/* 1 from the covered adopt until the first field update that is not the
+ * entrance fade. That fade must not delete the actor the covered render
+ * already submitted. A later door fade still recalls. */
+static uint8_t fwfield_population;
 #define REGISTRY_MAX (32u+FW_MAX_ROWS*24u)
 static uint8_t fwfield_page[FW_REGISTRY_PAGE];
 static uint16_t fwfield_index[FW_MAX_SPECIES+2];
 static unsigned fwfield_registrySize,fwfield_stride,fwfield_pageFirst,fwfield_pageCount;
-/* FWCG v3. stage, registryBytes, cacheBytes, and reads are the registry load.
- * insert, uid, and mat are the MapSpawnFinish LoadStaticBlact result. insert
- * stays until the next map's preload. uid is the object code passed in. mat's
- * low 16 bits are the cached material and its high 16 bits are the cache flags.
- * Search RAM for 46 57 43 47. Word +4 is version 3. Word +24 is insert. */
-API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads,insert,uid,mat;} FollowingConfigDebug={.magic=0x47435746,.version=3,.cacheBytes=FW_REGISTRY_PAGE,.mat=0xffffffffu};
+/* FWCG v4. stage, registryBytes, cacheBytes, and reads are the registry load.
+ * insert, uid, and mat are the MapSpawnFinish LoadStaticBlact result. covered
+ * is the actor created before that routine's render: 1 means the billboard
+ * slot was real and HIDDEN was clear, so the covered render submits it with
+ * the zone NPCs. Search RAM for 46 57 43 47. Word +4 is version 4. Word +24
+ * is insert. Word +36 is covered. */
+API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads,insert,uid,mat,covered;} FollowingConfigDebug={.magic=0x47435746,.version=4,.cacheBytes=FW_REGISTRY_PAGE,.mat=0xffffffffu};
 /* Searchable emulator diagnostics; values never become save data. */
 API volatile struct { uint32_t magic,version,ticks,spawns,deletes,reason,species,fwfield_code,actor,fwfield_player,visible,resets,system,systemFlags,field,cameraYaw,cameraPitch,depthClass,depthX,depthY,depthZ,modelSize; } FollowingDebug={.magic=0x47445746,.version=2};
 API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags,actorFlags; } FollowingShadowDebug={.magic=0x48535746,.version=1};
@@ -592,25 +603,54 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
  }
  return 1;
 }
+/* Draw flag is already 1. CreateNewActorByParam therefore builds the
+ * billboard inside the constructor. Exist-mat uses the material just
+ * inserted, and the MapSpawnFinish render that follows this hook submits
+ * that quad with the zone NPCs, before the entrance fade. */
+#ifdef FW_STOCK
+static void covered_spawn(void *field, ActorSystem *sys, uint16_t code, const FwPokemon *mon, int slot){
+ void *fp=PTR(field,0x94);
+ Actor *player=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
+ if(!player||!(player->flags&USE)){FollowingConfigDebug.covered=2;return;}
+ unsigned free=0;
+ for(unsigned i=0;i<sys->capacity;++i)if(!(sys->actors[i].flags&USE))++free;
+ if(free<2){FollowingConfigDebug.covered=5;return;}
+ unsigned id;
+ for(id=0xf0;id<=0xf8;++id){unsigned i;for(i=0;i<sys->capacity;++i)if((sys->actors[i].flags&USE)&&sys->actors[i].id==id)break;if(i==sys->capacity)break;}
+ if(id>0xf8||CALL(0x0203a2d5,uint32_t(*)(uint32_t))(sys->resourceHeap)<32768){FollowingConfigDebug.covered=5;return;}
+ Actor *a=CALL(0x021668c1,Actor*(*)(ActorSystem*,int,int,unsigned,unsigned,unsigned,unsigned,unsigned))(sys,player->grid[0],player->grid[2],player->face,id,code,0,player->zone);
+ if(!a){FollowingConfigDebug.covered=3;return;}
+ a->flags|=NONBLOCKING|NO_QUERY|KEEP_ZONE; a->flags&=~HIDDEN;
+ a->moveflags|=NOT_SAVE|NO_EFFECT; a->moveflags&=~(8u|2048u|4096u);
+ a->callbacks=&fwfield_moves; a->world=player->world;
+ fwr_anchor(a,player->face);
+ fwfield_covered=a; fwfield_coveredMon=*mon; fwfield_coveredCode=code; fwfield_coveredSlot=(int8_t)slot;
+ fwfield_code=code;
+ FollowingDebug.actor=(uint32_t)a; FollowingDebug.visible=1; FollowingDebug.species=mon->species; FollowingDebug.fwfield_code=code;
+ FollowingConfigDebug.covered=body_sheet_ready(a)?1:4;
+}
+#endif
 /* MapSpawnFinish case 0 has finished the actor and weather drains.
  * field+8 is GameData. field+0x40 is the actor system. The entrance fade
- * has not run, so LoadStaticBlact is the covered retail upload.
+ * has not run, so LoadStaticBlact is the covered retail upload and the
+ * CreateNewActorByParam below is the covered retail spawn.
  * A config miss on this first try is cleared; the field update can retry.
  * Emote sheets stay off this path.
- * FollowingConfigDebug.insert records this call. 8 means FindCachedObjMat
- * found uid with a material and flags bit 2 clear, which is the exist-mat
- * spawn. Read it from RAM after the entrance fade, before the next zone. */
+ * FollowingConfigDebug.insert records the cache lookup. 8 means FindCachedObjMat
+ * found uid with a material and flags bit 2 clear. covered 1 means the actor
+ * was created with that billboard before the render. Read both after the
+ * entrance fade, before the next zone. */
 #ifdef FW_STOCK
 API void FollowingPreloadFollower(void *field, void *actorSystem) {
- FollowingConfigDebug.insert=1;FollowingConfigDebug.uid=0;FollowingConfigDebug.mat=0xffffffffu;
+ FollowingConfigDebug.insert=1;FollowingConfigDebug.uid=0;FollowingConfigDebug.mat=0xffffffffu;FollowingConfigDebug.covered=0;
  if(!field||!actorSystem)return;
  void *game=PTR(field,8);
  if(!game){FollowingConfigDebug.insert=2;return;}
  if(followers_off(game)){FollowingConfigDebug.insert=3;return;}
  int fresh=!fwfield_configState;
  if(!config()){if(fresh)fwfield_configState=0;FollowingConfigDebug.insert=4;return;}
- FwPokemon selected;
- if(!select(game,field,&selected,0,0,0)){FollowingConfigDebug.insert=5;return;}
+ FwPokemon selected;int slot=-1;
+ if(!select(game,field,&selected,0,0,&slot)){FollowingConfigDebug.insert=5;return;}
  uint16_t code=model(&selected);
  if(!code){FollowingConfigDebug.insert=6;return;}
  CALL(0x0219386d,void(*)(void*,unsigned))(actorSystem,code);
@@ -622,6 +662,7 @@ API void FollowingPreloadFollower(void *field, void *actorSystem) {
  if(hit&&found[0]!=0xffffu&&!(found[1]&2u))FollowingConfigDebug.insert=8;
  else if(hit)FollowingConfigDebug.insert=9;
  else FollowingConfigDebug.insert=7;
+ if(FollowingConfigDebug.insert==8)covered_spawn(field,(ActorSystem*)actorSystem,code,&selected,slot);
 }
 #endif
 static void cycle_follower(void *game,void *field){
@@ -745,6 +786,21 @@ static void before(ActorSystem *sys) {
   }
   fwfield_landCarry=(uint8_t)(carry&&fwfield_restore.magic==FWE_RESTORE_MAGIC);
 #endif
+  if(fwfield_covered&&fwfield_covered->system==sys&&(fwfield_covered->flags&USE)&&fwfield_covered->callbacks==&fwfield_moves){
+   if(!fwfield_follower.has_selection||fw_same_identity(&fwfield_coveredMon,&fwfield_follower.selected)){
+    fwfield_follower.actor=(uintptr_t)fwfield_covered;
+    fwfield_follower.selected=fwfield_coveredMon;
+    fwfield_follower.slot=fwfield_coveredSlot;
+    fwfield_follower.has_selection=1;
+    fwfield_follower.state=FW_FOLLOWING;
+    fwfield_code=fwfield_coveredCode;
+    FollowingDebug.actor=(uint32_t)fwfield_covered;
+    FollowingDebug.visible=!(fwfield_covered->flags&HIDDEN);
+    fwfield_population=1;
+    ++FollowingDebug.spawns;
+   }else CALL(0x02166981,void(*)(Actor*))(fwfield_covered);
+   fwfield_covered=0;
+  }
  }
  void *field=sys->field;
  if(fwt_active()&&!fwt_owns(field))fwt_cancel();
@@ -789,13 +845,20 @@ static void before(ActorSystem *sys) {
   if(!reason&&!ownTalk&&!paused&&!fwt_active())cycle_follower(game,field);
  }
  FollowingDebug.reason=reason;
- if(reason){if(fwfield_eventsReady)FollowingEventsAPI.discard();clear_restore();fwt_cancel();
+ /* Bits 4 and 16 are the player-hidden and fade gates. The actor created
+  * before the covered render stays through that entrance, with the zone NPCs. */
+ if(fwfield_population&&reason&&!(reason&~(4u|16u))){
+  if(reason&16)fwfx_warm(sys->resourceHeap);
+  return;
+ }
+ if(reason){fwfield_population=0;if(fwfield_eventsReady)FollowingEventsAPI.discard();clear_restore();fwt_cancel();
 #ifdef FW_MOUNT
   if(fwland_active()){((Actor*)fwfield_follower.actor)->flags|=HIDDEN;fwland_end();}
   fwfield_landCarry=0;
 #endif
   if(!(reason&4096)&&(reason&16))fwfx_warm(sys->resourceHeap);
   if(owned() && !( ((Actor*)fwfield_follower.actor)->flags&HIDDEN) && (reason&(8|16|32)))fwfx_recall((Actor*)fwfield_follower.actor);else if(fwfield_follower.actor)fwfx_cancel();cleanup();return;}
+ fwfield_population=0;
 #ifdef FW_MOUNT
  if(fwland_invalid()&&owned()){
   Actor *a=(Actor*)fwfield_follower.actor;
@@ -805,7 +868,7 @@ static void before(ActorSystem *sys) {
  }
 #endif
  FollowingDebug.fwfield_player=(uint32_t)fwfield_player; FollowingDebug.species=fwfield_follower.selected.species; FollowingDebug.fwfield_code=fwfield_code;
- if(fwfield_follower.actor && !owned()){fwfield_follower.actor=0;fw_trail_clear(&fwfield_follower.trail);clear_ease();}
+ if(fwfield_follower.actor && !owned() && !fwfield_population){fwfield_follower.actor=0;fw_trail_clear(&fwfield_follower.trail);clear_ease();}
  if(paused&&fwfield_restore.magic!=FWE_RESTORE_MAGIC)return;
  /* Only a matching storage return may reconstruct during a paused event. */
  if(fwfield_restore.magic==FWE_RESTORE_MAGIC&&(!fw_same_identity(&fwfield_restore.selected,&fwfield_follower.selected)
@@ -1047,6 +1110,7 @@ API int FollowingUnload(void *game,void *field) {
  fwsurf_destroy();fwfield_surfAppearance=0;
 #endif
 fwfield_pageCount=fwfield_stride=0;
+ fwfield_covered=0;fwfield_population=0;
  fwfield_owner=0;fwfield_configState=0;fwfield_registrySize=0;return FollowingOriginalUnload(game,field); }
 
 /* Original event providers retain first refusal for every retail event. */
