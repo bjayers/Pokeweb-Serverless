@@ -182,6 +182,45 @@ A one-pixel change to `sprite_y` was not added. It would lift every frame and le
 
 Keep one foot row inside the cell, with at least one transparent row, on every frame of a facing. Let the engine own the hop.
 
+## Axes
+
+At draw time the up axis is world Y. It is the same Y the map tools in this repo call height. It is not the north/south axis, and it is not Blender's Z.
+
+| Name | East / west | North / south | Up |
+| --- | --- | --- | --- |
+| Gen 5 actor and `fwr_draw` | `world.x`, `grid[0]`. Positive is east. | `world.z`, `grid[2]`. Positive is south. | `world.y`, `grid[1]` |
+| This repo's map preview and `actor_set_g_pos` | X | Z | Y |
+| 2D matrix and dialogue bounds | X, increasing east | Y, increasing south. There is no Z. | not this pair |
+| Blender after the glTF import | horizontal | horizontal | Z. The importer turns the game's Y-up into Blender's Z-up. |
+
+Proof, from code this module runs:
+
+- `fwr_world_apart` copies Y and, when the pair is closer than one unit, steps the back direction: face 0 adds Z, face 1 subtracts Z, face 2 adds X, face 3 subtracts X. North's back is south, so positive Z is south and positive X is east. Y is not a compass axis.
+- `camera_plane` builds the ground right vector as `(view.z, 0, -view.x)`. The zero is world Y. XZ is the ground plane.
+- `screen_span` puts the quad bottom on the billboard position and the top `sy * 16` along that camera up. The position is the foot anchor. `fwr_draw` adds `(sprite_y - descriptor[14]) * 4096` to `position.y` only. One registry pixel is one world unit (`4096`). `FW_TILE` is `16 * 4096`.
+- `interaction.c` states it: native grid Y is height, grid Z is map tile Y. Spawn passes `grid[0]` and `grid[2]` to the retail constructor. `centered` tests X and Z, not Y.
+- The NPC event record stores map X and map Z as tiles and height as an fx32 (`map3dModel.ts`). Registry byte 14 is `wPosOffY`, the same descriptor byte `fwr_draw` subtracts. `actor_set_g_pos` (`0x6d`) documents Y as height and Z as the north/south axis.
+- `docs/map-blender-export.md` says the exported map is Y-up and Blender's importer converts it to Z-up. A height nudge typed into Blender's Z is this module's Y. A nudge typed into Blender's Y is not height. Do not swap again on import (`docs/map-glb-import-plan.md`).
+
+The oval is not on that billboard Y. `fwr_shadow_pass` does not move it. Descriptor byte 14 stays 0 so the engine sample stays on the actor. `FollowingRenderDebug.groundY` (`+104`) is `world.y` when the shadow is live.
+
+## The remaining foot gap
+
+Playtest after `02a9907`: feet sit a little lower than the player, bob-down clips the floor, and the oval shows on that dip. The oval stays the engine sample. Do not slide it, and do not add a camera keep.
+
+Actor height is already shared. `player_sample` stores `world.y + drawOffset.y + externalOffset.y`, and `bind_pose` writes that into the follower's `world.y`. On flat ground the two actors match. A lower picture is the billboard, not a second actor Y.
+
+The billboard bottom relative to actor ground is `(submitted.y - groundY) / 4096` pixels. `submitted` is the FwPoint at `FollowingRenderDebug + 60` (`submitted.y` at `+64`). `native.y` is at `+52`. With descriptor byte 14 at 0, `submitted.y - native.y` is `sprite_y * 4096` plus nothing else. The visible foot is that quad bottom plus the sheet pad. Automatic `sprite_y` is `-pad`, so the settled visible foot is on actor ground, `pad` pixels below a map NPC whose descriptor Y is 0 and whose pad is the same. Bob-down then carries the opaque foot through the floor and through the oval. A pad of 0 on a step cell still touches the quad edge even if `sprite_y` is 0.
+
+Measure once, on flat ground, at the high pose and at bob-down, same facing:
+
+1. Follower `actor+72` minus player `actor+72`, divided by 4096. Expect 0. Actor layout is `native.h`: `world` at `+68`.
+2. `(FollowingRenderDebug + 64) - (FollowingRenderDebug + 104)`, divided by 4096. That is the quad bottom against actor ground.
+3. Add the displayed frame's transparent foot rows. That sum is the visible foot against the oval.
+4. The gap to close is how many of those pixels the player and a nearby NPC still have above the ground. If it equals the current `-sprite_y`, the registry value is the whole error.
+
+Next change, if that measurement holds: stop deriving the automatic offset as `-pad`. Leave it at 0, the same value as descriptor byte 14 and a map NPC. That is one body-only rise of `pad` world units, already on `position.y`, with no new `fwr_draw` constant and no per-facing case. Explicit offsets and Flying stay. Do not add a second constant on top of `-pad`. Do not write `world.y` or descriptor byte 14; either one moves the oval. A shared leftover after `sprite_y` is 0, the same pixel count on every species and every facing, is the only reason to add one more `position.y` constant, and that constant is measured pixels times 4096.
+
 ## Playtest
 
 - Castelia outer ring, walking past street NPCs: the player stays behind people who stand nearer the camera. No constant follower pop in/out.
