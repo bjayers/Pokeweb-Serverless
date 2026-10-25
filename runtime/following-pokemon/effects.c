@@ -263,6 +263,10 @@ static void draw_emote(void *camera,void *light){
  if(!scene||id>=*(uint16_t*)((uint8_t*)bl+0x1c))return;
  unsigned index=U32(PTR(bl,0x18),id*40);if(index>=scene->actorCount)return;
  Billboard *body=&scene->actors[index];
+ /* The body quad is restored to the engine foot after submit. The bubble
+  * follows the submitted pose: registry Y plus the two-pixel lift, and a
+  * bob that landed on the live quad after that restore. It does not keep
+  * a second foot line. */
  FwrEffectPose pose={body->pos,body->sx,body->sy};
  fwr_effect_pose(a,&body->pos,&pose);
  FwrCamera view={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};

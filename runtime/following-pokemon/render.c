@@ -54,6 +54,8 @@ static struct {
  FwrEffectPose submitted;
  Actor *player;Vec playerWorld;FwrEffectPose playerSubmitted;
 } effectPose;
+/* Set when the oval scene was submitted before the actor scene this frame. */
+static int shadowAhead;
 /* Work points 24 bytes into a fixed-pool task; leave the complete checked
  * task span inside real RAM, including the original 192-byte tail margin. */
 int fwr_grass_work_valid(const void *work){
@@ -109,12 +111,23 @@ void fwr_effects_draw(void *system,void *camera,void *light,Actor *a){
  CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
  for(unsigned i=0;i<count;++i)*changed[i]=original[i];
 }
-int fwr_effect_pose(Actor *actor,const Vec *native,FwrEffectPose *out){
- if(!actor||!native||!out||effectPose.actor!=actor||
+int fwr_effect_pose(Actor *actor,const Vec *live,FwrEffectPose *out){
+ if(!actor||!live||!out||effectPose.actor!=actor||
     effectPose.resource!=*(uint16_t*)(actor->descriptor+16)||
-    effectPose.world.x!=actor->world.x||effectPose.world.y!=actor->world.y||effectPose.world.z!=actor->world.z||
-    effectPose.native.x!=native->x||effectPose.native.y!=native->y||effectPose.native.z!=native->z)return 0;
- *out=effectPose.submitted;return 1;
+    effectPose.world.x!=actor->world.x||effectPose.world.y!=actor->world.y||effectPose.world.z!=actor->world.z)return 0;
+ /* Draw has not restored yet: the live quad is already the submitted pose. */
+ if(live->x==effectPose.submitted.position.x&&live->y==effectPose.submitted.position.y&&live->z==effectPose.submitted.position.z){
+  *out=effectPose.submitted;return 1;
+ }
+ /* Restored native, or a bob that landed after the restore. Keep the
+  * draw-only lift (registry Y plus two world pixels). Do not drop the
+  * attached effect back to the unlifted foot. */
+ int32_t lift=effectPose.submitted.position.y-effectPose.native.y;
+ int64_t y=(int64_t)live->y+lift;
+ if(y<INT32_MIN||y>INT32_MAX)return 0;
+ *out=effectPose.submitted;
+ out->position.x=live->x;out->position.y=(int32_t)y;out->position.z=live->z;
+ return 1;
 }
 static Billboard *billboard(void *system,Actor *a){
  if(!a||!(a->flags&1)||(a->flags&4)||!a->system)return 0;
@@ -203,12 +216,29 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
 }
+/* The retail field draw loads actor billboards from field+0xc0 and the
+ * shadow billboards from field+0xc4, then submits actors first. A tie
+ * therefore paints the oval over the feet, and a bob that drops the body
+ * onto the oval makes that tie. Submit the oval scene first so the body
+ * wins the tie. The oval's coordinates are not edited. */
+int fwr_shadow_before_actors(void *actorBl,void *camera,void *light,Actor *follower){
+ shadowAhead=0;
+ if(!actorBl||!camera||!light||!follower||!follower->system)return 0;
+ void *field=((ActorSystem*)follower->system)->field;
+ if(!field||PTR(field,0xc0)!=actorBl)return 0;
+ void *shadow=PTR(field,0xc4);
+ if(!shadow||shadow==actorBl)return 0;
+ CALL(0x0204f685,void(*)(void*,void*,void*))(shadow,camera,light);
+ shadowAhead=1;return 1;
+}
 /* Secondary/shadow pass. The engine oval is submitted as the engine built
- * it. This hook does not search, plant, or slide that quad. */
+ * it. This hook does not search, plant, or slide that quad. When the oval
+ * scene was already submitted before the bodies, skip the second submit. */
 void fwr_shadow_pass(void *system,void *camera,void *light){
  FollowingRenderDebug.shadowChange=0;FollowingRenderDebug.shadowCount=0;
  FollowingRenderDebug.shadowNativeY=0;FollowingRenderDebug.groundY=shadowTie.valid?shadowTie.ground.y:0;FollowingRenderDebug.gap=0;
  FollowingRenderDebug.snap=0;FollowingRenderDebug.nearY=0;FollowingRenderDebug.nearGeom=-1;FollowingRenderDebug.nearWhy=0;
- CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
+ if(!shadowAhead)CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
+ shadowAhead=0;
  shadowTie.valid=shadowTie.hasPlayer=0;shadowTie.keep=FWR_SHADOW_KEEP;
 }

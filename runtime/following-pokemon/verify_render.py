@@ -26,12 +26,13 @@ def call(name,args):
  assert uc.reg_read(UC_ARM_REG_PC)==STOP and uc.reg_read(UC_ARM_REG_SP)==STACK
  for i,r in enumerate(range(UC_ARM_REG_R4,UC_ARM_REG_R11+1)):assert uc.reg_read(r)==0x12340000+i
 P=0x02220000;A=P+256;SYS=P+0x1000;FBL=SYS+0x100;BL=SYS+0x200;SCENE=SYS+0x300;SLOTS=SYS+0x400;BILL=SYS+0x500;CAM=SYS+0x600;LIGHT=SYS+0x700
-seen=[];player_seen=[];npc_seen=[];light_seen=[];expected_args=[BL,CAM,LIGHT]
+seen=[];player_seen=[];npc_seen=[];light_seen=[];expected_args=[BL,CAM,LIGHT];pending=[]
 EFFBL=0x02223800;GQUAD=0x02223a00;grass_seen=[]
 def spy(u,pc,size,user):
  if pc!=0x0204f684:return
  assert u.reg_read(UC_ARM_REG_SP)%8==0
- assert [u.reg_read(r) for r in [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2]]==expected_args
+ args=[u.reg_read(r) for r in [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2]]
+ assert args==pending.pop(0) if pending else args==expected_args,args
  seen.append((read(BILL+28+4,'3i'),read(BILL+28+18,'2h'),read(addr('FollowingRenderDebug')+24,'3i')))
  player_seen.append((read(BILL+4,'3i'),read(BILL+18,'2h')))
  npc_seen.append(read(BILL+56+4,'3i'))
@@ -140,6 +141,19 @@ effect=SYS+0x800
 call('fwr_effect_pose',[A,BILL+32,effect])
 assert uc.reg_read(UC_ARM_REG_R0)==1
 assert read(effect,'3i2h')==(*submitted,*scales),'Recall must retain the visible corrected pose'
+# The restored quad can bob after the submit. The bubble keeps the draw-only
+# lift on that live foot. A quad that is already the submitted pose is not
+# lifted a second time.
+vec(BILL+32,(original[0],original[1]+4096,original[2]))
+call('fwr_effect_pose',[A,BILL+32,effect])
+assert uc.reg_read(UC_ARM_REG_R0)==1
+drift=read(effect,'3i2h')
+assert drift==(original[0],original[1]+4096-5*4096+BODY_LIFT,original[2],*scales),drift
+vec(BILL+32,submitted)
+call('fwr_effect_pose',[A,BILL+32,effect])
+assert uc.reg_read(UC_ARM_REG_R0)==1
+assert read(effect,'3i2h')==(*submitted,*scales),'submitted quad was lifted twice'
+vec(BILL+32,original)
 vec(A+68,(65536,0,4096));call('fwr_effect_pose',[A,BILL+32,effect])
 assert uc.reg_read(UC_ARM_REG_R0)==0,'Moved actor reused a stale recall pose'
 vec(A+68,(65536,0,0))
@@ -281,6 +295,39 @@ assert biased==0 and snap==0 and hold==0 and ground_y==65536,(biased,shadow,subm
 assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
 call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
 assert read(addr('FollowingRenderDebug')+84,'i')[0]==0
+# The oval scene goes out before the body when field+0xc0 is this actor
+# system and field+0xc4 is the shadow system. The oval is not moved, and the
+# later hook does not submit it again. A mismatched actor slot does not.
+setup(64);half(A+24,1);put(A+4,0x4000)
+vec(A+68,(0,65536,-65536));vec(BILL+32,(0,65536,-65536))
+FIELDW=0x02225000
+uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL);put(FIELDW+0xc4,EFF)
+uc.mem_write(EFF,bytes(0x400))
+put(EFF+4,ESCENE);put(EFF+0x18,ESLOTS);half(EFF+0x1c,2)
+put(ESLOTS,0);put(ESLOTS+40,1)
+put(ESCENE+8,EQUAD);half(ESCENE+14,2)
+half(EQUAD,13);half(EQUAD+18,4096);half(EQUAD+20,4096);half(EQUAD+24,0x021f)
+vec(EQUAD+4,(0,65536,-65536))
+half(EQUAD+28,13);half(EQUAD+28+18,4096);half(EQUAD+28+20,4096);half(EQUAD+28+24,0x021f)
+vec(EQUAD+28+4,(0,65536,65536))
+near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
+body_before=bytes(uc.mem_read(BILL,56))
+pending=[[EFF,CAM,LIGHT],[BL,CAM,LIGHT]]
+n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
+assert pending==[] and len(seen)==n+2,(pending,len(seen)-n)
+assert seen[-1][0]==(0,65536+BODY_LIFT,-65536),seen[-1]
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+assert bytes(uc.mem_read(BILL,56))==body_before
+n=len(seen);call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert len(seen)==n,'oval scene was submitted twice'
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+setup(64);put(A+4,0x4000);vec(BILL+32,(0,65536,-65536))
+uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL+4);put(FIELDW+0xc4,EFF)
+n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
+assert len(seen)==n+1 and seen[-1][0][1]==65536+BODY_LIFT
+expected_args=[EFF,CAM,LIGHT]
+n=len(seen);call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert len(seen)==n+1,'mismatched field still owes the oval submit'
 expected_args=[BL,CAM,LIGHT]
 # Invalid/stale/unsupported objects forward once without mutating the scene.
 for invalid in ('hidden','unused','lost','foreign','slot','index','mode','camera','zero-camera','scale'):

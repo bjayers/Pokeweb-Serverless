@@ -929,6 +929,9 @@ API void FollowingUpdate(ActorSystem *sys) {
  }
 }
 API void FollowingDraw(void *system,void *camera,void *light){
+ /* Oval scene before bodies. Grass still runs after the actor submit, and
+  * the later shadow hook skips the duplicate oval submit. */
+ fwr_shadow_before_actors(system,camera,light,owned()?(Actor*)fwfield_follower.actor:0);
 #ifdef FW_MOUNT
  if(fwland_active()){
   fwland_draw(system,camera,light,owned()?(Actor*)fwfield_follower.actor:0,fwfield_player,fwfield_follower.sprite_y,fwfield_tick);
