@@ -1,6 +1,6 @@
 # Follower render: world feet
 
-The draw submits the native billboard plus one registry Y, on every facing. It does not plant bob-down, does not add the north-only two pixels, and does not slide the body or the oval. The trail, swap, ease, rail, recall, and talk code are unchanged. The player quad is not written.
+The draw submits the native billboard plus one registry Y and two world pixels, on every facing. It does not plant bob-down, does not add the north-only two pixels, and does not slide the body or the oval. The trail, swap, ease, rail, recall, and talk code are unchanged. The player quad is not written.
 
 ## What the frame does now
 
@@ -9,7 +9,7 @@ The follower actor's world pose is the placement. Trail, swap, ease, and rails w
 Submitted follower quad:
 
 - Start from the native billboard, which already includes the world pose and the idle hop.
-- Apply the registry Y (`sprite_y` minus descriptor byte 14) on this quad only. Every facing uses that same offset. Nothing adds Z.
+- Apply the registry Y (`sprite_y` minus descriptor byte 14) plus two world pixels on this quad only. Every facing uses that same offset. Nothing adds Z.
 - Copy the player's light-mask bits onto the follower for the submit, then restore the follower quad. The player billboard, world, moveflags, and animation are not written.
 
 `policy` and `sortMargin` stay 0. `before` / `after` / `depthRel` are the submitted view gap, hop included. `hold` is always 0. `snap` is always 0. The debug record layout is unchanged.
@@ -114,7 +114,7 @@ Shipped in the draw. The body is the native billboard plus registry Y. Automatic
 
 Use the pose that already matches on a slope, a stair, and mid-step. Stop maintaining a second foot line.
 
-- Body: native billboard plus the registry Y (`sprite_y - descriptor[14]`) for every facing. No north-only pixels, no foot-line plant, no `fwr_plane_keep` on the body. Idle bob stays the engine's bob. Flat, slope, stair, and rail all take this path.
+- Body: native billboard plus the registry Y (`sprite_y - descriptor[14]`) plus two world pixels, for every facing. No north-only pixels, no foot-line plant, no `fwr_plane_keep` on the body. Idle bob stays the engine's bob. Flat, slope, stair, and rail all take this path.
 - Oval: leave the engine sample. Do not search it, do not retarget its XZ, do not assign `world.y` over it, do not run a camera keep. The slope looks seated when this sample survives. The shadow hook still submits the scene it already submits. No new GX upload.
 - Sort, if the oval is still over the feet after that: the two quads share a foot and the oval is submitted later. The next change is order inside the existing passes, after one traced frame shows the depth word. No world slide, and no return of the eye-ray stack or the player write.
 - Props, monitors, counters, and angled floor texels: a later depth budget against static mesh, reading bounds the way `fwr_box_advance_limit` already knows how to read them. It does not write the player, and it does not grow a per-facing table.
@@ -210,9 +210,13 @@ Playtest after `02a9907` showed feet a little lower than the player, bob-down cl
 
 Actor height is already shared. `player_sample` stores `world.y + drawOffset.y + externalOffset.y`, and `bind_pose` writes that into the follower's `world.y`. On flat ground the two actors match.
 
-With automatic Y at 0 and descriptor byte 14 at 0, the settled quad bottom is the native billboard. The visible foot is that bottom plus the sheet pad, which is the map-NPC placement. A pad of 0 on a step cell still touches the quad edge. Bob-down is the engine hop. A shared leftover after this, the same pixel count on every species and every facing, is the only reason to add one more `position.y` constant, and that constant is measured pixels times 4096.
+With automatic Y at 0 and descriptor byte 14 at 0, the native quad bottom is the actor anchor. The visible foot is that bottom plus the sheet pad. A pad of 0 still touches the edge, and the engine hop then dips the opaque foot through the floor and the oval. That is the leftover low look. It is not another down-pull in the module.
 
-The same debug subtraction still reads the result. `submitted.y` is at `FollowingRenderDebug + 64`, `native.y` at `+52`, and `groundY` at `+104`. `(submitted.y - groundY) / 4096` is the quad bottom against actor ground. Follower `actor+72` minus player `actor+72`, divided by 4096, is the actor-height gap. Expect 0.
+`fwr_draw` now adds two world pixels (`2 * 4096`) on top of the registry delta, on every facing. The actor, descriptor byte 14, and the oval are not written. A sheet whose step cells already sit on the quad edge can still clip if the hop is deeper than those two pixels.
+
+Do not hex-edit `following/runtime-registry.bin` to try this. File offset `0x2D` is the first v3 record's Y (header `03 00` at offset 4, records at `0x20`, Y at record `+13`), and a value of 1 or 2 is a legal `int8`. `fw_registry_stream` then rejects the file: the CRC at registry offset 24 and the outer CRC in `native.bin` (`encodeFollowerNativeConfig`, word at offset 24) no longer match. `config()` fails and every follower stays unloaded. Putting the byte back to 0 restores both checksums. Same-version install also does not rewrite that registry, so a derive change does not reach a DLL-only reinstall.
+
+The debug subtraction still reads the result. `submitted.y` is at `FollowingRenderDebug + 64`, `native.y` at `+52`, and `groundY` at `+104`. With registry Y 0, `(submitted.y - native.y) / 4096` is 2. Follower `actor+72` minus player `actor+72`, divided by 4096, stays 0.
 
 ## Playtest
 

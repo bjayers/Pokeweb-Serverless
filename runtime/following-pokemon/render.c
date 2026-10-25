@@ -150,9 +150,10 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    int64_t py=(int64_t)player->world.y+player->drawOffset.y+player->externalOffset.y;
    int32_t playerY=py<INT32_MIN||py>INT32_MAX?player->world.y:(int32_t)py;
    /* Registry Y replaces descriptor byte 14 on this quad only. Every facing
-    * uses that one offset. The engine hop stays in the native billboard.
-    * The camera does not move the quad, and no facing adds Z. */
-   int delta=sprite_y-(int8_t)a->descriptor[14];
+    * uses that one offset, then two world pixels of body lift. The engine hop
+    * stays in the native billboard. The camera does not move the quad, no
+    * facing adds Z, and the actor and its oval are not written. */
+   int delta=sprite_y-(int8_t)a->descriptor[14]+2;
    int64_t y=(int64_t)adjusted.position.y+(int64_t)delta*4096;
    if(delta&&y>=INT32_MIN&&y<=INT32_MAX){adjusted.position.y=(int32_t)y;changed=1;}
    int swapping=0,easing=0;uint32_t traveled=0;

@@ -1,4 +1,6 @@
 """Final packaged draw-stage checks. Native GPU submission is a spy, not an emulator."""
+# fwr_draw adds this many world pixels to every submitted follower billboard.
+BODY_LIFT = 2 * 4096
 from verify_packaged import *
 from unicorn import UC_HOOK_CODE
 import ndspy.rom,hashlib,sys,math
@@ -91,7 +93,7 @@ for size in (32,64):
     vec(BILL+32,(65536-8192,bob,-8192))
     submitted,scales,depth=draw();frames+=1
     assert scales==(size*256,size*256),(size,scales)
-    assert submitted[1]==bob
+    assert submitted[1]==bob+BODY_LIFT
     assert player_seen[-1]==((0,0,0),(8192,8192))
     assert depth[0]==0
     xz=(submitted[0],submitted[2])
@@ -107,14 +109,14 @@ for eye in [(200*4096,120*4096,0),(-120*4096,210*4096,80*4096),(80*4096,200*4096
  length=math.hypot(eye[0],eye[2]);base=(int(65536*eye[2]/length),0,int(-65536*eye[0]/length))
  vec(A+68,base);vec(BILL+32,(base[0],6144,base[2]));vec(BILL+4,(0,1024,0))
  submitted,scales,depth=draw()
- assert submitted[1]==6144 and scales==(8192,8192) and depth[0]==0
+ assert submitted[1]==6144+BODY_LIFT and scales==(8192,8192) and depth[0]==0
  assert player_seen[-1][0]==(0,1024,0)
 # Height stays on the actor. A stair does not take an eye-ray branch, and the
 # player billboard is not rewritten to sort the follower.
 for base in ((65536,65536,0),(65536,-32740,0),(0,-65536,65536)):
  setup(64);vec(A+68,base);vec(BILL+32,(base[0],base[1]+6144,base[2]-8192))
  submitted,scales,depth=draw()
- assert submitted[1]==base[1]+6144 and scales==(64*256,64*256),(base,submitted,scales)
+ assert submitted[1]==base[1]+6144+BODY_LIFT and scales==(64*256,64*256),(base,submitted,scales)
  assert player_seen[-1][0]==(0,0,0)
  assert depth[0]==0
 # The registry Y offset must affect the follower quad only. Disable the player
@@ -122,7 +124,7 @@ for base in ((65536,65536,0),(65536,-32740,0),(0,-65536,65536)):
 # five-pixel delta, then verify the native effects pass sees the original pose.
 setup();uc.mem_write(F+51,b'\xfb');half(BILL,0x400d)
 vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
-assert draw()[0]==(original[0],original[1]-5*4096,original[2])
+assert draw()[0]==(original[0],original[1]-5*4096+BODY_LIFT,original[2])
 n=len(seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0]==original
 assert read(BILL+32,'3i')==original
@@ -131,7 +133,7 @@ assert read(BILL+32,'3i')==original
 setup();put(A+4,0x4000);uc.mem_write(F+51,b'\xfb');half(BILL,0x400d)
 vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
 submitted,scales,_=draw()
-assert submitted==(original[0],original[1]-5*4096,original[2]),submitted
+assert submitted==(original[0],original[1]-5*4096+BODY_LIFT,original[2]),submitted
 assert scales==(8192,8192)
 assert read(BILL+32,'3i')==original
 effect=SYS+0x800
@@ -147,7 +149,7 @@ assert len(seen)==n+1 and seen[-1][0]==original
 for face in range(4):
  setup();uc.mem_write(F+51,b'\xfb');half(BILL,0x400d);half(A+24,face)
  vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
- assert draw()[0]==(original[0],original[1]-5*4096,original[2]),face
+ assert draw()[0]==(original[0],original[1]-5*4096+BODY_LIFT,original[2]),face
  assert read(BILL+32,'3i')==original
  assert read(addr('FollowingRenderDebug')+24,'i')[0]==0
  assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
@@ -157,13 +159,13 @@ for face,world in ((1,(0,65536,-65536)),(0,(0,65536,-65536))):
  setup();half(A+24,face);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
  vec(A+68,world);vec(P+68,(0,0,0));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
  vec(BILL+32,(world[0],world[1],world[2]))
- assert draw()[0]==world,face
+ assert draw()[0]==(world[0],world[1]+BODY_LIFT,world[2]),face
  assert read(addr('FollowingRenderDebug')+24,'i')[0]==0
  assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
 setup();half(A+24,1);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
 vec(A+68,(0,0,-65536));vec(P+68,(0,0,0));vec(CAM+32,(581835,760739,0));vec(CAM+56,(0,0,0))
 vec(BILL+32,(0,0,-65536))
-assert draw()[0]==(0,0,-65536)
+assert draw()[0]==(0,BODY_LIFT,-65536)
 assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
 # Facing does not change the registry offset. The player quad is not involved.
 setup();uc.mem_write(F+51,b'\xfa');half(A+24,2);half(BILL,0x400d)
@@ -190,7 +192,7 @@ uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\xfb')
 vec(CAM+32,(0,760739,581835));vec(A+68,(0,0,-65536))
 vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152-6*4096))
 submitted,scales,depth=draw()
-assert submitted==(0,-340-5*4096,-49152-6*4096),submitted
+assert submitted==(0,-340-5*4096+BODY_LIFT,-49152-6*4096),submitted
 assert scales==(64*256,64*256) and depth[0]==0
 assert player_seen[-1][0]==(0,-6484,0)==read(BILL+4,'3i')
 assert all(draw()==(submitted,scales,depth) for _ in range(5))
@@ -204,7 +206,7 @@ for player_face in range(4):
  vec(CAM+32,(5406720,777123,1466571));vec(CAM+56,(5406720,16384,884736))
  vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584-6*4096))
  initial=bytes(uc.mem_read(BILL,56));submitted,scales,depth=draw()
- assert submitted==(5406720,-340,835584-6*4096),(player_face,submitted)
+ assert submitted==(5406720,-340+BODY_LIFT,835584-6*4096),(player_face,submitted)
  assert scales==(64*256,64*256) and depth[0]==0
  assert player_seen[-1][0]==(5406720,-6484,884736)==read(BILL+4,'3i'),player_face
  assert bytes(uc.mem_read(BILL,56))==initial,player_face
@@ -257,7 +259,7 @@ setup(64);half(A+24,1);put(A+4,0x4000)
 vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
 vec(BILL+4,(0,0,0));vec(BILL+32,(0,65536,-65536))
 submitted,scales,depth=draw()
-assert submitted==(0,65536,-65536) and scales==(64*256,64*256),(submitted,scales)
+assert submitted==(0,65536+BODY_LIFT,-65536) and scales==(64*256,64*256),(submitted,scales)
 assert depth[0]==0 and player_seen[-1][0]==(0,0,0)
 EFF=0x02226000;ESCENE=EFF+0x100;ESLOTS=EFF+0x180;EQUAD=EFF+0x300
 uc.mem_write(EFF,bytes(0x400))
@@ -293,7 +295,12 @@ for invalid in ('hidden','unused','lost','foreign','slot','index','mode','camera
  if invalid=='camera':put(CAM,3)
  if invalid=='zero-camera':vec(CAM+32,(0,0,0))
  if invalid=='scale':half(BILL+46,0)
- expected=read(BILL+32,'3i');assert draw()[0]==expected
+ expected=read(BILL+32,'3i')
+ submitted=draw()[0]
+ if invalid in ('camera','zero-camera','scale'):
+  assert submitted==(expected[0],expected[1]+BODY_LIFT,expected[2]),invalid
+ else:
+  assert submitted==expected,invalid
 # Execute the retail argument-loading blocks with distinct saved scene handles.
 # The previous fixture called FollowingDraw directly and missed wrong-pass hooks.
 assert 'THUMB_BRANCH_LINK_36_0x0218119a' in funcs,'Missing main actor draw hook (0.6.9 regression)'
@@ -324,7 +331,7 @@ for binding in json.loads((HERE/'tests/render-bindings.json').read_text()):
   assert uc.reg_read(UC_ARM_REG_R5)==FIELD and len(seen)==n+1
   assert bytes(uc.mem_read(BILL,56))==before
   if handle==BL:
-   assert seen[-1][0][1]==6144 and seen[-1][1]==(64*256,64*256) and seen[-1][2][0]==0
+   assert seen[-1][0][1]==6144+BODY_LIFT and seen[-1][1]==(64*256,64*256) and seen[-1][2][0]==0
    assert player_seen[-1][0]==(0,0,0)
   else:assert seen[-1][0]==(65536,6144,0),'Secondary pass must not alter actor scene'
 print('Retail pass routing passed: separate packaged actor, terrain (field+0xc8), and secondary/shadow hooks for three saved scene bindings.')
