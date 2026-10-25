@@ -687,7 +687,7 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
     entry.offsets = [13, 14, 15].map(offset => (expanded[at + offset] << 24) >> 24) as [number, number, number];
   }
   deriveFollowerGrounding(registry, resources.files, personal);
-  // The registry carries the follower-only artwork offset. Descriptor Y also
+  // Automatic registry Y is 0, matching a map NPC. Descriptor byte 14 also
   // positions the native shadow, so leave the copied retail zero in that row.
   descriptors.files[0] = expanded; deriveFollowerSpacing(registry, resources.files); validateFollowerRegistry(registry);
   const registryBytes = encodeFollowerRegistry(registry, Boolean(laterBytes));

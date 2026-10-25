@@ -18,7 +18,7 @@ Shadow pass (`fwr_shadow_pass`):
 
 - The hook still calls `0x0204f685`. It does not search the oval, plant it, or slide it. The engine sample is the oval that draws.
 
-Install grounding (`deriveFollowerGrounding`) sets non-Flying default Y to the shared transparent foot margin only. The old extra three pixels is recognized and dropped. Explicit offsets stay. Flying stays at 0. Descriptor byte 14 stays 0, so the oval's actor anchor does not take that Y.
+Install grounding (`deriveFollowerGrounding`) sets non-Flying automatic Y to 0, the same value as descriptor byte 14 and a map NPC. A stored `-pad` or `-(pad)-3` is rewritten to 0. Explicit offsets stay. Flying rows are left untouched. Descriptor byte 14 is not written, so the oval's actor anchor does not take a registry Y.
 
 `fwr_world_apart`, `fwr_plane_keep`, and `fwr_shadow_on_plane` stay in the math helpers. The draw does not call them. `fwr_player_in_front` is gone. The older ray helpers remain for the emote bubble, grass, and the full-variant land/surf draws, including the mounted north offset. The base draw path does not call them. Base does not grow `FW_MOUNT`.
 
@@ -110,7 +110,7 @@ A player on a tile center and a follower 90110 behind share no empty tile betwee
 
 ### 4. One footing path
 
-Shipped in the draw. The body is the native billboard plus registry Y. The oval is the engine sample. The extra three pixels of automatic grounding are not applied. Sort-by-submit-order and the prop depth budget are not in this change.
+Shipped in the draw. The body is the native billboard plus registry Y. Automatic registry Y is 0. The oval is the engine sample. Sort-by-submit-order and the prop depth budget are not in this change.
 
 Use the pose that already matches on a slope, a stair, and mid-step. Stop maintaining a second foot line.
 
@@ -126,7 +126,7 @@ The same helpers stay available to full-variant land and surf. This draw does no
 
 Steps 1 and 2 shipped together. Each is one path, not a facing table. Step 3 and the prop budget are not in this change.
 
-1. Body. The foot-line raise, the face-0 two pixels, and the body `fwr_plane_keep` are gone. Registry Y stays, and automatic grounding no longer adds three pixels under that Y. `verify_render.py` expectations that locked the plant and the six-unit stair slide now expect the native billboard plus that Y. Host math tests still cover the helpers; the draw does not call them.
+1. Body. The foot-line raise, the face-0 two pixels, and the body `fwr_plane_keep` are gone. Registry Y stays on the billboard. Automatic Y is 0: a stored `-pad` and the older `-(pad)-3` are rewritten there, and no second constant is added. `verify_render.py` expectations that locked the plant and the six-unit stair slide now expect the native billboard plus whatever registry Y is stored. Host math tests still cover the helpers; the draw does not call them.
 2. Oval. `fwr_shadow_pass` does not move quads. The engine oval is what submits.
 3. Not in this change. If a playtest still shows the oval over the feet, capture `FollowingRenderDebug` before changing submit order or a depth word. Do not add a slide. Prop and floor-mesh clips stay a later static-bounds step, still without writing the player.
 
@@ -170,7 +170,7 @@ Bob, per sheet:
 - Eight-frame. Cells in a pair share a foot. The hop seen in play is the engine moving the quad, already in the billboard Y when `fwr_draw` runs. The same unpause applies as for six frames. The draw no longer flattens that dip.
 - Twelve-cell added art. The sheet drops the sprite by one pixel on the step cells, onto the quad edge. That is independent of the engine. Whichever selector the installed pair uses, the engine hop for that selector still runs, because `animation_gate` does not look at the sheet. A pad-0 frame can sit on the anchor while the quad Y is exactly on the foot line.
 
-`deriveFollowerGrounding` now sets that Y to `-pad` only. A stored `-(pad)-3` is rewritten to `-pad` on the next derive. Smallest pad is 2, 1, and 0 on these three strips, so the constant is −2, −1, or 0. Descriptor byte 14 stays 0, so the oval does not follow that pull. The draw no longer adds a north-only two pixels.
+`deriveFollowerGrounding` sets automatic Y to 0. A stored `-pad` or `-(pad)-3` is rewritten to 0 on the next derive. Those pads are 2, 1, and 0 on these three strips, so the old automatic values were −2, −1, or 0, and −5, −4, or −3 for the extra-three bury. Descriptor byte 14 stays 0, so the oval does not follow the registry. The draw does not add a north-only two pixels or another constant.
 
 What a follower changes relative to a map NPC, for height:
 
@@ -178,7 +178,7 @@ What a follower changes relative to a map NPC, for height:
 - A map NPC is not passed through `animation_gate`. A visible follower clears `PAUSE_ANM` (flag 16) even while standing on the trail, so that controller keeps running at rest. The player is not on this gate.
 - The foot plant and the north-only two pixels are gone from the follower draw. A map NPC does not have them either.
 
-A one-pixel change to `sprite_y` was not added. It would lift every frame and leave a 1/0/0 sheet alternating. Grounding is the shared pad only.
+A one-pixel change to `sprite_y` was not added. It would lift every frame and leave a 1/0/0 sheet alternating. Automatic grounding is 0 for every facing. The pad stays inside the cell, which is where a map NPC leaves it.
 
 Keep one foot row inside the cell, with at least one transparent row, on every frame of a facing. Let the engine own the hop.
 
@@ -204,22 +204,15 @@ Proof, from code this module runs:
 
 The oval is not on that billboard Y. `fwr_shadow_pass` does not move it. Descriptor byte 14 stays 0 so the engine sample stays on the actor. `FollowingRenderDebug.groundY` (`+104`) is `world.y` when the shadow is live.
 
-## The remaining foot gap
+## The foot gap
 
-Playtest after `02a9907`: feet sit a little lower than the player, bob-down clips the floor, and the oval shows on that dip. The oval stays the engine sample. Do not slide it, and do not add a camera keep.
+Playtest after `02a9907` showed feet a little lower than the player, bob-down clipping the floor, and the oval showing on that dip. Automatic `sprite_y` was `-pad`, so the opaque foot sat on actor ground, `pad` pixels below a map NPC whose descriptor Y is 0. Derive now rewrites that value, and the older `-(pad)-3`, to 0. The draw still adds only that registry Y to billboard `position.y`. It does not write `world.y` or descriptor byte 14, so the oval stays the engine sample.
 
-Actor height is already shared. `player_sample` stores `world.y + drawOffset.y + externalOffset.y`, and `bind_pose` writes that into the follower's `world.y`. On flat ground the two actors match. A lower picture is the billboard, not a second actor Y.
+Actor height is already shared. `player_sample` stores `world.y + drawOffset.y + externalOffset.y`, and `bind_pose` writes that into the follower's `world.y`. On flat ground the two actors match.
 
-The billboard bottom relative to actor ground is `(submitted.y - groundY) / 4096` pixels. `submitted` is the FwPoint at `FollowingRenderDebug + 60` (`submitted.y` at `+64`). `native.y` is at `+52`. With descriptor byte 14 at 0, `submitted.y - native.y` is `sprite_y * 4096` plus nothing else. The visible foot is that quad bottom plus the sheet pad. Automatic `sprite_y` is `-pad`, so the settled visible foot is on actor ground, `pad` pixels below a map NPC whose descriptor Y is 0 and whose pad is the same. Bob-down then carries the opaque foot through the floor and through the oval. A pad of 0 on a step cell still touches the quad edge even if `sprite_y` is 0.
+With automatic Y at 0 and descriptor byte 14 at 0, the settled quad bottom is the native billboard. The visible foot is that bottom plus the sheet pad, which is the map-NPC placement. A pad of 0 on a step cell still touches the quad edge. Bob-down is the engine hop. A shared leftover after this, the same pixel count on every species and every facing, is the only reason to add one more `position.y` constant, and that constant is measured pixels times 4096.
 
-Measure once, on flat ground, at the high pose and at bob-down, same facing:
-
-1. Follower `actor+72` minus player `actor+72`, divided by 4096. Expect 0. Actor layout is `native.h`: `world` at `+68`.
-2. `(FollowingRenderDebug + 64) - (FollowingRenderDebug + 104)`, divided by 4096. That is the quad bottom against actor ground.
-3. Add the displayed frame's transparent foot rows. That sum is the visible foot against the oval.
-4. The gap to close is how many of those pixels the player and a nearby NPC still have above the ground. If it equals the current `-sprite_y`, the registry value is the whole error.
-
-Next change, if that measurement holds: stop deriving the automatic offset as `-pad`. Leave it at 0, the same value as descriptor byte 14 and a map NPC. That is one body-only rise of `pad` world units, already on `position.y`, with no new `fwr_draw` constant and no per-facing case. Explicit offsets and Flying stay. Do not add a second constant on top of `-pad`. Do not write `world.y` or descriptor byte 14; either one moves the oval. A shared leftover after `sprite_y` is 0, the same pixel count on every species and every facing, is the only reason to add one more `position.y` constant, and that constant is measured pixels times 4096.
+The same debug subtraction still reads the result. `submitted.y` is at `FollowingRenderDebug + 64`, `native.y` at `+52`, and `groundY` at `+104`. `(submitted.y - groundY) / 4096` is the quad bottom against actor ground. Follower `actor+72` minus player `actor+72`, divided by 4096, is the actor-height gap. Expect 0.
 
 ## Playtest
 

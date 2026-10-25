@@ -351,8 +351,9 @@ export function validateFollowerLandAnchors(bytes: Uint8Array, registryBytes: Ui
       view.getUint32(12, true) !== followerCrc32(bytes.subarray(16)))
     throw new Error("Land mount anchor table does not match follower artwork.");
 }
-/** Measure empty rows below the visible feet across every pose. This is an
- * install-time descriptor adjustment; the native shadow stays at actor ground. */
+/** Measure empty rows below the visible feet across every pose. Derive uses
+ * this only to recognize an old automatic offset. It does not write the
+ * descriptor, and the native shadow stays at actor ground. */
 export function followerGroundingPixels(resource: Uint8Array, profile: FollowerAnimationProfile): number {
   validateFollowerResource(resource, profile);
   const btx = parseBtx(resource), size = btx.textures[0].width;
@@ -376,9 +377,11 @@ export function followerHasFlyingType(personal: readonly Uint8Array[], key: Foll
   if (!record || record.length < 8) throw new Error(`Missing personal record for appearance ${followerKey(key)}.`);
   return record[6] === 2 || record[7] === 2;
 }
-/** Preserve explicit offsets. Non-Flying default and previously auto-buried
- * rows sit at the shared transparent foot margin, with no extra pixels.
- * Cache by resource so shiny/form variants cost no repeated texture scans. */
+/** Preserve explicit offsets. Non-Flying automatic rows sit at 0, the same
+ * value as descriptor byte 14 and a map NPC. A stored foot-margin pull
+ * (`-pad`) or the older extra-three bury (`-(pad)-3`) is rewritten to 0.
+ * Flying rows are left untouched. Cache by resource so shiny/form variants
+ * cost no repeated texture scans. */
 export function deriveFollowerGrounding(registry: FollowerRegistry, resources: readonly Uint8Array[], personal: readonly Uint8Array[]): void {
   const cache = new Map<string, number>();
   for (const entry of registry.entries) {
@@ -390,10 +393,10 @@ export function deriveFollowerGrounding(registry: FollowerRegistry, resources: r
       cache.set(key, followerGroundingPixels(resource, entry.animationProfile));
     }
     const margin = cache.get(key)!;
-    const next = -margin;
+    const pulled = -margin;
     const buried = -margin - 3;
-    if (entry.offsets[1] === 0 || entry.offsets[1] === buried || entry.offsets[1] === next)
-      entry.offsets[1] = next;
+    if (entry.offsets[1] === 0 || entry.offsets[1] === pulled || entry.offsets[1] === buried)
+      entry.offsets[1] = 0;
   }
 }
 export function validateFollowerResource(bytes: Uint8Array, profile: FollowerAnimationProfile): { size: 32 | 64; frames: number } {

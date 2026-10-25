@@ -120,7 +120,7 @@ describe("follower asset transactions",()=>{
     rpm.relocations[0].target={module:hook.segment,address:hook.address-6,type:"THUMB_BRANCH"};
     expect(followerModuleHookConflicts(rpm,contract.hooks)).toBe(true);
   });
-  it("grounds opaque feet while retaining Flying-form and explicit sprite heights",()=>{
+  it("leaves automatic sprite height at the actor and retains Flying-form and explicit heights",()=>{
     const template=new Uint8Array(readFileSync(new URL("../assets/following/template-32-8.btx",import.meta.url)));
     const rgba=new Uint8Array(32*32*4);rgba.set([255,0,0,255],(29*32+16)*4);
     const artwork=encodeFollowerFrames(Array.from({length:8},()=>({width:32,height:32,rgba})),template);
@@ -128,11 +128,11 @@ describe("follower asset transactions",()=>{
     const base=new Uint8Array(33),flyingForm=new Uint8Array(33);base[28]=2;base[32]=2;flyingForm[6]=2;
     const make=(form:number,row:number,vertical=0)=>({key:{species:1,form,gender:0 as const,shiny:false},descriptorRow:row,resourceId:0,size:32 as const,
       animationProfile:"pokemon-asymmetric" as const,offsets:[0,vertical,0] as [number,number,number],placeholder:false,source:"stock" as const});
-    const registry={runtimeAbi:1,descriptorCount:1012,resourceCount:1,zones:[],entries:[make(0,1008),make(1,1009),make(0,1010,-7),make(0,1011,-5)]};
+    const registry={runtimeAbi:1,descriptorCount:1014,resourceCount:1,zones:[],entries:[make(0,1008),make(1,1009),make(0,1010,-7),make(0,1011,-5),make(0,1012,-2),make(1,1013,-2)]};
     deriveFollowerGrounding(registry,[artwork],[new Uint8Array(33),base,flyingForm]);
-    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([-2,0,-7,-2]);
+    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([0,0,-7,0,0,-2]);
     deriveFollowerGrounding(registry,[artwork],[new Uint8Array(33),base,flyingForm]);
-    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([-2,0,-7,-2]);
+    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([0,0,-7,0,0,-2]);
   });
   it("validates a whole batch before any project mutation",()=>{
     const {project,rom,workspace}=fixture(),before=structuredClone(project);
