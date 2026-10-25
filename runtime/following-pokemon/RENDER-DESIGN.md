@@ -52,7 +52,7 @@ On a 3DS, a second billboard submit (`0x0204ebdd`) that still carries the live f
 
 `fwr_private_scene` is the only header for that second submit. It copies the allocator id, the scale, and the four light colors, zeroes the tail, and sets polygon id 1 (or 2 when the field scene is already 1). The recall flash, the emote bubble, the mounted rider, and the Surf rider all go through it. None of them copy `scene` with `*scene` anymore. The walking body is still the retail actor submit. This pass does not add a GX submit or a texture upload.
 
-If a line remains on hardware, change the polygon byte inside `fwr_private_scene` only. Do not open a new draw path for it. The loading-wipe case is the other leftover: `fwfx_destroy` / `fwfx_prepare` still release and re-upload texture keys while a queued submit can still name them. That stays in those two functions. It is the full-screen flicker, not this edge buffer.
+If a line remains on hardware, change the polygon byte inside `fwr_private_scene` only. Do not open a new draw path for it. The loading-wipe flicker is the texture-key release. `fwfx_destroy`, `fwfx_emote_end`, and the white-sprite reload now hand those pointers to a four-slot queue. `fwfx_tick` calls `0x02049561` / `0x02049431` two field updates later, same idea as `fwland_handoff`, so a queued draw is not still naming the key. That free is also what knocked over the map's shadow depth setup; waiting it out leaves player, NPC, and follower ovals on the retail shadow pass.
 
 ## Round 2
 
@@ -230,10 +230,10 @@ Cold-boot the DLL. This tip does not rewrite `following/runtime-registry.bin` or
 - Pokémon Center lower floor, both sides of the bad tiles: the follower hops, the player does not, and the oval stays on the ground under the follower. At rest and on bob-down, all four facings, the oval is under the feet, not across the body. Height stays the two-pixel body lift. The follower does not vanish.
 - A wide species beside you, and one specific sprite that used to lose to its oval.
 - Talk until the emote bubble appears. The bubble sits with the raised head, not on the old foot line.
-- 3DS hardware, cold boot: the follower's recall flash, the emote, and a mounted or Surf rider should show fewer black lines. A line that remains on a plain walk, with no emote and no recall, is the next polygon byte in `fwr_private_scene`, not a new draw path. A full-screen black flicker across a loading wipe is still the texture-key release in `fwfx_destroy` / `fwfx_prepare`.
+- 3DS hardware, cold boot: the follower's recall flash, the emote, and a mounted or Surf rider should show fewer black lines. A line that remains on a plain walk, with no emote and no recall, is the next polygon byte in `fwr_private_scene`, not a new draw path. A full-screen black flicker on a door, then every indoor oval jumping in front of the feet, is the deferred texture free missing its two ticks. Flat indoor rooms with the follower recalled should keep player and NPC ovals behind the feet, with no black frame on the way in.
 - Stairs and a stairwell: the follower is not buried in the step, and is not floating off it. Height follows the floor.
 - Reverse-step swap: close, facing you, then easing out to the usual gap over about two tiles. Stop and talk hold the gap.
 - A rail curve: facing, talk, and the swap finish on the settled step.
 - Walk into an NPC: the follower recalls. Castelia crowds do not.
-- Door in and out (loading screen), and talk until the emote bubble appears. Note any full-screen black flicker; that is the phase-2 GPU lifecycle, not the sort path.
+- Door in and out of a flat indoor room with the follower recalled. No black frame on the way in, and player and NPC ovals stay behind the feet. With the follower out, the oval stays under the feet and the emote sits on the raised head.
 - A trashcan or other small prop you stand against. The player quad is no longer slid past it. Say if the player and the prop tie.

@@ -68,10 +68,70 @@ int fwfx_outline(const void *texture,unsigned size,uint8_t *top,uint8_t *bottom)
  }
  return (int)frames;
 }
-static void free_white(void){
- if(fwfx.white){CALL(0x02049561,int(*)(void*))(fwfx.white);CALL(0x02049431,void(*)(void*))(fwfx.white);fwfx.white=0;}
+/* Texture keys stay named by the GPU's queued frame. Land already waits two
+ * field ticks before 0x02049561. Effects do the same: destroy, emote end, and
+ * the white-sprite reload hand the pointers here, and fwfx_tick releases them
+ * once two updates have passed. Four slots cover a destroy plus the emote
+ * and a failed reload in the same pair of frames. */
+#define FWFX_HELD 4
+typedef struct {
+ void *white,*animation;
+ void *resources[3],*models[2],*actors[2],*emote[2];
+ unsigned tick;
+} FwfxHeld;
+static FwfxHeld fwfx_held[FWFX_HELD];
+static unsigned fwfx_clock;
+static int held_used(const FwfxHeld *h){
+ if(h->white||h->animation)return 1;
+ for(unsigned i=0;i<3;++i)if(h->resources[i])return 1;
+ for(unsigned i=0;i<2;++i)if(h->models[i]||h->actors[i]||h->emote[i])return 1;
+ return 0;
+}
+static void held_release(FwfxHeld *h){
+ if(h->white){CALL(0x02049561,int(*)(void*))(h->white);CALL(0x02049431,void(*)(void*))(h->white);h->white=0;}
+ for(unsigned i=0;i<2;++i)if(h->actors[i]){CALL(0x02049961,void(*)(void*))(h->actors[i]);h->actors[i]=0;}
+ if(h->animation){CALL(0x020498b5,void(*)(void*))(h->animation);h->animation=0;}
+ for(unsigned i=0;i<2;++i)if(h->models[i]){CALL(0x02049801,void(*)(void*))(h->models[i]);h->models[i]=0;}
+ for(unsigned i=0;i<3;++i)if(h->resources[i]){
+  if(i<2)CALL(0x02049561,int(*)(void*))(h->resources[i]);
+  CALL(0x02049431,void(*)(void*))(h->resources[i]);h->resources[i]=0;
+ }
+ for(unsigned i=0;i<2;++i)if(h->emote[i]){CALL(0x02049561,int(*)(void*))(h->emote[i]);CALL(0x02049431,void(*)(void*))(h->emote[i]);h->emote[i]=0;}
+}
+static void held_pump(void){
+ for(unsigned i=0;i<FWFX_HELD;++i)
+  if(held_used(&fwfx_held[i])&&fwfx_clock-fwfx_held[i].tick>=2u)held_release(&fwfx_held[i]);
+}
+static FwfxHeld *held_open(void){
+ for(unsigned i=0;i<FWFX_HELD;++i)if(!held_used(&fwfx_held[i])){fwfx_held[i].tick=fwfx_clock;return &fwfx_held[i];}
+ unsigned oldest=0;
+ for(unsigned i=1;i<FWFX_HELD;++i)
+  if(fwfx_clock-fwfx_held[i].tick>fwfx_clock-fwfx_held[oldest].tick)oldest=i;
+ held_release(&fwfx_held[oldest]);
+ fwfx_held[oldest].tick=fwfx_clock;return &fwfx_held[oldest];
+}
+static void clear_white_keys(void){
  fwfx.snapshot=0;fwfx.outlineFrames=0;fwfx.whiteMaterial.texKey=fwfx.whiteMaterial.plttKey=0;FollowingEffectsDebug[7]=0;
 }
+static void hold_white(void){
+ if(fwfx.white){FwfxHeld *h=held_open();h->white=fwfx.white;fwfx.white=0;}
+ clear_white_keys();
+}
+static void hold_effects(void){
+ int any=fwfx.white||fwfx.animation;
+ for(unsigned i=0;i<3&&!any;++i)if(fwfx.resources[i])any=1;
+ for(unsigned i=0;i<2&&!any;++i)if(fwfx.models[i]||fwfx.actors[i])any=1;
+ if(!any){clear_white_keys();return;}
+ FwfxHeld *h=held_open();
+ h->white=fwfx.white;fwfx.white=0;h->animation=fwfx.animation;fwfx.animation=0;
+ for(unsigned i=0;i<3;++i){h->resources[i]=fwfx.resources[i];fwfx.resources[i]=0;}
+ for(unsigned i=0;i<2;++i){
+  h->models[i]=fwfx.models[i];fwfx.models[i]=0;
+  h->actors[i]=fwfx.actors[i];fwfx.actors[i]=0;
+ }
+ clear_white_keys();
+}
+static void free_white(void){hold_white();}
 void fwfx_cancel(void){fwfx.mode=0;FollowingEffectsDebug[2]=0;}
 void fwfx_set_resource_count(unsigned count){
  if(count>65535)count=0;
@@ -80,30 +140,32 @@ void fwfx_set_resource_count(unsigned count){
 }
 void fwfx_destroy(void){
  fwfx_player=0;fwfx_emote_end();
- fwfx_cancel();free_white();
- for(unsigned i=0;i<2;++i)if(fwfx.actors[i]){CALL(0x02049961,void(*)(void*))(fwfx.actors[i]);fwfx.actors[i]=0;}
- if(fwfx.animation){CALL(0x020498b5,void(*)(void*))(fwfx.animation);fwfx.animation=0;}
- for(unsigned i=0;i<2;++i)if(fwfx.models[i]){CALL(0x02049801,void(*)(void*))(fwfx.models[i]);fwfx.models[i]=0;}
- for(unsigned i=0;i<3;++i)if(fwfx.resources[i]){if(i<2)CALL(0x02049561,int(*)(void*))(fwfx.resources[i]);CALL(0x02049431,void(*)(void*))(fwfx.resources[i]);fwfx.resources[i]=0;}
+ fwfx_cancel();hold_effects();
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
+}
+static int init_stop(void){
+ /* A deferred free can still own the previous map's heap. Drop this partial
+  * load into that queue and try again once the tick releases it. A failed
+  * archive check stays failed: there is nothing to wait for. */
+ hold_effects();fwfx.ready=0;return 0;
 }
 static int init(void){
  if(fwfx.ready)return fwfx.ready>0;
  fwfx.ready=-1;if(!verified())return 0;
  for(unsigned i=0;i<3;++i){
   fwfx.resources[i]=CALL(0x020493f1,void*(*)(const char*,unsigned))("rom:/following/effects.narc",i);
-  if(!fwfx.resources[i])return 0;
+  if(!fwfx.resources[i])return init_stop();
  }
  for(unsigned i=0;i<2;++i){
-  if(!CALL(0x020494d9,int(*)(void*))(fwfx.resources[i]))return 0;
+  if(!CALL(0x020494d9,int(*)(void*))(fwfx.resources[i]))return init_stop();
   fwfx.models[i]=CALL(0x02049759,void*(*)(void*,unsigned,void*))(fwfx.resources[i],0,fwfx.resources[i]);
-  if(!fwfx.models[i])return 0;
+  if(!fwfx.models[i])return init_stop();
  }
  fwfx.animation=CALL(0x02049839,void*(*)(void*,void*,unsigned))(fwfx.models[1],fwfx.resources[2],0);
- if(!fwfx.animation)return 0;
+ if(!fwfx.animation)return init_stop();
  fwfx.actors[0]=CALL(0x020498e5,void*(*)(void*,void**,int))(fwfx.models[0],0,0);
  fwfx.actors[1]=CALL(0x020498e5,void*(*)(void*,void**,int))(fwfx.models[1],&fwfx.animation,1);
- if(!fwfx.actors[0] || !fwfx.actors[1])return 0;
+ if(!fwfx.actors[0] || !fwfx.actors[1])return init_stop();
  CALL(0x020499a1,int(*)(void*,unsigned))(fwfx.actors[1],0);
  fwfx.transform.scale=(Vec){4096,4096,4096};
  fwfx.transform.rotation[0]=fwfx.transform.rotation[4]=fwfx.transform.rotation[8]=4096;
@@ -182,6 +244,7 @@ int fwfx_recalling(void){return fwfx.mode==2;}
 int fwfx_available(void){return fwfx.ready==1;}
 int fwfx_hides_actor(void){return fwfx.mode==1 && fwfx.age<2;}
 void fwfx_tick(void){
+ ++fwfx_clock;held_pump();
  if(!fwfx.mode)return;
  if(++fwfx.age>=(fwfx.mode==1?10:FWFX_RECALL_TICKS)){fwfx_cancel();return;}
  if(fwfx.mode==1 && fwfx.age==2)CALL(0x02006255,void(*)(unsigned))(FWFX_BALL_SE);
@@ -212,7 +275,9 @@ static struct {void *resources[2];Scene scene;Billboard billboard;Material mater
 void fwfx_set_player(Actor *player){fwfx_player=player;}
 void fwfx_emote_end(void){
  fwemote.active=0;fwemote.actor=0;
- for(unsigned i=0;i<2;++i)if(fwemote.resources[i]){CALL(0x02049561,int(*)(void*))(fwemote.resources[i]);CALL(0x02049431,void(*)(void*))(fwemote.resources[i]);fwemote.resources[i]=0;}
+ if(!fwemote.resources[0]&&!fwemote.resources[1])return;
+ FwfxHeld *h=held_open();
+ for(unsigned i=0;i<2;++i){h->emote[i]=fwemote.resources[i];fwemote.resources[i]=0;}
 }
 int fwfx_emote_begin(Actor *a,unsigned member){
  fwfx_emote_end();

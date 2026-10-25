@@ -201,7 +201,9 @@ def tick():
  done=call(u32(EVENT+4),[EVENT,EVENT+8,EVENT+0x20])
  if done:put(GAME+0x18,0);frees.append(('event',EVENT))
  return done
-def balanced():assert collections.Counter(alloc)==collections.Counter(frees),(collections.Counter(alloc)-collections.Counter(frees),collections.Counter(frees)-collections.Counter(alloc))
+def balanced():
+ for _ in range(2):call('fwfx_tick')
+ assert collections.Counter(alloc)==collections.Counter(frees),(collections.Counter(alloc)-collections.Counter(frees),collections.Counter(frees)-collections.Counter(alloc))
 # Actual branch veneers forward native providers and leave retail event priority intact.
 provider=FOREIGN
 for name,args in [('THUMB_BRANCH_LINK_36_0x021818bc',[GAME,FIELD,SNAP,SNAP+4]),('THUMB_BRANCH_LINK_36_0x02181a6c',[GAME,FIELD])]:assert call(name,args)==FOREIGN

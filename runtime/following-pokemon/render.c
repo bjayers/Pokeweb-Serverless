@@ -249,6 +249,20 @@ static Billboard *follower_oval(void *system){
  }
  return chosen;
 }
+/* Truncate toward zero. A compiler divide of this span is an
+ * __aeabi_ldivmod import, and the field package allows only the two APIs. */
+static int32_t div_span(int64_t value,int64_t span){
+ if(span<=0)return 0;
+ if(value==INT64_MIN)return INT32_MIN;
+ int neg=value<0;
+ uint64_t n=neg?(uint64_t)-value:(uint64_t)value,d=(uint64_t)span,q=0,r=0;
+ for(unsigned bit=0;bit<64;++bit){
+  r=(r<<1)|(n>>63);n<<=1;q<<=1;
+  if(r>=d){r-=d;q|=1;}
+ }
+ if(q>2147483647u)q=2147483647u;
+ return neg?-(int32_t)q:(int32_t)q;
+}
 /* Move along (eye-target), scaled by that vector's largest component.
  * Negative means the quad moved away from the camera. */
 static int32_t view_push(const FwrCamera *cam,FwPoint from,FwPoint to){
@@ -259,7 +273,7 @@ static int32_t view_push(const FwrCamera *cam,FwPoint from,FwPoint to){
  if(ay>span)span=ay;
  if(az>span)span=az;
  if(span<4096)return 0;
- int64_t depth=((int64_t)(to.x-from.x)*vx+(int64_t)(to.y-from.y)*vy+(int64_t)(to.z-from.z)*vz)/span;
+ int64_t depth=div_span((int64_t)(to.x-from.x)*vx+(int64_t)(to.y-from.y)*vy+(int64_t)(to.z-from.z)*vz,span);
  if(depth>INT32_MAX)return INT32_MAX;
  if(depth<INT32_MIN)return INT32_MIN;
  return (int32_t)depth;
