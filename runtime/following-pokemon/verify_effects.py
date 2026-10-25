@@ -67,8 +67,10 @@ def native(u,address,size,user):
 uc.hook_add(UC_HOOK_CODE,native)
 def invoke(name,args=()):return call(symbols[name],args)
 def settle():
- """Texture frees wait two field ticks so a queued draw can finish first."""
+ """Same-session texture frees wait two field ticks so a queued draw can finish first."""
  for _ in range(2):invoke('fwfx_tick')
+def vram_frees():
+ return sum(c[0]==0x2049560 for c in calls)
 def debug():return struct.unpack('<8I',uc.mem_read(symbols['FollowingEffectsDebug'],32))
 # Read real I4 nibbles, including a frame whose only visible pixel has index
 # one in the upper nibble. Reject malformed lengths before scanning any data.
@@ -145,16 +147,18 @@ assert sounds==[1383,1383,1383],'Ball-only fallback lost its return cue'
 for _ in range(12):invoke('fwfx_draw',[0x2221000,0x2222000]);invoke('fwfx_tick')
 assert len([x for x in renders if x[0]=='model'])==12
 assert not [x for x in renders if x[0]=='white']
+parked,vram=len(frees),vram_frees()
 invoke('fwfx_destroy');invoke('fwfx_destroy');settle()
-assert collections.Counter(allocations)==collections.Counter(frees),(allocations,frees)
+assert len(frees)==parked and vram_frees()==vram,'unload freed texture keys into the next field'
 assert debug()[6:]==(0,0) and not invoke('fwfx_busy')
 uc.mem_write(actor,bytes(256));put(actor+136,system)
 uc.mem_write(actor+228+16,struct.pack('<H',981))
 previous_loads=sum(x[0]==0x20493f0 and cstr(x[1])=='rom:/a/0/4/8' for x in calls)
 invoke('fwfx_prepare',[actor])
 assert sum(x[0]==0x20493f0 and cstr(x[1])=='rom:/a/0/4/8' for x in calls)==previous_loads+1,'field-owner change lost validated resource bound'
+parked,vram=len(frees),vram_frees()
 invoke('fwfx_destroy');invoke('fwfx_set_resource_count',[0]);settle()
-assert collections.Counter(allocations)==collections.Counter(frees),(allocations,frees)
+assert len(frees)==parked and vram_frees()==vram,'resource clear after unload freed texture keys'
 assert sounds==[1383,1383,1383],'Teardown replayed sound'
 # Drive the actual prepared texture -> cached bounds -> emote draw path with
 # shipped 32/64px art. Read opaque pixels independently from the source atlas.
@@ -194,7 +198,11 @@ for size,member in ((32,6),(64,314)):
    gap=height+(31-bubble_bottom)-(size-visible_top)
    assert abs(gap-1)<0.02,(size,frame,flipped,gap)
  assert len(allocations)==allocated and not any(c[0] in (0x20493f0,0x204964c,0x204e55c) for c in calls[loads:]),'Per-draw texture work'
- invoke('fwfx_emote_end');invoke('fwfx_destroy')
-settle()
-assert collections.Counter(allocations)==collections.Counter(frees)
+ invoke('fwfx_emote_end')
+ parked,vram=len(frees),vram_frees()
+ settle()
+ assert len(frees)==parked+2 and vram_frees()==vram+2,'same-session emote end still frees both sheets after two ticks'
+ parked,vram=len(frees),vram_frees()
+ invoke('fwfx_destroy');settle()
+ assert len(frees)==parked and vram_frees()==vram,'destroy drops effect banks without a resume free'
 print('Effect checks passed: I4 row bounds, one-pixel opaque-edge emote placement for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')

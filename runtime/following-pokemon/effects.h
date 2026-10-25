@@ -9,6 +9,8 @@ void fwfx_recall(Actor *actor);
 void fwfx_tick(void);
 void fwfx_cancel(void);
 void fwfx_destroy(void);
+/* Effect-bank upload while a field fade still covers the picture. */
+void fwfx_warm(uint32_t heap);
 int fwfx_hides_actor(void);
 int fwfx_busy(void);
 int fwfx_recalling(void);

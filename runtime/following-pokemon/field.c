@@ -741,6 +741,7 @@ static void before(ActorSystem *sys) {
   if(fwland_active()){((Actor*)fwfield_follower.actor)->flags|=HIDDEN;fwland_end();}
   fwfield_landCarry=0;
 #endif
+  if(!(reason&4096)&&(reason&16))fwfx_warm(sys->resourceHeap);
   if(owned() && !( ((Actor*)fwfield_follower.actor)->flags&HIDDEN) && (reason&(8|16|32)))fwfx_recall((Actor*)fwfield_follower.actor);else if(fwfield_follower.actor)fwfx_cancel();cleanup();return;}
 #ifdef FW_MOUNT
  if(fwland_invalid()&&owned()){
@@ -925,7 +926,9 @@ API void FollowingUpdate(ActorSystem *sys) {
    CALL(0x02194df5,void(*)(Actor*))(a);
    FollowingShadowDebug.attached=!!(a->moveflags&SHADOW_SET);
   }
-  fwfx_prepare(a);fwfx_snapshot(a);
+  /* A hidden door actor is not on screen yet. Binding its sheet here is the
+   * frame the overworld has just appeared. Wait until the follower is shown. */
+  if(!(a->flags&HIDDEN)){fwfx_prepare(a);fwfx_snapshot(a);}
  }
 }
 API void FollowingDraw(void *system,void *camera,void *light){

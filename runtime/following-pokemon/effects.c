@@ -69,18 +69,21 @@ int fwfx_outline(const void *texture,unsigned size,uint8_t *top,uint8_t *bottom)
  return (int)frames;
 }
 /* Texture keys stay named by the GPU's queued frame. Land already waits two
- * field ticks before 0x02049561. Effects do the same: destroy, emote end, and
- * the white-sprite reload hand the pointers here, and fwfx_tick releases them
- * once two updates have passed. Four slots cover a destroy plus the emote
- * and a failed reload in the same pair of frames. */
+ * field ticks before 0x02049561. Emote end and the white-sprite reload do too.
+ * Map teardown does not: the field clock stops while a load, battle, or menu
+ * has the overlay, so a two-tick wait fires on the first visible frames of
+ * the next field and streaks that picture. Those pointers belong to the old
+ * allocator. Drop them. The next 3D setup reclaims the banks. */
 #define FWFX_HELD 4
 typedef struct {
  void *white,*animation;
  void *resources[3],*models[2],*actors[2],*emote[2];
  unsigned tick;
+ unsigned drop;
 } FwfxHeld;
 static FwfxHeld fwfx_held[FWFX_HELD];
 static unsigned fwfx_clock;
+static int fwfx_drop;
 static int held_used(const FwfxHeld *h){
  if(h->white||h->animation)return 1;
  for(unsigned i=0;i<3;++i)if(h->resources[i])return 1;
@@ -88,6 +91,7 @@ static int held_used(const FwfxHeld *h){
  return 0;
 }
 static void held_release(FwfxHeld *h){
+ if(h->drop){*h=(FwfxHeld){0};return;}
  if(h->white){CALL(0x02049561,int(*)(void*))(h->white);CALL(0x02049431,void(*)(void*))(h->white);h->white=0;}
  for(unsigned i=0;i<2;++i)if(h->actors[i]){CALL(0x02049961,void(*)(void*))(h->actors[i]);h->actors[i]=0;}
  if(h->animation){CALL(0x020498b5,void(*)(void*))(h->animation);h->animation=0;}
@@ -100,15 +104,17 @@ static void held_release(FwfxHeld *h){
 }
 static void held_pump(void){
  for(unsigned i=0;i<FWFX_HELD;++i)
-  if(held_used(&fwfx_held[i])&&fwfx_clock-fwfx_held[i].tick>=2u)held_release(&fwfx_held[i]);
+  if(held_used(&fwfx_held[i])&&(fwfx_held[i].drop||fwfx_clock-fwfx_held[i].tick>=2u))held_release(&fwfx_held[i]);
 }
 static FwfxHeld *held_open(void){
- for(unsigned i=0;i<FWFX_HELD;++i)if(!held_used(&fwfx_held[i])){fwfx_held[i].tick=fwfx_clock;return &fwfx_held[i];}
+ for(unsigned i=0;i<FWFX_HELD;++i)if(!held_used(&fwfx_held[i])){
+  fwfx_held[i].tick=fwfx_clock;fwfx_held[i].drop=fwfx_drop;return &fwfx_held[i];
+ }
  unsigned oldest=0;
  for(unsigned i=1;i<FWFX_HELD;++i)
   if(fwfx_clock-fwfx_held[i].tick>fwfx_clock-fwfx_held[oldest].tick)oldest=i;
  held_release(&fwfx_held[oldest]);
- fwfx_held[oldest].tick=fwfx_clock;return &fwfx_held[oldest];
+ fwfx_held[oldest].tick=fwfx_clock;fwfx_held[oldest].drop=fwfx_drop;return &fwfx_held[oldest];
 }
 static void clear_white_keys(void){
  fwfx.snapshot=0;fwfx.outlineFrames=0;fwfx.whiteMaterial.texKey=fwfx.whiteMaterial.plttKey=0;FollowingEffectsDebug[7]=0;
@@ -131,6 +137,7 @@ static void hold_effects(void){
  }
  clear_white_keys();
 }
+static int init(void);
 static void free_white(void){hold_white();}
 void fwfx_cancel(void){fwfx.mode=0;FollowingEffectsDebug[2]=0;}
 void fwfx_set_resource_count(unsigned count){
@@ -139,9 +146,19 @@ void fwfx_set_resource_count(unsigned count){
  fwfx_resourceCount=(uint16_t)count;
 }
 void fwfx_destroy(void){
- fwfx_player=0;fwfx_emote_end();
- fwfx_cancel();hold_effects();
+ /* Unload, battle, and a new actor system all come through here. The clock
+  * does not advance while this overlay is gone, so a deferred 0x02049561
+  * would run on the first frames the overworld is visible again. */
+ fwfx_player=0;fwfx_drop=1;fwfx_emote_end();
+ fwfx_cancel();hold_effects();held_pump();fwfx_drop=0;
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
+}
+void fwfx_warm(uint32_t heap){
+ /* Door and return fades cover the picture. Upload the effect banks then,
+  * not on the first uncovered frame and not before Following is on. */
+ if(fwfx.ready)return;
+ if(heap && CALL(0x0203a2d5,uint32_t(*)(uint32_t))(heap)<65536u)return;
+ init();
 }
 static int init_stop(void){
  /* A deferred free can still own the previous map's heap. Drop this partial
