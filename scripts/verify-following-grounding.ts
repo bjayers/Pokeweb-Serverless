@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { NARC } from "../src/nds/narc";
 import { NintendoDSRom } from "../src/nds/rom";
 import { buildGen5FollowerArchives } from "../src/pokeweb/followingPokemonProject";
-import { decodeFollowerRegistry, followerGroundingPixels, followerHasFlyingType, followerKey, FOLLOWER_EXTRA_GROUNDING_PIXELS } from "../src/pokeweb/followingPokemonModel";
+import { decodeFollowerRegistry, followerGroundingPixels, followerHasFlyingType, followerKey } from "../src/pokeweb/followingPokemonModel";
 
 const sourcePath = process.argv[2];
 if (!sourcePath) throw new Error("Expected a clean audited Black 2/White 2 ROM path.");
@@ -31,7 +31,7 @@ for (const entry of archive.registry.entries) {
   if (flight) { ++flying; assert.equal(entry.offsets[1], 0); continue; }
   ++grounded;
   if (!marginCache.has(entry.resourceId)) marginCache.set(entry.resourceId, followerGroundingPixels(resources[entry.resourceId], entry.animationProfile));
-  assert.equal(entry.offsets[1], 0 - marginCache.get(entry.resourceId)! - FOLLOWER_EXTRA_GROUNDING_PIXELS);
+  assert.equal(entry.offsets[1], 0 - marginCache.get(entry.resourceId)!);
   if (entry.offsets[1] < 0) ++lowered;
 }
 let comparison = "";
@@ -44,9 +44,10 @@ if (installed && process.argv[3]?.endsWith(".nds")) {
   for (const entry of archive.registry.entries) {
     const prior = oldByKey.get(followerKey(entry.key));
     assert.ok(prior, `Missing prior appearance ${followerKey(entry.key)}`);
-    assert.equal(entry.offsets[1], prior.offsets[1]);
+    const healed = entry.offsets[1];
+    assert.ok(prior.offsets[1] === healed || prior.offsets[1] === healed - 3, `Prior Y ${prior.offsets[1]} is not ${healed} or the old extra-three bury`);
     assert.equal((oldDescriptors[4 + prior.descriptorRow * 28 + 14] << 24) >> 24, prior.offsets[1]);
   }
-  comparison = " Sprite-only offsets and resource artwork are byte-identical to the prior alpha; native descriptor Y is restored to zero for shadow placement.";
+  comparison = " Resource artwork matches the prior alpha. Automatic Y is the foot margin; a stored extra-three bury is the value this derive drops. The prior descriptor Y is that prior offset.";
 }
 console.log(`${source.idCode}: ${archive.registry.entries.length} ${installed ? "installed" : "built"} appearances checked; ${grounded} grounded, ${flying} Flying, ${lowered} lowered. Native shadow flags retained with descriptor Y at ground; ${installed ? "retail rows checked separately by installer verification" : "stock descriptors preserved"}.${comparison} No emulator run.`);

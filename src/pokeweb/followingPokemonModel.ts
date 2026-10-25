@@ -376,11 +376,9 @@ export function followerHasFlyingType(personal: readonly Uint8Array[], key: Foll
   if (!record || record.length < 8) throw new Error(`Missing personal record for appearance ${followerKey(key)}.`);
   return record[6] === 2 || record[7] === 2;
 }
-export const FOLLOWER_EXTRA_GROUNDING_PIXELS = 3;
-/** Preserve explicit descriptor offsets; ground only default-anchored,
- * non-Flying appearances. Recognize the previous automatic foot-margin offset
- * during upgrades, then add three pixels. Cache by resource so shiny/form
- * variants cost no repeated texture scans. */
+/** Preserve explicit offsets. Non-Flying default and previously auto-buried
+ * rows sit at the shared transparent foot margin, with no extra pixels.
+ * Cache by resource so shiny/form variants cost no repeated texture scans. */
 export function deriveFollowerGrounding(registry: FollowerRegistry, resources: readonly Uint8Array[], personal: readonly Uint8Array[]): void {
   const cache = new Map<string, number>();
   for (const entry of registry.entries) {
@@ -392,8 +390,9 @@ export function deriveFollowerGrounding(registry: FollowerRegistry, resources: r
       cache.set(key, followerGroundingPixels(resource, entry.animationProfile));
     }
     const margin = cache.get(key)!;
-    const next = -margin - FOLLOWER_EXTRA_GROUNDING_PIXELS;
-    if (entry.offsets[1] === 0 || entry.offsets[1] === -margin || entry.offsets[1] === next)
+    const next = -margin;
+    const buried = -margin - 3;
+    if (entry.offsets[1] === 0 || entry.offsets[1] === buried || entry.offsets[1] === next)
       entry.offsets[1] = next;
   }
 }

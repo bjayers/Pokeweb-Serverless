@@ -1,29 +1,26 @@
 # Follower render: world feet
 
-Shipped through `48114d7` on `cursor/following-fixes-852f`. This replaces the eye-ray sort stack (`fwr_correct` in the draw path, `fwr_above_shadow`, `fwr_keep_behind`, `fwr_player_in_front`, and the shadow `position.y = feet.y` patch). The trail, swap, ease, rail, recall, and talk code are unchanged.
-
-The [footing redesign](#footing-redesign-not-implemented) below is analysis after the `48114d7` playtest. It is not in the binary.
+The draw submits the native billboard plus one registry Y, on every facing. It does not plant bob-down, does not add the north-only two pixels, and does not slide the body or the oval. The trail, swap, ease, rail, recall, and talk code are unchanged. The player quad is not written.
 
 ## What the frame does now
 
-The follower actor's world pose is the placement. Trail, swap, ease, and rails write that pose the way they write an NPC. `fwr_draw` does not move the player, and it does not slide either quad along the camera ray.
+The follower actor's world pose is the placement. Trail, swap, ease, and rails write that pose the way they write an NPC. `fwr_draw` does not move the player.
 
 Submitted follower quad:
 
 - Start from the native billboard, which already includes the world pose and the idle hop.
-- Apply the registry Y (`sprite_y` minus descriptor byte 14) on this quad only. North-facing art also drops two pixels (`FWR_NORTH_ART_Y`), in world Y, for every camera. South does not add Z.
-- If the screen rects overlap and the view gap is inside `(-FWR_WORLD_NUDGE, FWR_CLEAR_FRONT)`, slide the follower away from the camera along the ground by at most `FWR_PLANE_CAP` (6 world units). That is a tie break, not follow distance. Y, including the hop, stays. The tie test uses the art foot line, so the hop cannot toggle it. A swap skips it. Ease and idle use the same rule, so the end of the ease does not jump.
-- The art foot line is actor Y plus the registry offset (and the north two pixels). A bob or walk dip below that line is planted on it. The hop above the line stays.
+- Apply the registry Y (`sprite_y` minus descriptor byte 14) on this quad only. Every facing uses that same offset. Nothing adds Z.
 - Copy the player's light-mask bits onto the follower for the submit, then restore the follower quad. The player billboard, world, moveflags, and animation are not written.
 
-`policy` in `FollowingRenderDebug` is 0 for feet-only and 2 when the ground tie-break ran. `before` / `after` / `depthRel` are view gaps. `sortMargin` is that ground slide. `hold` is always 0. The debug record layout is unchanged.
+`policy` and `sortMargin` stay 0. `before` / `after` / `depthRel` are the submitted view gap, hop included. `hold` is always 0. `snap` is always 0. The debug record layout is unchanged.
 
 Shadow pass (`fwr_shadow_pass`):
 
-- The oval is still found by the old window (one XZ tile and two Y of the actor ground, and not the oval nearer the player).
-- `fwr_shadow_on_plane` plants it on the submitted body's XZ and the actor's terrain Y, then slides the center away from the camera along the ground by `fwr_plane_keep` (about four view units, capped at 6 world units). The quad's `sx`/`sy` do not change the distance. Scale is unchanged. Y is not assigned again after that slide.
+- The hook still calls `0x0204f685`. It does not search the oval, plant it, or slide it. The engine sample is the oval that draws.
 
-`fwr_plane_keep` and `fwr_shadow_on_plane` place the tie-break and the oval. `fwr_world_apart` remains for tests; the draw does not call it. `fwr_player_in_front` is gone. The older ray helpers remain for the emote bubble, grass, and the full-variant land/surf draws. The base draw path does not call them.
+Install grounding (`deriveFollowerGrounding`) sets non-Flying default Y to the shared transparent foot margin only. The old extra three pixels is recognized and dropped. Explicit offsets stay. Flying stays at 0. Descriptor byte 14 stays 0, so the oval's actor anchor does not take that Y.
+
+`fwr_world_apart`, `fwr_plane_keep`, and `fwr_shadow_on_plane` stay in the math helpers. The draw does not call them. `fwr_player_in_front` is gone. The older ray helpers remain for the emote bubble, grass, and the full-variant land/surf draws, including the mounted north offset. The base draw path does not call them. Base does not grow `FW_MOUNT`.
 
 The prop walk that used to push quads behind furniture is gone with the ray advance it was capping. A follower is no longer driven through a stair wall to win a Z test, and the player is no longer moved to clear a trashcan.
 
@@ -60,17 +57,19 @@ The rest snap was draw-only. The trail still rests at the gap-6 metric (about 1.
 - Idle overlap slid the follower 8 world units further along the follow line, and that slide was skipped during ease. Side-by-side sprites overlap at the real rest gap, so every flat rest took the extra half tile and the ease end jumped. Talk still used the actor, which is why the far picture stayed interactive. An NPC could walk the visual gap.
 - The oval then slid by `8 * max(sx, sy)` on every frame. That product is the screen half-width, half a tile to a full tile for a normal quad, not a tie margin. It runs across the camera, so an east-west follower left its oval and a north-facing one wore the oval. On a slope the search often missed, so the native oval stayed under the feet; the flat step found it and moved it.
 
-Bob-down and some walk frames put the billboard under the art foot line. The foot line now plants those frames. The hop above the line is unchanged. One odd southbound incline step is the same ground keep, not a tile exception; if it is still a full step high or low, that is actor Y and needs another trace.
+At `48114d7`, bob-down and some walk frames put the billboard under an art foot line, and that line planted them. The hop above the line stayed. One odd southbound incline step was the same ground keep. The draw no longer plants or keeps.
 
-## Footing redesign (not implemented)
+## Footing redesign
+
+The draw follows section 4 below. Prop clips, oval submit order, and the trail gap are not in this change.
 
 Playtest of `48114d7` (nine shots). Clips into props and into the ground. Side-facing art often floats; front and back usually sit down, with the oval still drawn over the feet. A turn can float a north/south pose. Mid-step, the follower's height matches the player, and that matched height is the reference. Stairs and inclines still look seated. An NPC can still pass the rest gap. Outer Castelia rails keep height; tighter, grid-like rails do not, and the oval sits on the back-facing sprite there. Recalls, interaction, perf, and the untouched player quad still hold.
 
-### 1. Incline and flat are the same function
+### 1. Incline and flat were the same function
 
-`fwr_draw` and `fwr_shadow_pass` do not branch on flat, slope, stair, or rail. `fwr_follow_margin`'s flat flag is not on this path. What changes is the pose the engine already built, and whether our later edits find a quad to rewrite.
+At `48114d7`, `fwr_draw` and `fwr_shadow_pass` did not branch on flat, slope, stair, or rail. `fwr_follow_margin`'s flat flag was not on that path. What changed the picture was the pose the engine already built, and whether the later edits found a quad to rewrite. Section 4 is the path that replaced those edits.
 
-Shared path, every map:
+That shared path, on every map:
 
 1. The trail writes actor world Y from the player sample (`world.y + drawOffset.y + externalOffset.y`), including slope and rail knots. `fwr_anchor` copies descriptor byte 15 into `dimensions[4]` for every facing. That control Z stays on the actor. The draw does not add a facing Z.
 2. The field engine builds the native billboard from that actor before `FollowingDraw`. Mid-step, that billboard is the same height family as the player. That is the picture in the transition shot.
@@ -84,9 +83,9 @@ Why flat shows every edit: actor Y is constant, so registry Y, the north two pix
 
 Props and the ground clip are the hole left when the prop depth budget left with the ray stack. `fwr_box_advance_limit` is not called. Nothing reserves a counter, a monitor, or an angled floor polygon. A quad whose anchor Y is plausible still loses texels to that mesh. Inclines hide this when the step and the actor agree. This is not fixed by another foot line.
 
-### 2. Why plant, keep, and oval disagree by facing
+### 2. Why plant, keep, and oval disagreed by facing
 
-Three different anchors, and only one of them knows the facing.
+On that same `48114d7` path, three different anchors, and only one of them knew the facing.
 
 | Piece | XZ | Y | Facing |
 | --- | --- | --- | --- |
@@ -111,6 +110,8 @@ A player on a tile center and a follower 90110 behind share no empty tile betwee
 
 ### 4. One footing path
 
+Shipped in the draw. The body is the native billboard plus registry Y. The oval is the engine sample. The extra three pixels of automatic grounding are not applied. Sort-by-submit-order and the prop depth budget are not in this change.
+
 Use the pose that already matches on a slope, a stair, and mid-step. Stop maintaining a second foot line.
 
 - Body: native billboard plus the registry Y (`sprite_y - descriptor[14]`) for every facing. No north-only pixels, no foot-line plant, no `fwr_plane_keep` on the body. Idle bob stays the engine's bob. Flat, slope, stair, and rail all take this path.
@@ -119,15 +120,15 @@ Use the pose that already matches on a slope, a stair, and mid-step. Stop mainta
 - Props, monitors, counters, and angled floor texels: a later depth budget against static mesh, reading bounds the way `fwr_box_advance_limit` already knows how to read them. It does not write the player, and it does not grow a per-facing table.
 - Trail gap: unchanged unless a separate decision shortens gap 6.
 
-`fwr_world_apart` stays unused by the draw. `fwr_plane_keep` leaves the draw with the oval rewrite. Full-variant land and surf keep their own calls. Base does not grow `FW_MOUNT`.
+The same helpers stay available to full-variant land and surf. This draw does not call them.
 
-### 5. Implementation plan
+### 5. What shipped
 
-Do this in three playtest steps. Each step is one path, not a facing table.
+Steps 1 and 2 shipped together. Each is one path, not a facing table. Step 3 and the prop budget are not in this change.
 
-1. Body only. Remove the foot-line raise, the face-0 two pixels, and the body `fwr_plane_keep`. Keep the registry Y. Update `verify_render.py` expectations that lock the plant and the six-unit stair slide. Host math tests stay on the helpers until step 2 deletes their draw calls. Playtest the nine shots: side height against the mid-step reference, north/south after a turn, the low-feet oval, ground clip, and a stair that must stay seated.
-2. Oval only, after step 1 is seated. `fwr_shadow_pass` stops moving quads. The native oval stays under the engine feet on flat, slope, and rails. Playtest front/back oval order, the rail back-sprite, and the stair. If the oval is still over the body, capture `FollowingRenderDebug` and stop. Do not add a slide in that same step.
-3. Only with that trace: move the existing oval submit ahead of the body, or apply a depth word the trace actually shows. Prop and floor-mesh clips are a fourth step, using the static-bounds helper, still without writing the player.
+1. Body. The foot-line raise, the face-0 two pixels, and the body `fwr_plane_keep` are gone. Registry Y stays, and automatic grounding no longer adds three pixels under that Y. `verify_render.py` expectations that locked the plant and the six-unit stair slide now expect the native billboard plus that Y. Host math tests still cover the helpers; the draw does not call them.
+2. Oval. `fwr_shadow_pass` does not move quads. The engine oval is what submits.
+3. Not in this change. If a playtest still shows the oval over the feet, capture `FollowingRenderDebug` before changing submit order or a depth word. Do not add a slide. Prop and floor-mesh clips stay a later static-bounds step, still without writing the player.
 
 Black-line texture lifetime stays phase 2 and is not part of footing.
 
@@ -166,20 +167,20 @@ Byte 7 picks the cell: 0 is 32, 2 is 64, 1 is 16 and crops (`followerBillboardDr
 Bob, per sheet:
 
 - Six-frame native. Nothing in the cells moves. In play, this layout does not hop. `animation_gate` still unpauses it, so the two frames can swap. The native Y curve for controller 13 is not in this repo; the still picture matches a controller with no Y translation. `sprite_y` cannot be that hop, because it is one constant for every frame.
-- Eight-frame. Cells in a pair share a foot. The hop seen in play is the engine moving the quad, already in the billboard Y when `fwr_draw` runs. The same unpause applies as for six frames. The plant then lifts any dip below `world.y + (sprite_y − north pixels)`. The up phase remains. A down phase past that line is flattened onto it.
-- Twelve-cell added art. The sheet drops the sprite by one pixel on the step cells, onto the quad edge. That is independent of the engine. Whichever selector the installed pair uses, the engine hop for that selector still runs, because `animation_gate` does not look at the sheet. The plant never sees the baked drop. A pad-0 frame can sit on the anchor while the quad Y is exactly on the foot line.
+- Eight-frame. Cells in a pair share a foot. The hop seen in play is the engine moving the quad, already in the billboard Y when `fwr_draw` runs. The same unpause applies as for six frames. The draw no longer flattens that dip.
+- Twelve-cell added art. The sheet drops the sprite by one pixel on the step cells, onto the quad edge. That is independent of the engine. Whichever selector the installed pair uses, the engine hop for that selector still runs, because `animation_gate` does not look at the sheet. A pad-0 frame can sit on the anchor while the quad Y is exactly on the foot line.
 
-`deriveFollowerGrounding` sets registry Y to `-(smallest pad) - 3` for a non-flying follower whose Y was still the default. Smallest pad is 2, 1, and 0 on these three strips, so the constant is −5, −4, or −3. It pulls every frame down, including a frame that already touches the cell edge. Descriptor byte 14 stays 0, so the oval does not follow that pull. The north path in `fwr_draw` subtracts another two pixels, which a side-versus-front pad difference of one cannot absorb.
+`deriveFollowerGrounding` now sets that Y to `-pad` only. A stored `-(pad)-3` is rewritten to `-pad` on the next derive. Smallest pad is 2, 1, and 0 on these three strips, so the constant is −2, −1, or 0. Descriptor byte 14 stays 0, so the oval does not follow that pull. The draw no longer adds a north-only two pixels.
 
 What a follower changes relative to a map NPC, for height:
 
 - A map NPC keeps its retail controller and its descriptor Y on the actor, so the body and the shadow share it. A follower forces byte 9 to 13 or 14. The artwork apply stores 0 in byte 14; the catalog copy leaves the source byte, which that path treats as 0. Visual Y is only on the body quad (`sprite_y` in `fwr_draw`). The oval stays at actor ground.
 - A map NPC is not passed through `animation_gate`. A visible follower clears `PAUSE_ANM` (flag 16) even while standing on the trail, so that controller keeps running at rest. The player is not on this gate.
-- The foot plant and the north-only two pixels exist only on the follower draw. A map NPC does not have them.
+- The foot plant and the north-only two pixels are gone from the follower draw. A map NPC does not have them either.
 
-Raising the bob, or `sprite_y`, by one pixel does not fix this. `sprite_y` lifts every frame of that follower by the same amount. With grounding on, the six-frame feet are already three pixels below the anchor (−5 pull against a pad of 2); one more pixel of `sprite_y` only changes that bury from three to two. The eight-frame facing gap stays one pixel. The added sheet still alternates 1/0/0, so the step cells stay one pixel lower and still touch the quad edge. The plant would still only see the quad.
+A one-pixel change to `sprite_y` was not added. It would lift every frame and leave a 1/0/0 sheet alternating. Grounding is the shared pad only.
 
-Keep one foot row inside the cell, with at least one transparent row, on every frame of a facing. Let the engine own the hop. Do not add a pixel in `fwr_draw`. The extra three in grounding, and the plant that cancels bob-down, are the module’s own height errors on a sheet that already agrees with itself.
+Keep one foot row inside the cell, with at least one transparent row, on every frame of a facing. Let the engine own the hop.
 
 ## Playtest
 

@@ -16,17 +16,16 @@ void fwr_anchor(Actor *a,unsigned face){
  * +100 shadowNativeY  billboard Y before the depth bias
  * +104 groundY        follower ground the sprite is anchored to
  * +108 gap            shadowNativeY - groundY
- * +112 snap           0 no quad, 1 oval planted on the ground plane
+ * +112 snap           always 0; the oval is the engine sample
  * +116 nearY +120 nearGeom +124 nearWhy
- *     nearest shadow-system quad within four tiles:
- *     0 used, 1 not a shadow quad, 2 too far, 3 player's oval, 4 bias declined
+ *     unused while the oval is left alone; kept so the record layout holds
  * +128 hold           always 0; slope no longer changes placement
  * Version 3 appends, leaving +128 in place:
  * +132 viewDistance   eye-to-target length, 20.12
- * +136 sortMargin     ground tie-break length when policy is 2, else 0
+ * +136 sortMargin     always 0; the body is not slid
  * +140 easeBlend      0 on a swap or the close pose, 65536 when idle
- * +144 depthRel       follower view depth vs the player, bob removed
- * policy at +24: 0 feet only, 2 ground tie-break. before/after are that view gap.
+ * +144 depthRel       submitted follower view depth vs the player
+ * policy at +24 is always 0. before/after are that view gap.
  */
 typedef struct {
  uint32_t magic,version,frames,actor,size,applied;int32_t policy,before,after;
@@ -45,8 +44,8 @@ _Static_assert(offsetof(FwrDebug,sortMargin)==136,"sort margin");
 _Static_assert(offsetof(FwrDebug,easeBlend)==140,"ease blend");
 _Static_assert(offsetof(FwrDebug,depthRel)==144,"relative depth");
 __attribute__((visibility("default"))) volatile FwrDebug FollowingRenderDebug={.magic=0x44525746,.version=3};
-/* The effect pass draws the shadow after this actor pass. Remember the
- * submitted sprite and the terrain feet so that pass can plant the oval. */
+/* The effect pass submits the engine oval unchanged. The actor pass still
+ * records the submitted sprite and the terrain feet for the debug record. */
 static struct {
  FwPoint ground,sprite,player;int32_t keep;void *actorSystem;uint8_t valid,hasPlayer;
 } shadowTie;
@@ -129,12 +128,6 @@ static Billboard *billboard(void *system,Actor *a){
  if((b->geom>>14)!=0||!(b->flags&512))return 0;
  return b;
 }
-static int ram_span(const void *pointer,unsigned bytes){
- uintptr_t at=(uintptr_t)pointer;
- if((at&3u)||at<0x02000000u||bytes>0x01000000u)return 0;
- if(at<=0x02400000u-bytes)return 1;
- return at<=0x03000000u-bytes&&CALL(0x0207acb9,int(*)(void))()!=0;
-}
 void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int sprite_y){
  Billboard *b=0,*p=0;FwrPose original={0},adjusted;int changed=0,lightingChanged=0;uint16_t originalFlags=0;
  effectPose.actor=effectPose.player=0;shadowTie.valid=shadowTie.hasPlayer=0;
@@ -156,20 +149,12 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
    int64_t py=(int64_t)player->world.y+player->drawOffset.y+player->externalOffset.y;
    int32_t playerY=py<INT32_MIN||py>INT32_MAX?player->world.y:(int32_t)py;
-   /* Registry Y replaces the descriptor lift on this quad only. North-facing
-    * art sits two pixels down so its feet meet the oval. Both are world Y.
-    * The camera does not choose them, and south adds no extra Z. */
-   int north=a->face==0?FWR_NORTH_ART_Y:0;
-   int delta=sprite_y-(int8_t)a->descriptor[14]-north;
+   /* Registry Y replaces descriptor byte 14 on this quad only. Every facing
+    * uses that one offset. The engine hop stays in the native billboard.
+    * The camera does not move the quad, and no facing adds Z. */
+   int delta=sprite_y-(int8_t)a->descriptor[14];
    int64_t y=(int64_t)adjusted.position.y+(int64_t)delta*4096;
    if(delta&&y>=INT32_MIN&&y<=INT32_MAX){adjusted.position.y=(int32_t)y;changed=1;}
-   /* Bob and the walk cycle share this quad's Y. The art foot line is the
-    * actor's ground plus the registry offset. A dip below that line is
-    * planted; the hop above it stays on the follower. */
-   int64_t footLine=(int64_t)a->world.y+(int64_t)(sprite_y-north)*4096;
-   if(footLine>=INT32_MIN&&footLine<=INT32_MAX&&adjusted.position.y<(int32_t)footLine){
-    adjusted.position.y=(int32_t)footLine;changed=1;
-   }
    int swapping=0,easing=0;uint32_t traveled=0;
    fw_depth_query(&swapping,&easing,&traveled);
    uint32_t ease_s=65536u;
@@ -181,32 +166,13 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    FollowingRenderDebug.native=original.position;
    FollowingRenderDebug.nativeSX=original.sx;
    if(p&&b!=p){
-    /* Bob lives in the billboard Y. The tie test uses the art foot line so a
-     * hop cannot toggle the keep. The player quad is only read. A tie slides
-     * along the ground, away from the camera, by a few units. It does not
-     * add follow distance, and a swap keeps the mirrored pose. */
-    FwrPose feet=adjusted,playerFeet={p->position,p->sx,p->sy};
-    if(footLine>=INT32_MIN&&footLine<=INT32_MAX)feet.position.y=(int32_t)footLine;
+    /* The player quad is only read. Its position is not a sort handle. */
+    FwrPose playerFeet={p->position,p->sx,p->sy};
     playerFeet.position.y=playerY;
-    int32_t gap=fwr_view_gap(&feet.position,&playerFeet.position,&cam);
-    int overlap=fwr_sprites_overlap(&feet,&playerFeet,&cam);
+    int32_t gap=fwr_view_gap(&adjusted.position,&playerFeet.position,&cam);
     FollowingRenderDebug.depthRel=gap;
     FollowingRenderDebug.before=gap;
     FollowingRenderDebug.after=gap;
-    if(!swapping&&overlap&&gap>-FWR_WORLD_NUDGE&&gap<FWR_CLEAR_FRONT){
-     FwPoint kept;
-     if(fwr_plane_keep(&feet.position,&cam,FWR_PROP_FOREGROUND_GAP,&kept)){
-      int32_t dx=kept.x-feet.position.x,dz=kept.z-feet.position.z;
-      if(dx||dz){
-       adjusted.position.x=kept.x;adjusted.position.z=kept.z;changed=1;
-       FollowingRenderDebug.policy=2;
-       int32_t ax=dx<0?-dx:dx,az=dz<0?-dz:dz;
-       FollowingRenderDebug.sortMargin=ax>az?ax:az;
-       FwPoint shown=adjusted.position;shown.y=feet.position.y;
-       FollowingRenderDebug.after=fwr_view_gap(&shown,&playerFeet.position,&cam);
-      }
-     }
-    }
    }
    FollowingRenderDebug.applied=changed;
    FollowingRenderDebug.submitted=adjusted.position;
@@ -236,71 +202,12 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
 }
-/* The player's own oval sits on the player. Six units rejects that oval
- * without also rejecting a follower shadow that rests on the step between
- * them. One tile of XZ and two of Y still bound the follower's quad. */
-#define FWR_SHADOW_PLAYER (6 * 4096)
-/* 0 accept, 2 outside the follower window, 3 player's oval. */
-static int follower_shadow(FwPoint point){
- int64_t dx=(int64_t)point.x-shadowTie.ground.x,dy=(int64_t)point.y-shadowTie.ground.y,dz=(int64_t)point.z-shadowTie.ground.z;
- if(dx>FW_TILE||dx<-FW_TILE||dz>FW_TILE||dz<-FW_TILE||dy>2*FW_TILE||dy<-2*FW_TILE)return 2;
- if(shadowTie.hasPlayer){
-  int64_t px=(int64_t)point.x-shadowTie.player.x,pz=(int64_t)point.z-shadowTie.player.z;
-  int64_t nearPlayer=px*px+pz*pz,nearFeet=dx*dx+dz*dz;
-  /* Reject the player's oval, not the follower's, when the two stand together. */
-  if(nearPlayer<nearFeet&&nearPlayer<(int64_t)FWR_SHADOW_PLAYER*FWR_SHADOW_PLAYER)return 3;
- }
- return 0;
-}
-/* Secondary/shadow pass. Plant the follower oval on the actor's ground
- * under the submitted body and keep it a few units further from the camera.
- * Restore the native billboard before returning. */
+/* Secondary/shadow pass. The engine oval is submitted as the engine built
+ * it. This hook does not search, plant, or slide that quad. */
 void fwr_shadow_pass(void *system,void *camera,void *light){
- Billboard *changed[4],original[4];unsigned count=0;
  FollowingRenderDebug.shadowChange=0;FollowingRenderDebug.shadowCount=0;
- FollowingRenderDebug.shadowNativeY=0;FollowingRenderDebug.groundY=shadowTie.ground.y;FollowingRenderDebug.gap=0;
+ FollowingRenderDebug.shadowNativeY=0;FollowingRenderDebug.groundY=shadowTie.valid?shadowTie.ground.y:0;FollowingRenderDebug.gap=0;
  FollowingRenderDebug.snap=0;FollowingRenderDebug.nearY=0;FollowingRenderDebug.nearGeom=-1;FollowingRenderDebug.nearWhy=0;
- if(shadowTie.valid&&system&&camera&&system!=shadowTie.actorSystem&&ram_span(system,0x20)&&ram_span(camera,60)){
-  FwPoint feet=shadowTie.ground;
-  FollowingRenderDebug.groundY=feet.y;
-  void *scene=PTR(system,4);uint8_t *slots=PTR(system,0x18);
-  unsigned capacity=*(uint16_t*)((uint8_t*)system+0x1c);
-  if(scene&&slots&&capacity&&capacity<=256&&ram_span(scene,16)&&ram_span(slots,capacity*40)){
-   FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};
-   unsigned actors=*(uint16_t*)((uint8_t*)scene+14);Billboard *bill=PTR(scene,8);
-   int64_t nearest=(int64_t)1<<62;
-   for(unsigned i=0;i<capacity&&count<4;++i){
-    unsigned index=U32(slots,i*40);
-    if(index>=actors||!ram_span(bill,(index+1u)*sizeof(Billboard)))continue;
-    Billboard *b=bill+index;
-    int64_t dx=(int64_t)b->position.x-shadowTie.ground.x,dz=(int64_t)b->position.z-shadowTie.ground.z;
-    int close=dx<=4*(int64_t)FW_TILE&&dx>=-4*(int64_t)FW_TILE&&dz<=4*(int64_t)FW_TILE&&dz>=-4*(int64_t)FW_TILE;
-    int64_t dist=close?dx*dx+dz*dz:nearest;
-    unsigned kind=b->geom>>14;
-    int why=kind>1||!(b->flags&512)||b->sx<=0||b->sy<=0?1:follower_shadow(b->position);
-    if(close&&dist<nearest){
-     nearest=dist;FollowingRenderDebug.nearY=b->position.y;FollowingRenderDebug.nearGeom=b->geom;FollowingRenderDebug.nearWhy=why;
-    }
-    if(why)continue;
-    FwrPose native={b->position,b->sx,b->sy},out;
-    /* Same XZ as the submitted body, terrain Y from the actor. A short
-     * ground keep puts the oval behind the body. Y is not assigned again,
-     * and the quad is not scaled. */
-    FwPoint anchor={shadowTie.sprite.x,feet.y,shadowTie.sprite.z};
-    int code=fwr_shadow_on_plane(&native,&anchor,&cam,&out);
-    FollowingRenderDebug.shadowNativeY=native.position.y;
-    FollowingRenderDebug.gap=native.position.y-feet.y;
-    if(!code){if(close&&dist==nearest&&!FollowingRenderDebug.snap)FollowingRenderDebug.nearWhy=4;continue;}
-    
-    changed[count]=b;original[count++]=*b;
-    b->position=out.position;b->sx=(int16_t)out.sx;b->sy=(int16_t)out.sy;
-    FollowingRenderDebug.shadowAt=out.position;FollowingRenderDebug.shadowCount=count;
-    FollowingRenderDebug.shadowChange=out.position.z-native.position.z;
-    FollowingRenderDebug.snap=code;
-   }
-  }
- }
  CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
- for(unsigned i=0;i<count;++i)*changed[i]=original[i];
  shadowTie.valid=shadowTie.hasPlayer=0;shadowTie.keep=FWR_SHADOW_KEEP;
 }
