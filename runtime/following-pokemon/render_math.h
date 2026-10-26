@@ -182,6 +182,13 @@ int fwr_basis(const FwrCamera *camera,FwrBasis *output);
  * `band_sy`, moved `pull` toward the eye along its ray with its pixels
  * unchanged. Redraws a sprite's upper rows over the strips that cover it. */
 int fwr_band(const FwrBasis *basis,const FwrPose *body,int32_t low,int32_t pull,int32_t band_sy,FwrPose *output);
+/* View depth of `point` past `origin` along the basis, 20.12; positive is
+ * nearer the camera. 0 when the span is unusable. */
+int32_t fwr_basis_gap(const FwrBasis *basis,const FwPoint *point,const FwPoint *origin);
+/* 1 when band a0..a1 of camera-facing quad `a` and band b0..b1 of `b`
+ * (world units up each camera plane) overlap on screen. */
+int fwr_bands_overlap(const FwrBasis *basis,const FwrBody *a,int32_t a0,int32_t a1,
+                      const FwrBody *b,int32_t b0,int32_t b1);
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,
     const FwPoint corners[8]);
 int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,

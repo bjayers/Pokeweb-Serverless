@@ -48,6 +48,10 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_basis.restype=c.c_int
   cls.lib.fwr_band.argtypes=[c.c_char_p,c.POINTER(Pose),c.c_int32,c.c_int32,c.c_int32,c.POINTER(Pose)]
   cls.lib.fwr_band.restype=c.c_int
+  cls.lib.fwr_basis_gap.argtypes=[c.c_char_p,c.POINTER(Point),c.POINTER(Point)]
+  cls.lib.fwr_basis_gap.restype=c.c_int32
+  cls.lib.fwr_bands_overlap.argtypes=[c.c_char_p,c.POINTER(Body),c.c_int32,c.c_int32,c.POINTER(Body),c.c_int32,c.c_int32]
+  cls.lib.fwr_bands_overlap.restype=c.c_int
   cls.lib.fwr_strips.restype=c.c_int
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
@@ -849,6 +853,16 @@ class Rendering(unittest.TestCase):
     self.assertLess(abs(a[0]-b[0]),span/64);self.assertLess(abs(a[1]-b[1]),span/64)
    moved=depth([out.position.x-sprite.position.x,out.position.y-sprite.position.y,out.position.z-sprite.position.z],n)
    self.assertLess(abs(moved-pull),1024,(low,pull,moved))
+  # The redraw cascade's helpers: depth past the follower, and band overlap
+  # on screen against the same projection the strips use.
+  self.assertLess(abs(self.lib.fwr_basis_gap(frame,c.byref(front.feet),c.byref(Point(*feet)))-gap),64)
+  self.assertEqual(self.lib.fwr_basis_gap(frame,c.byref(far.feet),c.byref(Point(*feet))),0)
+  me=Body(Point(*feet),half,height)
+  for other in (front,beside,behind,far):
+   for lo,hi in ((0,height//4),(height//4,height),(height//2,height)):
+    want=rect_hits(corners(feet,half,lo,hi,eye,n,False),corners(xyz(other.feet),other.half,other.height//4,other.height,eye,n,False))
+    self.assertEqual(bool(self.lib.fwr_bands_overlap(frame,c.byref(me),lo,hi,c.byref(other),other.height//4,other.height)),want,(lo,hi))
+  self.assertEqual(self.lib.fwr_bands_overlap(frame,c.byref(me),10,5,c.byref(front),0,8),0)
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(*eye),Point(*target),3)),half,height,8*row,7,c.byref(stack),2048,None,0,outs,None,None),0)
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(target[0],eye[1],target[2]),Point(*target),0)),half,height,8*row,7,c.byref(stack),2048,None,0,outs,None,None),0)
 if __name__=='__main__':unittest.main()

@@ -705,3 +705,19 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
  }
  return 1;
 }
+int32_t fwr_basis_gap(const FwrBasis *basis,const FwPoint *point,const FwPoint *origin){
+ FwPoint relative;
+ if(!basis||!point||!origin||!delta(*point,*origin,&relative,8*(int32_t)FW_TILE))return 0;
+ return dot(relative,basis->view);
+}
+int fwr_bands_overlap(const FwrBasis *basis,const FwrBody *a,int32_t a0,int32_t a1,
+                      const FwrBody *b,int32_t b0,int32_t b1){
+ FwPoint ea,eb;
+ if(!basis||!a||!b||a0>a1||b0>b1||!delta(a->feet,basis->eye,&ea,1<<27)||!delta(b->feet,basis->eye,&eb,1<<27))return 0;
+ int64_t fa=basis->ortho?1:-dot(ea,basis->view),fb=basis->ortho?1:-dot(eb,basis->view);
+ if(fa<4*(int64_t)FW_TILE&&!basis->ortho)return 0;
+ if(fb<4*(int64_t)FW_TILE&&!basis->ortho)return 0;
+ int32_t xa=dot(ea,basis->right),ya=dot(ea,basis->up),xb=dot(eb,basis->right),yb=dot(eb,basis->up);
+ return scaled_hits(xa-a->half,xa+a->half,fa,xb-b->half,xb+b->half,fb)&&
+        scaled_hits(ya+a0,ya+a1,fa,yb+b0,yb+b1,fb);
+}
