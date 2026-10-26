@@ -145,47 +145,71 @@ typedef struct { uint16_t heap,pad; Material *materials; Billboard *actors; uint
 _Static_assert(sizeof(Material)==40,"billboard material ABI");
 _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 /* A camera-facing quad leans back by its height, so a 64-pixel body reaches
- * walls a 32-pixel NPC never touches. Its lower half stays the native submit:
- * same size and depth as the player, which is the only part that overlaps
- * them. The upper half is drawn above the player's head in every pose, and
- * goes through a private submit moved toward the camera (fwr_split_top).
- * Same polygon id as the live scene so the two halves meet without an
- * edge-marking seam. Custom normal and texcoord offsets are the live
- * scene's, so lighting and mirrored frames match. `live` is the native
- * material while its face height is halved; null when no split is active. */
-static struct { Scene scene; Billboard billboard; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
-static int split_body(void *system,Billboard *b,const Actor *a,const FwrCamera *cam){
+ * walls a 32-pixel NPC never touches. The native submit keeps the bottom
+ * FWR_BASE_ROWS rows: the feet, where grass and the oval meet the body. The
+ * rows above go through one private submit as FWR_STRIPS strips of
+ * FWR_STRIP_ROWS, each moved toward the camera only as far as fwr_strip
+ * needs, and kept behind the player where they cover them. Small steps keep
+ * distance fog from showing one bright block. Same polygon id as the live
+ * scene so the strips meet without an edge-marking seam; custom normal and
+ * texcoord offsets are the live scene's, so lighting and mirrored frames
+ * match. `live` is the native material while its face height is changed;
+ * null when no split is active. */
+#define FWR_STRIP_ROWS 8u
+#define FWR_STRIPS 6u
+#define FWR_BASE_ROWS (64u-FWR_STRIPS*FWR_STRIP_ROWS)
+/* Rows above 3/8 of the quad come forward: below the 4/8 an NPC-sized quad
+ * reaches, because a large sprite fills the top rows NPC art leaves empty. */
+#define FWR_SAFE_EIGHTHS 3
+_Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
+static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
+static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){
  upper.live=0;
  if(a->descriptor[7]!=2||(b->flags&0x0800u))return 0; /* 64-pixel mode, not flipped vertically. */
  Scene *scene=PTR(system,4);unsigned mat=b->geom&0x3fffu;
  if(!scene||!scene->materials||!scene->actors||mat>=scene->materialCount)return 0;
  Material *m=&scene->materials[mat];
- if(m->fw!=64||m->fh!=64||!m->cols||(b->sy&1))return 0;
- /* A visible NPC on the same material would lose its upper half. */
+ if(m->fw!=64||m->fh!=64||!m->cols||b->sy<=0||(b->sy&63)||b->sx<=0)return 0;
+ /* A visible NPC on the same material would lose its upper rows. */
  for(unsigned i=0;i<scene->actorCount;++i){
   const Billboard *o=&scene->actors[i];
   if(o!=b&&(o->geom&0x3fffu)==mat&&(o->flags&512))return 0;
  }
- /* The quad is 2*scale*sy tall, so its lower half is scale*sy. */
- if(scene->scale.x<=0||b->sy<=0)return 0;
- int64_t height=((int64_t)scene->scale.x*b->sy)>>12;
- if(height<=0||height>4*(int64_t)FW_TILE)return 0;
- FwrPose body={b->position,b->sx,b->sy},top;
- if(!fwr_split_top(&body,cam,(int32_t)height,&top))return 0;
- /* Faces are rows of the sheet. With 32-pixel faces, row 2r is the top of
-  * the 64-pixel row r and row 2r+1 its bottom. A divide here would be an
+ /* The quad is 2*scale*sy tall and scale*sx either side of its feet. */
+ int64_t scale=scene->scale.x;
+ if(scale<=0)return 0;
+ int64_t height=(2*scale*b->sy)>>12,half=(scale*b->sx)>>12;
+ if(height<=0||height>4*(int64_t)FW_TILE||half<=0||half>4*(int64_t)FW_TILE)return 0;
+ FwrBody them,*player=0;
+ if(p&&p!=b&&p->sx>0&&p->sy>0){
+  them=(FwrBody){p->position,(int32_t)((scale*p->sx)>>12),(int32_t)((2*scale*p->sy)>>12)};
+  player=&them;
+ }
+ FwrPose body={b->position,b->sx,b->sy};
+ int32_t row=(int32_t)height/64,safe=(int32_t)height*FWR_SAFE_EIGHTHS/8;
+ int16_t stripSy=(int16_t)(b->sy/(64/FWR_STRIP_ROWS));
+ /* Faces are rows of the sheet. Face height h puts 64/h faces in each
+  * 64-pixel row r, the first at r*64/h. A divide here would be an
   * __aeabi_uidiv import; a sheet row holds one or two faces. */
- unsigned row=0,col=b->frame;
- while(col>=m->cols){col-=m->cols;++row;}
- upper.material=*m;upper.material.fh=32;
- upper.billboard=*b;upper.billboard.geom=0;
- upper.billboard.position=top.position;upper.billboard.sx=(int16_t)top.sx;upper.billboard.sy=(int16_t)top.sy;
- upper.billboard.frame=(uint16_t)(row*2u*m->cols+col);
- fwr_private_scene(&upper.scene,scene,&upper.billboard,&upper.material,1,1);
+ unsigned sheetRow=0,col=b->frame;
+ while(col>=m->cols){col-=m->cols;++sheetRow;}
+ FwrPose out[FWR_STRIPS];
+ if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,safe,stripSy,player,out))return 0;
+ /* Strip i shows rows 8i..8i+7 from the top of the frame. */
+ for(unsigned i=0;i<FWR_STRIPS;++i){
+  Billboard *s=&upper.strips[i];
+  *s=*b;s->geom=0;
+  s->position=out[i].position;s->sx=(int16_t)out[i].sx;s->sy=(int16_t)out[i].sy;
+  s->frame=(uint16_t)((sheetRow*(64u/FWR_STRIP_ROWS)+i)*m->cols+col);
+ }
+ upper.material=*m;upper.material.fh=FWR_STRIP_ROWS;
+ fwr_private_scene(&upper.scene,scene,upper.strips,&upper.material,FWR_STRIPS,1);
  upper.scene.polygon=scene->polygon;upper.scene.origin=scene->origin;
  for(unsigned i=4;i<20;++i)upper.scene.rest[i]=scene->rest[i];
  upper.live=m;upper.frame=b->frame;upper.sy=b->sy;
- m->fh=32;b->frame=(uint16_t)((row*2u+1u)*m->cols+col);b->sy=(int16_t)(b->sy/2);
+ m->fh=FWR_BASE_ROWS;
+ b->frame=(uint16_t)((sheetRow*(64u/FWR_BASE_ROWS)+64u/FWR_BASE_ROWS-1u)*m->cols+col);
+ b->sy=(int16_t)(b->sy/(64/FWR_BASE_ROWS));
  return 1;
 }
 void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int sprite_y){
@@ -255,7 +279,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    if(p){effectPose.player=player;effectPose.playerWorld=player->world;
     effectPose.playerSubmitted=(FwrEffectPose){{p->position.x,p->position.y,p->position.z},p->sx,p->sy};}
    if(changed){b->position=adjusted.position;b->sx=(int16_t)adjusted.sx;b->sy=(int16_t)adjusted.sy;}
-   split_body(system,b,a,&cam);
+   split_body(system,b,a,p,&cam);
   }
  }
  CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);

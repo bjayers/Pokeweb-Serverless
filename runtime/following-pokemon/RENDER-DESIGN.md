@@ -76,18 +76,17 @@ The first visible frame used to also birth the shadow task (`0x02194df5`) and, o
 
 ## Tall followers
 
-Field actors are `BLACT_TYPE_FACE_CAMERA` quads (`BlActScene_Draw`, pokebw2 `src/gfl/billboard.c`). A quad parallel to the camera plane leans back by its height times sin(pitch), so at the captured 44° camera a 32-pixel NPC reaches about 1.4 tiles behind its feet and a 64-pixel follower about 2.8. Maps keep walls outside the first distance, not the second, and the top of a big sprite is cut where a wall or ledge is nearer than the quad.
+Field actors are `BLACT_TYPE_FACE_CAMERA` quads (`BlActScene_Draw`, pokebw2 `src/gfl/billboard.c`). A quad parallel to the camera plane leans back by its height times sin(pitch). The field actor scene's scale is 7.0 (`BLACT_SCENE_SCALE` in `fldmmdl_blact.c`), so an NPC quad is 28 world units tall and a 64-pixel follower 56. Maps keep walls clear of the first, not the second, and a big sprite also fills the top rows NPC art leaves empty.
 
 `fwr_draw` splits a 64-pixel body (descriptor byte 7 = 2) whose material is 64×64 faces, not shared with another visible actor, and not flipped vertically:
 
-- Lower half: the native submit, with the material's face height set to 32, the face moved to row `2r+1`, and `sy` halved, all restored after `0x0204f685`. Same size, anchor and depth as the player and every NPC. This is the only part that can overlap the player: following behind, beside, or in a close swap, the upper half is drawn above the player's 32-pixel head.
-- Upper half: a private `0x0204ebdd` submit of row `2r`, anchored on the lower half's top edge and moved toward the camera along its eye ray by its height times tan(pitch), capped at two tiles (`fwr_split_top`). `shift_depth` scales it so its pixels stay where they were. The upper half then never reaches farther back than a 32-pixel quad does.
+- Base: the native submit keeps the bottom 16 rows (`FWR_BASE_ROWS`), with the material's face height set to 16, the face moved to the last quarter of its row, and `sy` quartered, all restored after `0x0204f685`. That is where grass and the oval meet the feet.
+- Strips: the 48 rows above go through one private `0x0204ebdd` submit as six 8-row strips (`FWR_STRIPS`), six actors on one material with face height 8. `fwr_strips` anchors each strip on the camera plane at its own height and moves it toward the camera along its eye ray by (its top − 3/8 of the quad) × tan(pitch), capped at two tiles. Pixels stay put. Rows below 3/8 (21 units) do not move, and the rest never reach farther back than an NPC-sized quad.
+- Player: a strip that overlaps the player's quad on screen stays one unit behind the player's depth, does not move when they are level, and is free when the follower is clearly in front. Following behind, the follower is 24 depth units back, which leaves most strips free.
 
-The halves meet at `scale × sy` above the feet. The field actor scene's scale is 7.0 (`BLACT_SCENE_SCALE` in `fldmmdl_blact.c`), so a 64-pixel quad is 56 world units tall. The first build assumed the 8.0 that `screen_span` uses and opened a four-unit gap. The pull, the anchor and the scale are recomputed from the live camera every frame, so pitch, yaw and zoom changes keep the halves joined.
+The steps between strips are about seven world units of depth, so distance fog shades the body in small bands instead of one bright upper half. The camera basis, tilt and eye distance are built once per frame, and each strip costs one divide; the overlap test cross-multiplies instead of dividing. Pitch, yaw and zoom changes are picked up every frame.
 
-The private header takes the live polygon id, origin, custom normal and texcoord offsets, so the halves meet without an edge-marking seam and are lit the same. A follower that fails a check is drawn whole, as before. 32-pixel followers are unchanged.
-
-If a seam shows on hardware at the halves' boundary, the first thing to try is the polygon id in `split_body`.
+The private header takes the live polygon id, origin, custom normal and texcoord offsets, so the strips meet without an edge-marking seam and are lit the same. A follower that fails a check, or a camera looking straight down, draws whole, as before. 32-pixel followers are unchanged. If a seam shows on hardware, the first thing to try is the polygon id in `split_body`.
 
 ## Scanline window
 

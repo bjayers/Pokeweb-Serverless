@@ -572,25 +572,85 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  if(!delta(out->position,*player_draw,&relative,8*FW_TILE)){*out=*native;return 0;}
  result->after=dot(relative,direction);return 1;
 }
-int fwr_split_top(const FwrPose *body,const FwrCamera *camera,int32_t height,FwrPose *out){
- if(!body||!camera||!out)return 0;
- *out=*body;
- if(camera->projection>2||body->sx<=0||body->sy<2||body->sx>32767||body->sy>32767||height<=0)return 0;
- FwPoint view,junction;
+/* 1 when [a0,a1]/fa and [b0,b1]/fb overlap. Forward distances are
+ * positive, so cross-multiplying compares without a divide. */
+static int scaled_hits(int32_t a0,int32_t a1,int64_t fa,int32_t b0,int32_t b1,int64_t fb){
+ return (int64_t)a0*fb<=(int64_t)b1*fa&&(int64_t)b0*fa<=(int64_t)a1*fb;
+}
+int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
+               unsigned count,int32_t safe,int32_t strip_sy,const FwrBody *player,FwrPose *out){
+ if(!body||!camera||!out||!count||count>16)return 0;
+ if(camera->projection>2||body->sx<=0||body->sx>32767||strip_sy<=0||strip_sy>32767||half<=0||
+    strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0)return 0;
+ /* Camera basis once per body: the head-attachment basis, without
+  * renormalizing `up`, which is the cross of two unit vectors. */
+ FwPoint view,ray;
  if(!view_axis(camera,&view))return 0;
- /* The lower half is the NPC-sized part, and its top edge is where this
-  * half starts. */
- if(!fwr_head_position(&body->position,camera,height,&junction))return 0;
- FwrPose upper={junction,body->sx,body->sy/2};
- /* A camera-facing quad leans back by its height times the camera's tilt.
-  * Pulling this half forward by its own height times tan(pitch) keeps it
-  * inside the room a 32-pixel quad already leans into. */
- int32_t pull=0;
- if(view.y>0){
-  uint32_t flat=root((uint32_t)(view.x*view.x+view.z*view.z));
-  pull=flat<512u?FWR_SPLIT_CAP:divide((int64_t)height*view.y,(int32_t)flat)+16;
-  if(pull>FWR_SPLIT_CAP)pull=FWR_SPLIT_CAP;
+ uint32_t flat=root((uint32_t)(view.x*view.x+view.z*view.z));
+ if(flat<64u)return 0;
+ FwPoint right={divide((int64_t)view.z*4096,(int32_t)flat),0,divide(-(int64_t)view.x*4096,(int32_t)flat)};
+ FwPoint up={(int32_t)((int64_t)view.y*right.z/4096),
+  (int32_t)(((int64_t)view.z*right.x-(int64_t)view.x*right.z)/4096),
+  (int32_t)(-(int64_t)view.y*right.x/4096)};
+ int ortho=camera->projection==2;
+ if(!delta(camera->eye,body->position,&ray,1<<27))return 0;
+ int32_t distance=dot(ray,view);
+ if(distance<4*(int32_t)FW_TILE)return 0;
+ /* Screen rectangles, as camera-plane spans over forward distance. */
+ int64_t mineF=ortho?1:distance,theirF=1;
+ int32_t mineX=-dot(ray,right),mineY=-dot(ray,up);
+ int overlapX=0,gap=0;int32_t theirY0=0,theirY1=0;
+ if(player&&player->half>0&&player->height>0){
+  FwPoint them,relative;
+  if(delta(player->feet,camera->eye,&them,1<<27)&&delta(player->feet,body->position,&relative,8*(int32_t)FW_TILE)){
+   int32_t forward=-dot(them,view);
+   if(forward>=4*(int32_t)FW_TILE){
+    theirF=ortho?1:forward;
+    int32_t x=dot(them,right),y=dot(them,up);
+    overlapX=scaled_hits(mineX-half,mineX+half,mineF,x-player->half,x+player->half,theirF);
+    theirY0=y;theirY1=y+player->height;gap=dot(relative,view);
+   }
+  }
  }
- if(!pull){*out=upper;return 1;}
- return shift_depth(&upper,camera,view,pull,out);
+ for(unsigned i=0;i<count;++i){
+  int32_t high=top-(int32_t)i*strip,low=high-strip;
+  FwPoint junction={body->position.x+(int32_t)((int64_t)up.x*low/4096),
+   body->position.y+(int32_t)((int64_t)up.y*low/4096),body->position.z+(int32_t)((int64_t)up.z*low/4096)};
+  /* A camera-facing quad leans back by its height times the camera's
+   * tilt. Rows below `safe` stay where every NPC's rows are. Each strip
+   * above comes forward by its top's height past `safe` times tan(pitch),
+   * so it never reaches farther back than an NPC-sized quad. */
+  int32_t pull=0;
+  if(high>safe&&view.y>0){
+   pull=flat<512u?FWR_SPLIT_CAP:divide((int64_t)(high-safe)*view.y,(int32_t)flat)+16;
+   if(pull>FWR_SPLIT_CAP)pull=FWR_SPLIT_CAP;
+  }
+  /* Where the strip covers the player on screen it stays a unit behind
+   * them. Level with them it does not move. Clearly in front, it is free. */
+  if(pull&&overlapX&&scaled_hits(mineY+low,mineY+high,mineF,theirY0,theirY1,theirF)){
+   int32_t allowed=gap>FWR_SORT_BEHIND?gap-FWR_SORT_BEHIND:gap<-FWR_CLEAR_FRONT?FWR_SPLIT_CAP:0;
+   if(pull>allowed)pull=allowed;
+  }
+  FwrPose *o=&out[i];
+  *o=(FwrPose){junction,body->sx,strip_sy};
+  if(pull<=0)continue;
+  if(ortho){
+   o->position.x+=(int32_t)((int64_t)view.x*pull/4096);
+   o->position.y+=(int32_t)((int64_t)view.y*pull/4096);
+   o->position.z+=(int32_t)((int64_t)view.z*pull/4096);
+   continue;
+  }
+  /* Along this strip's eye ray, scaled so its pixels stay put. Every
+   * junction is in the feet's camera plane, so they share `distance`. */
+  if(distance-pull<4*(int32_t)FW_TILE)return 0;
+  int64_t q=divide((int64_t)pull<<16,distance);
+  FwPoint toEye={camera->eye.x-junction.x,camera->eye.y-junction.y,camera->eye.z-junction.z};
+  o->position.x+=(int32_t)(toEye.x*q/65536);
+  o->position.y+=(int32_t)(toEye.y*q/65536);
+  o->position.z+=(int32_t)(toEye.z*q/65536);
+  o->sx=(int32_t)(body->sx-(int64_t)body->sx*q/65536);
+  o->sy=(int32_t)(strip_sy-(int64_t)strip_sy*q/65536);
+  if(o->sx<=0||o->sy<=0)return 0;
+ }
+ return 1;
 }

@@ -144,17 +144,22 @@ int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
     const FwrCamera *camera,FwrPose *output);
 /* A loaded static model may occlude part of the original sprite. Reserve its
  * complete projected bounding volume before advancing a camera-facing quad. */
-/* Upper half of a 64-pixel body for its own submit. `body` is the submitted
- * camera-facing quad (foot anchor, full sx/sy). `height` is the lower half's
- * world height, scene scale times sy: the field actor scene is 7.0, not the
- * 8.0 the screen-span helpers assume. The output starts on the lower half's
- * top edge with half the scale, then moves toward the camera
- * along its eye ray by that height times tan(pitch), capped at
- * FWR_SPLIT_CAP. Its screen pixels are the upper half of `body`'s. The lower
- * half stays on the native submit, so only rows above an NPC's height move.
- * Returns 0 for an unknown projection or an unusable pose. */
+/* A camera-facing quad seen from `camera`: feet, world half-width and world
+ * height (2 * scene scale * sy; the field actor scene is 7.0). */
+typedef struct { FwPoint feet; int32_t half,height; } FwrBody;
 #define FWR_SPLIT_CAP (2 * FW_TILE)
-int fwr_split_top(const FwrPose *body,const FwrCamera *camera,int32_t height,FwrPose *output);
+/* Horizontal strips of a tall body for their own submit. `body` is the
+ * submitted camera-facing quad (foot anchor), `half` its world half-width.
+ * Strip i spans top - (i+1)*strip .. top - i*strip world units up the camera
+ * plane with scale `strip_sy`. Rows below `safe` stay put. Above it a strip
+ * moves toward the camera along its eye ray by (its top - safe) *
+ * tan(pitch), capped at FWR_SPLIT_CAP, with its screen pixels unchanged.
+ * Where it overlaps `player` (may be null) on screen it stays FWR_SORT_BEHIND
+ * behind them, does not move when they are level, and is free when it is
+ * clearly nearer. The camera basis is built once for all strips. Returns 0
+ * for an unknown projection, a vertical camera or an unusable pose. */
+int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
+               unsigned count,int32_t safe,int32_t strip_sy,const FwrBody *player,FwrPose *output);
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,
     const FwPoint corners[8]);
 int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,

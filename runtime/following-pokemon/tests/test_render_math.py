@@ -5,6 +5,7 @@ HERE=Path(__file__).resolve().parents[1]
 class Point(c.Structure):_fields_=[('x',c.c_int32),('y',c.c_int32),('z',c.c_int32)]
 class Camera(c.Structure):_fields_=[('eye',Point),('target',Point),('projection',c.c_uint32)]
 class Pose(c.Structure):_fields_=[('position',Point),('sx',c.c_int32),('sy',c.c_int32)]
+class Body(c.Structure):_fields_=[('feet',Point),('half',c.c_int32),('height',c.c_int32)]
 class Result(c.Structure):_fields_=[('axis',Point),('before',c.c_int32),('after',c.c_int32),('policy',c.c_int32)]
 def xyz(p):return (p.x,p.y,p.z)
 def dot(a,b):return sum(x*y for x,y in zip(a,b))
@@ -41,8 +42,8 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_box_advance_limit.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Point)]
   cls.lib.fwr_box_advance_limit.restype=c.c_int32
   cls.lib.fwr_cap_advance.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
-  cls.lib.fwr_split_top.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
-  cls.lib.fwr_split_top.restype=c.c_int
+  cls.lib.fwr_strips.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.c_int32,c.c_uint,c.c_int32,c.c_int32,c.POINTER(Body),c.POINTER(Pose)]
+  cls.lib.fwr_strips.restype=c.c_int
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
  def run_case(self,world,pose,cam,large=1):
@@ -702,17 +703,20 @@ class Rendering(unittest.TestCase):
   self.assertGreater(north_kept.z,feet.z)
   self.assertLessEqual(north_kept.z,feet.z+6*4096)
   self.assertEqual(north_kept.x,feet.x);self.assertEqual(north_kept.y,feet.y)
- def test_split_top_keeps_pixels_and_clears_the_lean(self):
+ def test_strips_keep_pixels_and_clear_the_lean(self):
   # Native quad: +/-scale*sx wide and 0..2*scale*sy tall from the foot
   # anchor. The field actor scene is 7.0; 8.0 checks another scale.
-  def corners(pose,eye,n,ortho,y0,y1,scale):
+  def basis(n):
    r=[n[2],0,-n[0]];length=math.sqrt(dot(r,r));r=[x/length for x in r]
-   up=[n[1]*r[2],n[2]*r[0]-n[0]*r[2],-n[1]*r[0]];out=[]
-   for x,y in [(-scale*pose.sx,y0),(scale*pose.sx,y0),(-scale*pose.sx,y1),(scale*pose.sx,y1)]:
-    point=[xyz(pose.position)[i]+r[i]*x+up[i]*y for i in range(3)]
+   return r,[n[1]*r[2],n[2]*r[0]-n[0]*r[2],-n[1]*r[0]]
+  def corners(feet,half,y0,y1,eye,n,ortho):
+   r,up=basis(n);out=[]
+   for x,y in [(-half,y0),(half,y0),(-half,y1),(half,y1)]:
+    point=[feet[i]+r[i]*x+up[i]*y for i in range(3)]
     v=[point[i]-eye[i] for i in range(3)];depth=-dot(v,n)
     out.append((dot(v,r)/(1 if ortho else depth),dot(v,up)/(1 if ortho else depth)))
    return out
+  def depth(point,n):return dot(point,n)
   feet=(2195456,585395,46825472)
   for projection,scale in ((0,7),(2,7),(0,8)):
    for yaw in (0,37,90,200):
@@ -721,27 +725,60 @@ class Rendering(unittest.TestCase):
      offset=(math.sin(y)*math.cos(p),math.sin(p),math.cos(y)*math.cos(p))
      eye=tuple(int(feet[i]+offset[i]*215*4096) for i in range(3))
      n=[eye[i]-feet[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
-     cam=Camera(Point(*eye),Point(*feet),projection)
-     body=Pose(Point(*feet),16384,16384);top=Pose()
-     height=scale*body.sy
-     self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(cam),height,c.byref(top)),1,(projection,yaw,pitch))
-     ortho=projection==2
-     want=corners(body,eye,n,ortho,height,2*height,scale)
-     got=corners(top,eye,n,ortho,0,2*scale*top.sy,scale)
-     span=abs(want[2][1]-want[0][1])
-     for a,b in zip(want,got):
-      self.assertLess(abs(a[0]-b[0]),span/256,(projection,yaw,pitch,want,got))
-      self.assertLess(abs(a[1]-b[1]),span/256,(projection,yaw,pitch,want,got))
-     # Pulled toward the eye by the half's height times tan(pitch), capped.
-     moved=[top.position.x-feet[0],top.position.y-feet[1],top.position.z-feet[2]]
-     pull=dot(moved,n)
-     expected=min(height*math.tan(p),2*16*4096)
-     self.assertLess(abs(pull-expected),4096,(projection,yaw,pitch,pull,expected))
-  level=Camera(Point(0,0,240*4096),Point(),0);body=Pose(Point(),16384,16384);top=Pose()
-  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(level),7*16384,c.byref(top)),1)
-  self.assertEqual((top.sx,top.sy),(16384,8192))
-  for bad in (Pose(Point(),0,16384),Pose(Point(),16384,1)):
-   self.assertEqual(self.lib.fwr_split_top(c.byref(bad),c.byref(level),7*16384,c.byref(top)),0)
-  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(level),0,c.byref(top)),0)
-  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(Camera(Point(0,0,240*4096),Point(),3)),7*16384,c.byref(top)),0)
+     cam=Camera(Point(*eye),Point(*feet),projection);ortho=projection==2
+     body=Pose(Point(*feet),16384,16384)
+     height=2*scale*body.sy;half=scale*body.sx;row=height//64;safe=height*3//8
+     pulls=[];outs=(Pose*6)()
+     self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,6,safe,body.sy//8,None,outs),1,(projection,yaw,pitch))
+     for i in range(6):
+      top=row*(64-8*i);bottom=top-8*row;out=outs[i]
+      want=corners(feet,half,bottom,top,eye,n,ortho)
+      got=corners(xyz(out.position),scale*out.sx,0,2*scale*out.sy,eye,n,ortho)
+      span=abs(want[2][1]-want[0][1])
+      for a,b in zip(want,got):
+       self.assertLess(abs(a[0]-b[0]),span/64,(projection,yaw,pitch,i,want,got))
+       self.assertLess(abs(a[1]-b[1]),span/64,(projection,yaw,pitch,i,want,got))
+      # Toward the eye by (top - safe) * tan(pitch), capped at two tiles.
+      pull=depth([out.position.x-feet[0],out.position.y-feet[1],out.position.z-feet[2]],n)
+      expected=min(max(0,top-safe)*math.tan(p),2*16*4096)
+      self.assertLess(abs(pull-expected),4096,(projection,yaw,pitch,i,pull,expected))
+      pulls.append(pull)
+     # Higher strips never come forward less (capped ones tie to rounding).
+     self.assertTrue(all(a>=b-64 for a,b in zip(pulls,pulls[1:])),pulls)
+  # Player overlap at the captured field camera: six units nearer the camera
+  # (a close swap pose), then level beside, then clearly behind the follower.
+  eye=(2195456,1302017,47460865);target=(2195456,689441,46825472)
+  cam=Camera(Point(*eye),Point(*target),0);n=[eye[i]-target[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
+  feet=target;body=Pose(Point(*feet),16384,16384);height=7*2*16384;half=7*16384;row=height//64;safe=height*3//8
+  def strip(player,i):
+   outs=(Pose*6)()
+   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,6,safe,2048,c.byref(player) if player else None,outs),1)
+   out=outs[i]
+   return depth([out.position.x-feet[0],out.position.y-feet[1],out.position.z-feet[2]],n)
+  front=Body(Point(feet[0],feet[1],feet[2]+6*4096),7*8192,7*2*8192)
+  gap=depth([0,0,6*4096],n)
+  free=[strip(None,i) for i in range(6)]
+  def overlaps(player,i):
+   top=row*(64-8*i)
+   a=corners(feet,half,top-8*row,top,eye,n,False);b=corners(xyz(player.feet),player.half,0,player.height,eye,n,False)
+   return min(x for x,_ in a)<=max(x for x,_ in b) and min(x for x,_ in b)<=max(x for x,_ in a) and \
+          min(y for _,y in a)<=max(y for _,y in b) and min(y for _,y in b)<=max(y for _,y in a)
+  self.assertTrue(any(overlaps(front,i) and free[i]>gap for i in range(6)))
+  for i in range(6):
+   if overlaps(front,i):self.assertLessEqual(strip(front,i),max(0,gap-4096)+16,i)
+   else:self.assertLess(abs(strip(front,i)-free[i]),1,i)
+  beside=Body(Point(feet[0]+20*4096,feet[1],feet[2]),7*8192,7*2*8192)
+  self.assertTrue(any(overlaps(beside,i) and free[i]>4096 for i in range(6)))
+  for i in range(6):
+   if overlaps(beside,i):self.assertLess(abs(strip(beside,i)),64,i)
+   else:self.assertLess(abs(strip(beside,i)-free[i]),1,i)
+  behind=Body(Point(feet[0],feet[1],feet[2]-32*4096),7*8192,7*2*8192)
+  self.assertEqual([round(strip(behind,i)) for i in range(6)],[round(v) for v in free])
+  far=Body(Point(feet[0]+80*4096,feet[1],feet[2]),7*8192,7*2*8192)
+  self.assertEqual([round(strip(far,i)) for i in range(6)],[round(v) for v in free])
+  outs=(Pose*6)()
+  for args in ((0,height,8*row,6),(half,height,0,6),(half,height,8*row,0),(half,8*row,8*row,6),(half,height,8*row,17)):
+   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),args[0],args[1],args[2],args[3],safe,2048,None,outs),0,args)
+  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(*eye),Point(*target),3)),half,height,8*row,6,safe,2048,None,outs),0)
+  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(target[0],eye[1],target[2]),Point(*target),0)),half,height,8*row,6,safe,2048,None,outs),0)
 if __name__=='__main__':unittest.main()
