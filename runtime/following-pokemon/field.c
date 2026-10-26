@@ -43,6 +43,10 @@ static Actor *fwfield_terrainActor;
 static void *fwfield_terrainController;
 static int16_t fwfield_terrainX,fwfield_terrainZ;
 static uint16_t fwfield_terrainZone;
+/* Tile flag 0x100 under the follower: the shade ActorTerrainEffect_Shadow
+ * gives an NPC. That pass never runs for this actor; terrain_update reads the
+ * same attribute once per tile. */
+static uint8_t fwfield_shaded;
 /* Last player zone whose trail samples share the current coordinate frame.
  * Not save data. A seamless connection that jumps more than one tile
  * translates the trail instead of clearing it. */
@@ -996,11 +1000,11 @@ static void terrain_update(void) {
   fwfield_terrainActor=0;return;
  }
 #endif
- if(!owned()) {fwfield_terrainActor=0;return;}
+ if(!owned()) {fwfield_terrainActor=0;fwfield_shaded=0;return;}
  Actor *a=(Actor*)fwfield_follower.actor;
  if((a->flags&HIDDEN)||fwfield_flying){
   if(a->moveflags&0x40000u)CALL(0x021676fd,void(*)(Actor*,unsigned))(a,0);
-  fwfield_terrainActor=0;return;
+  fwfield_terrainActor=0;fwfield_shaded=0;return;
  }
  /* This controller lookup is the same one used by the native grass entry
   * path. The grid-tile attribute query is separate from the rail movement
@@ -1015,7 +1019,8 @@ static void terrain_update(void) {
  uint32_t attr=0;
  /* An unmarked tile reports no attribute. Still visit the shoal adapter so
   * it clears the native effect bit and retires the attached splash task. */
- CALL(0x0215e8e5,int(*)(Actor*,const Vec*,uint32_t*))(a,&center,&attr);
+ int found=CALL(0x0215e8e5,int(*)(Actor*,const Vec*,uint32_t*))(a,&center,&attr);
+ fwfield_shaded=found&&attr!=UINT32_MAX&&((attr>>16)&0x100u);
  fwfield_terrainActor=a;fwfield_terrainController=controller;
  fwfield_terrainX=a->grid[0];fwfield_terrainZ=a->grid[2];
  fwfield_terrainZone=a->zone;
@@ -1094,6 +1099,7 @@ API void FollowingUpdate(ActorSystem *sys) {
  }
 }
 int fwfield_first_body(void){return fwfield_reveal;}
+int fwfield_follower_shaded(void){return fwfield_shaded;}
 API void FollowingDraw(void *system,void *camera,void *light){
  fwfield_shownNow=owned()&&!(((Actor*)fwfield_follower.actor)->flags&HIDDEN);
 #ifdef FW_MOUNT

@@ -10,7 +10,7 @@ Submitted follower quad:
 
 - Start from the native billboard, which already includes the world pose and the idle hop.
 - Apply the registry Y (`sprite_y` minus descriptor byte 14) plus two world pixels on this quad only. Every facing uses that same offset. Nothing adds Z.
-- Copy the player's light-mask bits onto the follower for the submit, then restore the follower quad. The player billboard, world, moveflags, and animation are not written.
+- Light the follower from its own tile for the submit, then restore the follower quad. Retail `FldAct_SyncLights` uses light 3 alone on a shaded actor and light 0 alone otherwise; the shade is tile flag `0x100` (`ActorTerrainEffect_Shadow`), which `terrain_update` reads once per follower tile because the native terrain pass never runs for this actor. A player mask other than those two is still shared. The player billboard, world, moveflags, and animation are not written.
 
 `policy` and `sortMargin` stay 0. `before` / `after` / `depthRel` are the submitted view gap, hop included. `hold` is always 0. `snap` is 1 on a frame that depth-biased the follower oval, and 0 when that oval was left alone. The debug record layout is unchanged.
 

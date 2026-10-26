@@ -212,6 +212,8 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
  b->sy=(int16_t)(b->sy/(64/FWR_BASE_ROWS));
  return 1;
 }
+/* Field sets this from the follower's tile each time it changes. Same DLL. */
+extern int fwfield_follower_shaded(void);
 void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int sprite_y){
  Billboard *b=0,*p=0;FwrPose original={0},adjusted;int changed=0,lightingChanged=0;uint16_t originalFlags=0;
  effectPose.actor=effectPose.player=0;shadowTie.valid=shadowTie.hasPlayer=0;
@@ -226,8 +228,13 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    original=(FwrPose){b->position,b->sx,b->sy};
    adjusted=original;
    if(p&&b!=p){
+    /* FldAct_SyncLights: a shaded actor uses light 3 alone, any other light
+     * 0 alone. The follower's own tile decides, not the player's. A map
+     * that gives the player any other mask keeps sharing it. */
+    uint16_t mask=p->flags&FWR_LIGHT_MASK;
+    if(mask==FWR_LIGHT_SUN||mask==FWR_LIGHT_SHADE)mask=fwfield_follower_shaded()?FWR_LIGHT_SHADE:FWR_LIGHT_SUN;
     originalFlags=b->flags;
-    b->flags=(b->flags&~FWR_LIGHT_MASK)|(p->flags&FWR_LIGHT_MASK);
+    b->flags=(uint16_t)((b->flags&~FWR_LIGHT_MASK)|mask);
     lightingChanged=b->flags!=originalFlags;
    }
    FwrCamera cam={*(FwPoint*)((uint8_t*)camera+32),*(FwPoint*)((uint8_t*)camera+56),U32(camera,0)};

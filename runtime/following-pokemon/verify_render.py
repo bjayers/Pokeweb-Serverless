@@ -75,16 +75,21 @@ for face,expected in ((0,3),(1,3),(2,3),(3,3)):
  after=bytes(uc.mem_read(A,256))
  assert after[:128]==before[:128] and after[129:]==before[129:]
 call('fwr_anchor',[0,0])
-# The follower uses the player's scene light selection for the synchronous
-# actor pass, while retaining its own alpha and restoring the native mask for
-# the later shadow/effect pass.
+# Sun (light 0) or shade (light 3) comes from the follower's own tile when
+# the player has one of those two; any other player mask is still shared.
+# The follower keeps its alpha, and the native mask is restored for the later
+# shadow/effect pass.
 for player_mask in (0x0000,0x1000,0x4000,0x8000):
- setup();half(BILL+24,player_mask|0x021f);half(BILL+28+24,0x121f)
- draw()
- assert light_seen[-1]==(player_mask|0x021f,player_mask|0x021f),light_seen[-1]
- assert read(BILL+28+24,'H')[0]==0x121f
- n=len(light_seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
- assert len(light_seen)==n+1 and light_seen[-1][1]==0x121f
+ for shaded in (0,1):
+  setup();half(BILL+24,player_mask|0x021f);half(BILL+28+24,0x121f)
+  uc.mem_write(addr('fwfield_shaded'),bytes([shaded]))
+  draw()
+  want=(0x8000 if shaded else 0x1000) if player_mask in (0x1000,0x8000) else player_mask
+  assert light_seen[-1]==(player_mask|0x021f,want|0x021f),(player_mask,shaded,light_seen[-1])
+  assert read(BILL+28+24,'H')[0]==0x121f
+  n=len(light_seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
+  assert len(light_seen)==n+1 and light_seen[-1][1]==0x121f
+uc.mem_write(addr('fwfield_shaded'),b'\0')
 frames=0
 for size in (32,64):
  for projection in (0,1,2):
