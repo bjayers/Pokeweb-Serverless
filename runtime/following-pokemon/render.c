@@ -173,12 +173,57 @@ static const FwrStack fwr_stack={0,1024,8*4096,14*4096};
  * that could hold it, then each strip's sx: its pull is (1 - sx / body sx)
  * of the eye distance. Strip 0 is the top. */
 __attribute__((visibility("default"))) volatile struct {
- uint32_t magic,version,splits,reason,limited,others;int32_t sx[8];
-} FollowingStripDebug={.magic=0x44535746,.version=1};
+ uint32_t magic,version,splits,reason,limited,others;int32_t sx[8];uint32_t covers;
+} FollowingStripDebug={.magic=0x44535746,.version=2};
+/* A sprite the strips cover on screen (the player, an NPC) is drawn again
+ * after them, its upper three quarters brought forward just enough to stay
+ * in front (fwr_strips `lift`). Same pixels, so it only decides who is on
+ * top. Its feet band is not redrawn: grass and the oval still meet the
+ * native feet, and that band still holds the strips back. Version 2 of
+ * FWSD records how many at +56. */
+#define FWR_COVERS 4u
+#define FWR_COVER_BANDS 3u
+static struct { Scene scene; Billboard actors[FWR_COVERS*FWR_COVER_BANDS]; Material materials[FWR_COVERS]; uint8_t actorCount,materialCount; } cover;
 _Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
 static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
+static void cover_sprites(Scene *scene,const FwrCamera *cam,const Billboard *const *bills,const int32_t *lift,unsigned count){
+ FwrBasis basis;
+ cover.actorCount=cover.materialCount=0;
+ if(!fwr_basis(cam,&basis))return;
+ int64_t scale=scene->scale.x;
+ for(unsigned k=0;k<count&&cover.materialCount<FWR_COVERS;++k){
+  const Billboard *o=bills[k];
+  if(lift[k]<=0||(o->flags&31u)!=31u||(o->flags&0x0800u))continue; /* Opaque, not flipped vertically. */
+  unsigned mat=o->geom&0x3fffu;
+  if(mat>=scene->materialCount)continue;
+  const Material *m=&scene->materials[mat];
+  if(!m->cols||m->fh<8||(m->fh&3)||(o->sy&3)||o->sy<=0)continue;
+  /* A face h tall is four bands of h/4; band j of 64-pixel row r is face
+   * (4r+j). No divide: a sheet row holds one or two faces. */
+  unsigned sheetRow=0,col=o->frame;
+  while(col>=m->cols){col-=m->cols;++sheetRow;}
+  int32_t height=(int32_t)((2*scale*o->sy)>>12),band=height/4;
+  FwrPose pose={o->position,o->sx,o->sy},placed[FWR_COVER_BANDS];
+  unsigned j;
+  for(j=0;j<FWR_COVER_BANDS;++j)
+   if(!fwr_band(&basis,&pose,height-(int32_t)(j+1)*band,lift[k],o->sy/4,&placed[j]))break;
+  if(j<FWR_COVER_BANDS)continue;
+  unsigned c=cover.materialCount++;
+  cover.materials[c]=*m;cover.materials[c].fh=(uint8_t)(m->fh/4);
+  for(j=0;j<FWR_COVER_BANDS;++j){
+   Billboard *s=&cover.actors[cover.actorCount++];
+   *s=*o;s->geom=(uint16_t)((o->geom&0xc000u)|c);
+   s->position=placed[j].position;s->sx=(int16_t)placed[j].sx;s->sy=(int16_t)placed[j].sy;
+   s->frame=(uint16_t)((sheetRow*4u+j)*m->cols+col);
+  }
+ }
+ if(!cover.actorCount)return;
+ fwr_private_scene(&cover.scene,scene,cover.actors,cover.materials,cover.actorCount,cover.materialCount);
+ cover.scene.polygon=scene->polygon;cover.scene.origin=scene->origin;
+ for(unsigned i=4;i<20;++i)cover.scene.rest[i]=scene->rest[i];
+}
 static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){
- upper.live=0;
+ upper.live=0;cover.actorCount=cover.materialCount=0;
  (void)p;
  FollowingStripDebug.reason=1;
  if(a->descriptor[7]!=2||(b->flags&0x0800u))return 0; /* 64-pixel mode, not flipped vertically. */
@@ -196,7 +241,7 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
  /* Visible camera-facing billboards within three tiles: the player and the
   * NPCs a strip must not be drawn over. A visible one on the follower's
   * material would lose its upper rows, so that draws whole. */
- FwrBody others[FWR_OTHERS_MAX];unsigned otherCount=0;
+ FwrBody others[FWR_OTHERS_MAX];const Billboard *otherBill[FWR_OTHERS_MAX];unsigned otherCount=0;
  FollowingStripDebug.reason=3;
  for(unsigned i=0;i<scene->actorCount;++i){
   const Billboard *o=&scene->actors[i];
@@ -205,6 +250,7 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
   if((o->geom>>14)!=0||o->sx<=0||o->sy<=0||otherCount>=FWR_OTHERS_MAX)continue;
   int64_t dx=(int64_t)o->position.x-b->position.x,dz=(int64_t)o->position.z-b->position.z;
   if(dx>3*(int64_t)FW_TILE||dx<-3*(int64_t)FW_TILE||dz>3*(int64_t)FW_TILE||dz<-3*(int64_t)FW_TILE)continue;
+  otherBill[otherCount]=o;
   FwrBody *near=&others[otherCount++];
   near->feet=o->position;near->half=(int32_t)((scale*o->sx)>>12);near->height=(int32_t)((2*scale*o->sy)>>12);
  }
@@ -216,11 +262,12 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
   * __aeabi_uidiv import; a sheet row holds one or two faces. */
  unsigned sheetRow=0,col=b->frame;
  while(col>=m->cols){col-=m->cols;++sheetRow;}
- FwrPose out[FWR_STRIPS];uint16_t limited=0;
+ FwrPose out[FWR_STRIPS];uint16_t limited=0;int32_t lift[FWR_OTHERS_MAX];
  FollowingStripDebug.reason=5;
- if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&fwr_stack,stripSy,others,otherCount,out,&limited))return 0;
+ if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&fwr_stack,stripSy,others,otherCount,out,&limited,lift))return 0;
+ cover_sprites(scene,cam,otherBill,lift,otherCount);
  FollowingStripDebug.reason=0;++FollowingStripDebug.splits;
- FollowingStripDebug.limited=limited;FollowingStripDebug.others=otherCount;
+ FollowingStripDebug.limited=limited;FollowingStripDebug.others=otherCount;FollowingStripDebug.covers=cover.materialCount;
  for(unsigned i=0;i<FWR_STRIPS;++i)FollowingStripDebug.sx[i]=out[i].sx;
  /* Strip i shows rows 8i..8i+7 from the top of the frame; the native base
   * keeps the last 8. */
@@ -326,6 +373,7 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(upper.live){
   upper.live=0;
   CALL(0x0204ebdd,void(*)(void*,void*,void*))(&upper.scene,camera,light);
+  if(cover.actorCount){CALL(0x0204ebdd,void(*)(void*,void*,void*))(&cover.scene,camera,light);cover.actorCount=0;}
  }
 }
 /* Nearest live quad within half a tile (XZ) and two tiles (Y) of actor

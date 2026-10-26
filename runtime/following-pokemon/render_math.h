@@ -165,13 +165,23 @@ typedef struct { int32_t safe,lean,forward,ramp; } FwrStack;
  * of depth, with its screen pixels unchanged. A billboard in `others` (the
  * player, NPCs) that a strip covers on screen keeps that strip
  * FWR_SORT_BEHIND behind it; one level with the follower holds the strip
- * still; one clearly behind does not count. `limited` (may be null) gets a
- * bit per strip that was held back. The camera basis is built once for all
+ * still; one clearly behind does not count. With `lift` (may be null, one
+ * per other) only a sprite's bottom quarter, its feet, holds strips back;
+ * `lift[k]` gets the pull that keeps the rest of sprite k FWR_SORT_BEHIND in
+ * front of every strip covering it, 0 when none does. `limited` (may be
+ * null) gets a bit per strip that was held back. The camera basis is built once for all
  * strips. Returns 0 for an unknown projection, a vertical camera or an
  * unusable pose. */
 int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
                unsigned count,const FwrStack *stack,int32_t strip_sy,const FwrBody *others,unsigned other_count,
-               FwrPose *output,uint16_t *limited);
+               FwrPose *output,uint16_t *limited,int32_t *lift);
+/* The camera-facing basis fwr_strips uses, built once per frame. */
+typedef struct { FwPoint eye,view,right,up,toward; int32_t flat,upToward; int ortho; } FwrBasis;
+int fwr_basis(const FwrCamera *camera,FwrBasis *output);
+/* The band of `body` from `low` world units up its camera plane, with scale
+ * `band_sy`, moved `pull` toward the eye along its ray with its pixels
+ * unchanged. Redraws a sprite's upper rows over the strips that cover it. */
+int fwr_band(const FwrBasis *basis,const FwrPose *body,int32_t low,int32_t pull,int32_t band_sy,FwrPose *output);
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,
     const FwPoint corners[8]);
 int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,
