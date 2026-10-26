@@ -6,7 +6,7 @@ class Point(c.Structure):_fields_=[('x',c.c_int32),('y',c.c_int32),('z',c.c_int3
 class Camera(c.Structure):_fields_=[('eye',Point),('target',Point),('projection',c.c_uint32)]
 class Pose(c.Structure):_fields_=[('position',Point),('sx',c.c_int32),('sy',c.c_int32)]
 class Body(c.Structure):_fields_=[('feet',Point),('half',c.c_int32),('height',c.c_int32)]
-class Stack(c.Structure):_fields_=[('safe',c.c_int32),('lean',c.c_int32),('forward',c.c_int32),('ramp',c.c_int32)]
+class Stack(c.Structure):_fields_=[('base',c.c_int32),('forward',c.c_int32),('rise',c.c_int32),('ramp',c.c_int32)]
 class Result(c.Structure):_fields_=[('axis',Point),('before',c.c_int32),('after',c.c_int32),('policy',c.c_int32)]
 def xyz(p):return (p.x,p.y,p.z)
 def dot(a,b):return sum(x*y for x,y in zip(a,b))
@@ -730,9 +730,10 @@ class Rendering(unittest.TestCase):
      n=[eye[i]-feet[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
      cam=Camera(Point(*eye),Point(*feet),projection);ortho=projection==2
      body=Pose(Point(*feet),16384,16384)
-     height=2*scale*body.sy;half=scale*body.sx;row=height//64;safe=0;lean=1024;ahead=8*4096;ramp=14*4096
-     stack=Stack(safe,lean,ahead,ramp)
-     def ground(top):return lean/4096*(top-safe)+ahead*min(top-safe,ramp)/ramp
+     # A wall five units behind the feet, a tile of jut ramped in from 20 units up.
+     height=2*scale*body.sy;half=scale*body.sx;row=height//64;base=-4*4096;ahead=16*4096;rise=20*4096;ramp=14*4096
+     stack=Stack(base,ahead,rise,ramp)
+     def ground(top):return base+ahead*min(max(top-rise,0),ramp)/ramp
      pulls=[];outs=(Pose*7)()
      self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(stack),body.sy//8,None,0,outs,None,None),1,(projection,yaw,pitch))
      r,up=basis(n);flat=math.hypot(n[0],n[2]);toward=[n[0]/flat,0,n[2]/flat]
@@ -748,12 +749,13 @@ class Rendering(unittest.TestCase):
       # five tiles. Perspective moves along each strip's own ray,
       # so only the cap and the top edge below are exact there.
       pull=depth([out.position.x-feet[0],out.position.y-feet[1],out.position.z-feet[2]],n)
-      want_pull=(top*math.sin(p)+ground(top))/math.cos(p)
+      want_pull=max(0,top*math.sin(p)+ground(top))/math.cos(p)
       if ortho:self.assertLess(abs(pull-min(want_pull,5*16*4096)),4096,(projection,yaw,pitch,i,pull,want_pull))
       self.assertLessEqual(pull,5*16*4096+256,(projection,yaw,pitch,i,pull))
-      # Uncapped, the strip's top edge stands `ground(top)` in front of the
-      # feet along the ground: half a tile ramped in, then a forward lean.
-      if pull<5*16*4096-4096:
+      # Uncapped, a moved strip's top edge stands `ground(top)` from the feet
+      # along the ground; an unmoved one already stands there or nearer.
+      if want_pull<=0:self.assertLess(abs(pull),64,(projection,yaw,pitch,i,pull))
+      elif pull<5*16*4096-4096:
        edge=[out.position.x+up[k]*2*scale*out.sy-feet[k] for k in (0,)]+[out.position.y+up[1]*2*scale*out.sy-feet[1],out.position.z+up[2]*2*scale*out.sy-feet[2]]
        self.assertLess(abs(dot(edge,toward)-ground(top)),2*4096,(projection,yaw,pitch,i,dot(edge,toward),ground(top)))
       pulls.append(pull)
@@ -764,7 +766,7 @@ class Rendering(unittest.TestCase):
   eye=(2195456,1302017,47460865);target=(2195456,689441,46825472)
   cam=Camera(Point(*eye),Point(*target),0);n=[eye[i]-target[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
   feet=target;body=Pose(Point(*feet),16384,16384);height=7*2*16384;half=7*16384;row=height//64
-  stack=Stack(0,1024,8*4096,14*4096)
+  stack=Stack(0,8*4096,0,14*4096)
   def strips(*sprites):
    outs=(Pose*7)();bodies=(Body*max(1,len(sprites)))(*sprites);held=c.c_uint16(0xffff)
    self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(stack),2048,bodies,len(sprites),outs,c.byref(held),None),1)
@@ -804,7 +806,8 @@ class Rendering(unittest.TestCase):
    self.assertEqual(bool(held&(1<<i)),want<free[i]-64,(i,held))
   outs=(Pose*7)()
   bad=[(0,height,8*row,7,stack),(half,height,0,7,stack),(half,height,8*row,0,stack),(half,8*row,8*row,7,stack),(half,height,8*row,17,stack),
-       (half,height,8*row,7,Stack(0,-1,0,4096)),(half,height,8*row,7,Stack(0,4097,0,4096)),(half,height,8*row,7,Stack(0,0,0,0)),(half,height,8*row,7,Stack(0,0,33*4096,4096)),(half,height,8*row,7,Stack(-1,0,0,4096))]
+       (half,height,8*row,7,Stack(-81*4096,0,0,4096)),(half,height,8*row,7,Stack(33*4096,0,0,4096)),(half,height,8*row,7,Stack(0,-1,0,4096)),(half,height,8*row,7,Stack(0,33*4096,0,4096)),
+       (half,height,8*row,7,Stack(0,0,-1,4096)),(half,height,8*row,7,Stack(0,0,81*4096,4096)),(half,height,8*row,7,Stack(0,0,0,0)),(half,height,8*row,7,Stack(0,0,0,65*4096))]
   for args in bad:
    self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),args[0],args[1],args[2],args[3],c.byref(args[4]),2048,None,0,outs,None,None),0,args[:4])
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(stack),2048,None,1,outs,None,None),0)
@@ -840,7 +843,7 @@ class Rendering(unittest.TestCase):
   self.assertEqual(self.lib.fwr_basis(c.byref(cam),frame),1)
   r,up=basis(n);flat=math.hypot(n[0],n[2]);toward=[n[0]/flat,0,n[2]/flat]
   for line in (-60*4096,-24*4096,-9*4096,0,9*4096):
-   wall=Stack(0,0,line,1);outs=(Pose*7)()
+   wall=Stack(line,0,0,1);outs=(Pose*7)()
    self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(wall),2048,None,0,outs,None,None),1,line)
    for i in range(7):
     top=row*(64-8*i);o=outs[i]
@@ -850,7 +853,20 @@ class Rendering(unittest.TestCase):
     if native_top>=line:self.assertLess(abs(pull),64,(line,i))
     else:self.assertLess(abs(dot(edge,toward)-line),2*4096,(line,i,dot(edge,toward)))
   outs=(Pose*7)()
-  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(Stack(0,0,-81*4096,1)),2048,None,0,outs,None,None),0)
+  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(Stack(-81*4096,0,0,1)),2048,None,0,outs,None,None),0)
+  # The jut ramps in with height: low rows only clear the face line, high
+  # rows stand a tile of jut in front of it, rows between in proportion.
+  for face in (-9*4096,-25*4096):
+   wall=Stack(face,16*4096,20*4096,14*4096);outs=(Pose*7)()
+   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(wall),2048,None,0,outs,None,None),1,face)
+   for i in range(7):
+    top=row*(64-8*i);o=outs[i]
+    aim=face+16*4096*min(max(top-20*4096,0),14*4096)/(14*4096)
+    pull=depth([o.position.x-feet[0],o.position.y-feet[1],o.position.z-feet[2]],n)
+    native_top=dot([up[k]*top for k in range(3)],toward)
+    edge=[o.position.x+up[0]*2*7*o.sy-feet[0],o.position.y+up[1]*2*7*o.sy-feet[1],o.position.z+up[2]*2*7*o.sy-feet[2]]
+    if native_top>=aim:self.assertLess(abs(pull),64,(face,i))
+    else:self.assertLess(abs(dot(edge,toward)-aim),2*4096,(face,i,dot(edge,toward),aim))
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(*eye),Point(*target),3)),half,height,8*row,7,c.byref(stack),2048,None,0,outs,None,None),0)
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(target[0],eye[1],target[2]),Point(*target),0)),half,height,8*row,7,c.byref(stack),2048,None,0,outs,None,None),0)
 if __name__=='__main__':unittest.main()

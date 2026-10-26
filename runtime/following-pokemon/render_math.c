@@ -624,10 +624,10 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
                unsigned count,const FwrStack *stack,int32_t strip_sy,const FwrBody *others,unsigned other_count,
                FwrPose *out,uint16_t *limited,int32_t *lift){
  if(!body||!camera||!stack||!out||!count||count>16||other_count>FWR_OTHERS_MAX||(other_count&&!others))return 0;
- int32_t safe=stack->safe,lean=stack->lean,ahead=stack->forward,ramp=stack->ramp;
+ int32_t base=stack->base,ahead=stack->forward,rise=stack->rise,ramp=stack->ramp;
  if(camera->projection>2||body->sx<=0||body->sx>32767||strip_sy<=0||strip_sy>32767||half<=0||
-    strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0||safe<0||lean<0||lean>4096||
-    ahead<-5*(int32_t)FW_TILE||ahead>2*(int32_t)FW_TILE||ramp<=0||ramp>4*(int32_t)FW_TILE)return 0;
+    strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0||base<-5*(int32_t)FW_TILE||base>2*(int32_t)FW_TILE||
+    ahead<0||ahead>2*(int32_t)FW_TILE||rise<0||rise>5*(int32_t)FW_TILE||ramp<=0||ramp>4*(int32_t)FW_TILE)return 0;
  if(limited)*limited=0;
  for(unsigned k=0;lift&&k<other_count;++k)lift[k]=0;
  FwrBasis b;FwPoint ray;
@@ -661,13 +661,14 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
   int32_t high=top-(int32_t)i*strip,low=high-strip;
   /* A camera-facing quad leans back by its height. Each strip comes
    * forward along its eye ray until its top edge stands, measured along
-   * the ground, `forward` (ramped in over `ramp` of height) plus `lean` per
-   * unit of height past `safe` in front of the hinge. The top gains `dh`
-   * ground units; moving a fraction k of the way to the eye gains k times
-   * its ground distance to the eye, and pulls the strip k * distance. */
+   * the ground from the feet, at `base` plus `forward` ramped in over
+   * `ramp` of height from `rise`. A strip whose native top already stands
+   * there or nearer stays put. The top gains `dh` ground units; moving a
+   * fraction k of the way to the eye gains k times its ground distance to
+   * the eye, and pulls the strip k * distance. */
   int32_t pull=0;int64_t q=-1;
-  int32_t past=high-safe;
-  int32_t dh=past>0?(int32_t)((int64_t)past*(lean-b.upToward)/4096)+divide((int64_t)ahead*(past<ramp?past:ramp),ramp):0;
+  int32_t over=high-rise;if(over<0)over=0;if(over>ramp)over=ramp;
+  int32_t dh=(int32_t)(-(int64_t)high*b.upToward/4096)+base+divide((int64_t)ahead*over,ramp);
   if(dh>0){
    if(b.ortho)pull=divide((int64_t)dh*4096,b.flat);
    else{

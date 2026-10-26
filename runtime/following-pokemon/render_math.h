@@ -151,12 +151,11 @@ typedef struct { FwPoint feet; int32_t half,height; } FwrBody;
  * units forward at a 44° camera. Past this a steep camera's top rows lean
  * back again. */
 #define FWR_SPLIT_CAP (5 * FW_TILE)
-/* Where the strips' top edges stand, along the ground in front of the
- * hinge `safe` world units up the quad: `forward` world units (negative is
- * behind it, down to five tiles), ramped in over `ramp` units of height, plus
- * `lean` (20.12, 0..1) per unit of height. A strip whose native top already
- * stands there or nearer does not move. */
-typedef struct { int32_t safe,lean,forward,ramp; } FwrStack;
+/* Where the strips' top edges stand, along the ground from the feet
+ * (positive toward the camera): `base` (-5..2 tiles), plus `forward` (0..2
+ * tiles) ramped in over `ramp` units of height starting `rise` units up. A
+ * strip whose native top already stands there or nearer does not move. */
+typedef struct { int32_t base,forward,rise,ramp; } FwrStack;
 /* Nearby billboards that can hold a strip back. */
 #define FWR_OTHERS_MAX 16u
 /* Horizontal strips of a tall body for their own submit. `body` is the
