@@ -18,7 +18,14 @@
 /* Native units, approximately pixels at the ordinary field camera scale. */
 #define FW_MAX_SIDE_GAP 6u
 #define FW_DEFAULT_SIDE_GAP_BONUS 6u
-#define FW_MAX_DIRECTIONAL_GAP (FW_MAX_SIDE_GAP + FW_DEFAULT_SIDE_GAP_BONUS)
+/* Installed positioning rows and the automatic gap stay in 0..12. */
+#define FW_MAX_AUTHORED_GAP (FW_MAX_SIDE_GAP + FW_DEFAULT_SIDE_GAP_BONUS)
+/* A 64-pixel body is about twice an NPC's width, so its edge sits on the
+ * player at an authored gap. The runtime adds this on every side. */
+#define FW_LARGE_GAP_BONUS 8u
+#define FW_MAX_DIRECTIONAL_GAP (FW_MAX_AUTHORED_GAP + FW_LARGE_GAP_BONUS)
+/* Units past the two-tile corridor an authored gap fits in. */
+#define FW_GAP_BEYOND(gap) ((gap) > FW_MAX_AUTHORED_GAP ? (gap) - FW_MAX_AUTHORED_GAP : 0u)
 #define FW_DIALOGUE_REACH(gap) (FW_TILE + ((gap) + 1u) * 4096u)
 typedef enum { FW_ABSENT, FW_WAITING, FW_FOLLOWING, FW_INTERACTING, FW_SUPPRESSED, FW_DESTROYING, FW_EVENT_PAUSED } FwState;
 typedef enum { FW_MENU, FW_DIALOGUE, FW_SCRIPT, FW_WARP, FW_BATTLE, FW_BLACKOUT,

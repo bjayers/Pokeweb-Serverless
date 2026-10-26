@@ -112,7 +112,7 @@ int fw_clamp_dialogue_pose(FwPoint *pose,const FwPoint *player,const FwPoint *ar
      * two-tile corridor. Do not pull a distant or off-axis actor across
      * a turn, wall, stair or discontinuity to make it talkable. */
     int64_t farthest=along>art_along?along:art_along;
-    if(farthest<=limit||along>2*FW_TILE||along>limit+8*4096||farthest>limit+16*4096||
+    if(farthest<=limit||along>2*(int64_t)FW_TILE+(int64_t)FW_GAP_BEYOND(gap)*4096||along>limit+8*4096||farthest>limit+16*4096||
        lateral<-(int64_t)FW_TILE/3||lateral>(int64_t)FW_TILE/3||
        art_lateral<-(int64_t)FW_TILE/3||art_lateral>(int64_t)FW_TILE/3||
        height<-8*4096||height>8*4096)return 0;
@@ -454,9 +454,9 @@ int fw_trail_height_at(const FwTrail *t, int32_t x, int32_t z, int32_t *y) {
 }
 int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *player,
                     const uint8_t gaps[4], FwSample *out) {
-    /* Forty units covers a gap of 12 (about 28 units to one metric tile)
-     * and stays inside the 64-sample trail. Unit steps match a walked load. */
-    enum { units = 40 };
+    /* Twelve units past the largest metric tile (16 + 20 at a 64-pixel
+     * bonus) and inside the 64-sample trail. Unit steps match a walked load. */
+    enum { units = 16 + FW_MAX_DIRECTIONAL_GAP + 12 };
     if (!trail || !follower || !player || !gaps || !out || player->direction > 3 || !player->generation) return 0;
     if (gaps[0] > FW_MAX_DIRECTIONAL_GAP || gaps[1] > FW_MAX_DIRECTIONAL_GAP ||
         gaps[2] > FW_MAX_DIRECTIONAL_GAP || gaps[3] > FW_MAX_DIRECTIONAL_GAP) return 0;
@@ -492,9 +492,9 @@ int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *pl
 }
 int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *player,
                           const uint8_t gaps[4], FwSample *out) {
-    /* Same forty-unit history as the compass reseed, walked along the chord
-     * the player actually travelled. Rail facings are not world axes. */
-    enum { units = 40 };
+    /* Same history as the compass reseed, walked along the chord the
+     * player actually travelled. Rail facings are not world axes. */
+    enum { units = 16 + FW_MAX_DIRECTIONAL_GAP + 12 };
     if (!trail || !from || !player || !gaps || !out || player->direction > 3 || !player->generation) return 0;
     if (gaps[0] > FW_MAX_DIRECTIONAL_GAP || gaps[1] > FW_MAX_DIRECTIONAL_GAP ||
         gaps[2] > FW_MAX_DIRECTIONAL_GAP || gaps[3] > FW_MAX_DIRECTIONAL_GAP) return 0;

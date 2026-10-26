@@ -394,6 +394,51 @@ static void check_ease(void) {
     ease_bend();
     ease_floor();
 }
+/* A 64-pixel follower walks FW_LARGE_GAP_BONUS farther back: 16 + 20
+ * units at the largest authored gap. The trail, reseed, talk span and
+ * dialogue clamp all take that gap, and a gap of 12 keeps the two-tile
+ * corridor it had. */
+static void large_gap(void) {
+    const uint8_t large[4] = {FW_MAX_DIRECTIONAL_GAP, FW_MAX_DIRECTIONAL_GAP, FW_MAX_DIRECTIONAL_GAP, FW_MAX_DIRECTIONAL_GAP};
+    const uint8_t over[4] = {FW_MAX_DIRECTIONAL_GAP + 1, 0, 0, 0};
+    const int32_t rest = (int32_t)FW_TILE + (int32_t)FW_MAX_DIRECTIONAL_GAP * 4096;
+    const int32_t player0 = 6 * (int32_t)FW_TILE;
+    assert(FW_MAX_AUTHORED_GAP == 12u && FW_MAX_DIRECTIONAL_GAP == 20u);
+    for (int speed = 1; speed <= 4; ++speed) {
+        FwTrail trail; FwSample pose; int ready = 0;
+        fw_trail_clear(&trail);
+        for (int32_t x = 0;;) {
+            FwSample s = sample(x, 0, 0, 1, FW_WORLD); s.direction = 3;
+            int r = fw_trail_push_directional(&trail, &s, &pose, large);
+            assert(r >= 0); if (r == 1) ready = 1;
+            if (x == player0) break;
+            x = x + speed * 4096 > player0 ? player0 : x + speed * 4096;
+        }
+        assert(ready && trail.count < FW_TRAIL_CAPACITY);
+        int32_t gap = player0 - pose.x;
+        assert(gap >= rest - 4096 && gap <= rest + speed * 4096);
+    }
+    FwTrail seeded; FwSample after;
+    FwSample far = sample(player0 - rest, 0, 0, 1, FW_WORLD), at = sample(player0, 0, 0, 1, FW_WORLD);
+    far.direction = at.direction = 3;
+    assert(fw_trail_reseed(&seeded, &far, &at, large, &after) == 1);
+    assert(player0 - after.x >= rest - 4096 && player0 - after.x <= rest + 4096);
+    assert(fw_trail_reseed_along(&seeded, &far, &at, large, &after) == 1);
+    assert(fw_trail_reseed(&seeded, &far, &at, over, &after) == 0);
+    FwPoint player = {player0, 0, 0}, follower = {player0 + rest, 0, 0};
+    assert(fw_grid_talk_span(&player, &follower, 3, FW_MAX_DIRECTIONAL_GAP) == 1);
+    assert(fw_grid_talk_span(&player, &follower, 3, FW_MAX_AUTHORED_GAP) == 0);
+    assert(fw_grid_talk_span(&player, &follower, 3, FW_MAX_DIRECTIONAL_GAP + 1) == 0);
+    /* Two units past reach is corrected; the corridor keeps the same three
+     * units past reach that two tiles give a gap of 12. */
+    FwPoint beyond = {player0 + (int32_t)FW_DIALOGUE_REACH(FW_MAX_DIRECTIONAL_GAP) + 2 * 4096, 0, 0}, pulled = beyond;
+    assert(fw_clamp_dialogue_pose(&pulled, &player, 0, 3, FW_MAX_DIRECTIONAL_GAP) == 1);
+    assert(pulled.x == player0 + (int32_t)FW_DIALOGUE_REACH(FW_MAX_DIRECTIONAL_GAP));
+    pulled = beyond; pulled.x += 2 * 4096;
+    assert(fw_clamp_dialogue_pose(&pulled, &player, 0, 3, FW_MAX_DIRECTIONAL_GAP) == 0);
+    pulled = (FwPoint){player0 + 2 * (int32_t)FW_TILE + 4096, 0, 0};
+    assert(fw_clamp_dialogue_pose(&pulled, &player, 0, 3, FW_MAX_AUTHORED_GAP) == 0);
+}
 int main(void) {
     FwPokemon party[6] = {{0}};
     assert(fw_select(0, 0) == -1 && fw_select(party, 0) == -1 && fw_select(party, 7) == -1);
@@ -809,5 +854,6 @@ int main(void) {
     assert(fw_follower_form(25,1)==1&&fw_follower_form(200,0)==0&&fw_follower_form(494,1)==1);
     check_ease();
     corner_spacing();
+    large_gap();
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

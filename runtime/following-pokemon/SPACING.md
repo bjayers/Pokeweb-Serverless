@@ -97,3 +97,23 @@ on both profiles, including large sprites on stairs and near buildings, and
 U16 for later generations. Cold boot with the matching ordinary save; older
 emulator states contain older code and data. No game emulator or hardware testing
 is performed by the build scripts.
+
+## 64-pixel followers
+
+A 64-pixel body (descriptor byte 7 = 2) is about twice an NPC's width, so at
+an authored or automatic gap its edge sits on the player. The runtime adds
+`FW_LARGE_GAP_BONUS` (8 world units) to every side for those actors, on top
+of the selected positioning row: `walk_gaps()` in `field.c` for the trail,
+swap ease and reseed, and `fwt_reach` in `interaction.c` for talking.
+
+The stored gap stays in 0–12 (`FW_MAX_AUTHORED_GAP`), which is what the
+registry, `positioning.narc` and the Pokeweb editor validate, so editing a
+row still tunes a large follower without a runtime reinstall. The effective
+gap reaches 20 (`FW_MAX_DIRECTIONAL_GAP`), 36 units from the player at rest.
+
+Dialogue reach already scales with the gap. The two-tile corridors in
+`fw_clamp_dialogue_pose` and the talk trail check widen only by the gap past
+12 (`FW_GAP_BEYOND`), so 32-pixel followers keep exactly the bounds they had
+and a large one keeps the same three units of partial-step room past reach.
+The native grid check admits the tile in front of the player and the next
+one, which covers 40 units. Reseeds lay 48 units of history.

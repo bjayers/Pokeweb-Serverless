@@ -27,7 +27,7 @@ static int record(unsigned kind,unsigned row,unsigned count,uint32_t crc,uint8_t
   at=84u+(kind?land*12u+row*8u:row*12u);
   bytes=kind?8u:12u;
   if(ok)ok=read_at(file,at,out,bytes);
-  if(ok&&!kind)for(unsigned i=0;i<4;++i)if(out[i]>FW_MAX_DIRECTIONAL_GAP)ok=0;
+  if(ok&&!kind)for(unsigned i=0;i<4;++i)if(out[i]>FW_MAX_AUTHORED_GAP)ok=0;
   if(ok&&kind)for(unsigned i=0;i<8;++i){int value=(int8_t)out[i];if(value<-32||value>32)ok=0;}
  }
  CALL(0x02070de1,int(*)(void*))(file);

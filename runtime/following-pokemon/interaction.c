@@ -83,14 +83,16 @@ void fwt_unload(void){fwt_cancel();loaded=0;data=(FwrData){0};context=(FwrContex
 static int abs32(int x){return x<0?-x:x;}
 int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
  if(!f||f->state!=FW_FOLLOWING||!p||!a||(a->flags&4)||fwfx_busy()||p->face>3||f->trail.count<2)return 0;
- int gap=f->directional_gap[p->face];if(gap>(int)FW_MAX_DIRECTIONAL_GAP)return 0;
+ /* Same 64-pixel bonus the walk adds (walk_gaps in field.c). */
+ int gap=f->directional_gap[p->face]+(a->descriptor[7]==2?(int)FW_LARGE_GAP_BONUS:0);
+ if(gap>(int)FW_MAX_DIRECTIONAL_GAP)return 0;
  int x=a->world.x-p->world.x,z=a->world.z-p->world.z,y=a->world.y-(p->world.y+p->drawOffset.y+p->externalOffset.y);
  if(abs32(y)>8*4096)return 0;
  int box=abs32(x)>(int)(p->face>=2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0))||
     abs32(z)>(int)(p->face<2?FW_DIALOGUE_REACH(gap):FW_DIALOGUE_REACH(0));
  unsigned controller=CALL(0x02180579,unsigned(*)(void*))(field);
  int vx=p->face==2?-256:p->face==3?256:0,vz=p->face==0?-256:p->face==1?256:0;
- int rail=0,axis=512;
+ int rail=0,axis=512+(int)FW_GAP_BEYOND((unsigned)gap)*16;
  if(controller){
   /* Rail-facing keys are relative to the curve, not world compass directions.
      Only the player owns native rail movement work; never query the follower.
@@ -108,7 +110,7 @@ int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
    if(box||abs32(vx)>512||abs32(vz)>512)return 0;
   }else{
    int reach=abs32(vx)>abs32(vz)?abs32(vx):abs32(vz);
-   axis=reach+64;if(axis<512)axis=512;
+   axis=reach+64;if(axis<512+(int)FW_GAP_BEYOND((unsigned)gap)*16)axis=512+(int)FW_GAP_BEYOND((unsigned)gap)*16;
   }
  }else if(box)return 0;
  /* A turn leaves a follower partway across its adjacent tile, with a facing

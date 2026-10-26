@@ -219,11 +219,25 @@ static void recall_blocked(Actor *a){
 /* 1 when `natural` is strictly closer than a fresh load, along the reseeded
  * trail. The follower turns in place on that pose, or on the start floor when
  * the mirrored end is closer than that. The next walk eases from there. */
+static int owned(void);
+/* Stored gaps plus the 64-pixel size bonus. directional_gap keeps the
+ * selected positioning row, 0..12, so a later edit of that row still tunes a
+ * large follower. Before the actor exists the bonus is 0; the trail simply
+ * waits for the extra distance once it does. */
+static const uint8_t *walk_gaps(void){
+ static uint8_t gaps[4];
+ unsigned bonus=owned()&&((Actor*)fwfield_follower.actor)->descriptor[7]==2?FW_LARGE_GAP_BONUS:0u;
+ for(unsigned i=0;i<4;++i){
+  unsigned gap=fwfield_follower.directional_gap[i]+bonus;
+  gaps[i]=(uint8_t)(gap>FW_MAX_DIRECTIONAL_GAP?FW_MAX_DIRECTIONAL_GAP:gap);
+ }
+ return gaps;
+}
 static int ease_from(const FwPoint *natural,const FwPoint *player,FwSample *start){
- uint32_t close=fw_trail_metric_to_point(&fwfield_follower.trail,fwfield_follower.directional_gap,natural->x,natural->z);
+ uint32_t close=fw_trail_metric_to_point(&fwfield_follower.trail,walk_gaps(),natural->x,natural->z);
  if(!close||close>=FW_TILE){clear_ease();return 0;}
  if(close<FW_EASE_START_KEEP)close=FW_EASE_START_KEEP;
- if(!fw_trail_pose_behind(&fwfield_follower.trail,fwfield_follower.directional_gap,close,start)){clear_ease();return 0;}
+ if(!fw_trail_pose_behind(&fwfield_follower.trail,walk_gaps(),close,start)){clear_ease();return 0;}
  ease.active=1;ease.traveled=0;ease.close_keep=close;ease.last=*player;return 1;
 }
 static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,const FwPoint *natural){
@@ -239,8 +253,8 @@ static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,co
  FwSample start=*sample,end=*sample,pose,eased;
  start.x=swapOn.origin.x;start.y=swapOn.origin.y;start.z=swapOn.origin.z;start.direction=(uint8_t)face;
  end.x=player->x;end.y=player->y;end.z=player->z;end.direction=(uint8_t)face;
- int seeded=rail?fw_trail_reseed_along(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose)
-  :fw_trail_reseed(&fwfield_follower.trail,&start,&end,fwfield_follower.directional_gap,&pose);
+ int seeded=rail?fw_trail_reseed_along(&fwfield_follower.trail,&start,&end,walk_gaps(),&pose)
+  :fw_trail_reseed(&fwfield_follower.trail,&start,&end,walk_gaps(),&pose);
  if(seeded&&ease_from(natural,player,&eased))
   bind_pose(a,eased.x,eased.y,eased.z,face);
  else if(seeded)
@@ -366,7 +380,7 @@ static void move(Actor *a) {
  if(paused){clear_swap();drop_settled();}
  else if(swapOn.active){if(drive_swap(a,&sample,&player))return;}
  else if(begin_swap(a,&sample,&player))return;
- int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
+ int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,walk_gaps());
  if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;clear_swap();clear_ease();drop_settled();animation_gate(a); return; }
  /* An event may own the sprite, but the route has to keep the player's
   * steps or a short pause while running exceeds one tile and the trail drops.
@@ -390,7 +404,7 @@ static void move(Actor *a) {
     ease.traveled=traveled;
     uint32_t keep=fw_ease_keep(traveled,FW_EASE_TRAVEL,ease.close_keep,FW_TILE);
     FwSample posed;
-    if(fw_trail_pose_behind(&fwfield_follower.trail,fwfield_follower.directional_gap,keep,&posed)){
+    if(fw_trail_pose_behind(&fwfield_follower.trail,walk_gaps(),keep,&posed)){
      target.x=posed.x;target.y=posed.y;target.z=posed.z;
     }
    }
@@ -540,14 +554,14 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
  unsigned maximum=artX<10?10u-(unsigned)artX:0u;
  unsigned gap=fwfield_follower.side_gap+FW_DEFAULT_SIDE_GAP_BONUS;
  if(gap>maximum)gap=maximum;
- if(gap>FW_MAX_DIRECTIONAL_GAP)gap=FW_MAX_DIRECTIONAL_GAP;
+ if(gap>FW_MAX_AUTHORED_GAP)gap=FW_MAX_AUTHORED_GAP;
  for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)gap;
  if(first<end&&fallback>=FW_CODE_BASE){
   uint8_t positions[12];
   if(fwp_land(fallback-FW_CODE_BASE,fwfield_descriptorCount-FW_STOCK_ROWS,fwfield_registryCrc,positions)){
    unsigned uniform=0;
    for(unsigned i=0;i<4;++i)if(positions[i]>uniform)uniform=positions[i];
-   if(uniform>FW_MAX_DIRECTIONAL_GAP)uniform=FW_MAX_DIRECTIONAL_GAP;
+   if(uniform>FW_MAX_AUTHORED_GAP)uniform=FW_MAX_AUTHORED_GAP;
    for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=(uint8_t)uniform;
   }
  }
@@ -714,7 +728,7 @@ static void cycle_track(void){
  FwSample sample,target;
  player_sample(&sample);
  if(!rebase_connection(0,&fwfield_cyclePose,&sample)){fwfield_cyclePending=0;return;}
- int step=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,fwfield_follower.directional_gap);
+ int step=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,walk_gaps());
  if(step<0){fwfield_cyclePending=0;return;}
  if(step==1){
   fwfield_cyclePose=(Vec){target.x,target.y,target.z};
