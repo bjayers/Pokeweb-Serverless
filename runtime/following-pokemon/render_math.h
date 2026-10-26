@@ -152,8 +152,10 @@ typedef struct { FwPoint feet; int32_t half,height; } FwrBody;
  * back again. */
 #define FWR_SPLIT_CAP (5 * FW_TILE)
 /* Where the strips' top edges stand, along the ground in front of the
- * hinge `safe` world units up the quad: `forward` world units, ramped in over
- * `ramp` units of height, plus `lean` (20.12, 0..1) per unit of height. */
+ * hinge `safe` world units up the quad: `forward` world units (negative is
+ * behind it, down to five tiles), ramped in over `ramp` units of height, plus
+ * `lean` (20.12, 0..1) per unit of height. A strip whose native top already
+ * stands there or nearer does not move. */
 typedef struct { int32_t safe,lean,forward,ramp; } FwrStack;
 /* Nearby billboards that can hold a strip back. */
 #define FWR_OTHERS_MAX 16u
@@ -178,17 +180,6 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
 /* The camera-facing basis fwr_strips uses, built once per frame. */
 typedef struct { FwPoint eye,view,right,up,toward; int32_t flat,upToward; int ortho; } FwrBasis;
 int fwr_basis(const FwrCamera *camera,FwrBasis *output);
-/* The band of `body` from `low` world units up its camera plane, with scale
- * `band_sy`, moved `pull` toward the eye along its ray with its pixels
- * unchanged. Redraws a sprite's upper rows over the strips that cover it. */
-int fwr_band(const FwrBasis *basis,const FwrPose *body,int32_t low,int32_t pull,int32_t band_sy,FwrPose *output);
-/* View depth of `point` past `origin` along the basis, 20.12; positive is
- * nearer the camera. 0 when the span is unusable. */
-int32_t fwr_basis_gap(const FwrBasis *basis,const FwPoint *point,const FwPoint *origin);
-/* 1 when band a0..a1 of camera-facing quad `a` and band b0..b1 of `b`
- * (world units up each camera plane) overlap on screen. */
-int fwr_bands_overlap(const FwrBasis *basis,const FwrBody *a,int32_t a0,int32_t a1,
-                      const FwrBody *b,int32_t b0,int32_t b1);
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,
     const FwPoint corners[8]);
 int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,

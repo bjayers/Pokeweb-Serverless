@@ -620,14 +620,6 @@ static int band_pose(const FwrBasis *b,const FwrPose *body,int32_t distance,int3
  o->sy=(int32_t)(band_sy-(int64_t)band_sy*q/65536);
  return o->sx>0&&o->sy>0;
 }
-int fwr_band(const FwrBasis *basis,const FwrPose *body,int32_t low,int32_t pull,int32_t band_sy,FwrPose *out){
- FwPoint ray;
- if(!basis||!body||!out||body->sx<=0||body->sx>32767||band_sy<=0||band_sy>32767||low<0||low>5*(int32_t)FW_TILE||
-    pull<0||pull>FWR_SPLIT_CAP+FWR_SPLIT_CAP||!delta(basis->eye,body->position,&ray,1<<27))return 0;
- int32_t distance=dot(ray,basis->view);
- if(!basis->ortho&&distance<4*(int32_t)FW_TILE)return 0;
- return band_pose(basis,body,distance,low,pull,-1,band_sy,out);
-}
 int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
                unsigned count,const FwrStack *stack,int32_t strip_sy,const FwrBody *others,unsigned other_count,
                FwrPose *out,uint16_t *limited,int32_t *lift){
@@ -635,7 +627,7 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
  int32_t safe=stack->safe,lean=stack->lean,ahead=stack->forward,ramp=stack->ramp;
  if(camera->projection>2||body->sx<=0||body->sx>32767||strip_sy<=0||strip_sy>32767||half<=0||
     strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0||safe<0||lean<0||lean>4096||
-    ahead<0||ahead>2*(int32_t)FW_TILE||ramp<=0||ramp>4*(int32_t)FW_TILE)return 0;
+    ahead<-5*(int32_t)FW_TILE||ahead>2*(int32_t)FW_TILE||ramp<=0||ramp>4*(int32_t)FW_TILE)return 0;
  if(limited)*limited=0;
  for(unsigned k=0;lift&&k<other_count;++k)lift[k]=0;
  FwrBasis b;FwPoint ray;
@@ -704,20 +696,4 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
   if(!band_pose(&b,body,distance,low,pull,q,strip_sy,&out[i]))return 0;
  }
  return 1;
-}
-int32_t fwr_basis_gap(const FwrBasis *basis,const FwPoint *point,const FwPoint *origin){
- FwPoint relative;
- if(!basis||!point||!origin||!delta(*point,*origin,&relative,8*(int32_t)FW_TILE))return 0;
- return dot(relative,basis->view);
-}
-int fwr_bands_overlap(const FwrBasis *basis,const FwrBody *a,int32_t a0,int32_t a1,
-                      const FwrBody *b,int32_t b0,int32_t b1){
- FwPoint ea,eb;
- if(!basis||!a||!b||a0>a1||b0>b1||!delta(a->feet,basis->eye,&ea,1<<27)||!delta(b->feet,basis->eye,&eb,1<<27))return 0;
- int64_t fa=basis->ortho?1:-dot(ea,basis->view),fb=basis->ortho?1:-dot(eb,basis->view);
- if(fa<4*(int64_t)FW_TILE&&!basis->ortho)return 0;
- if(fb<4*(int64_t)FW_TILE&&!basis->ortho)return 0;
- int32_t xa=dot(ea,basis->right),ya=dot(ea,basis->up),xb=dot(eb,basis->right),yb=dot(eb,basis->up);
- return scaled_hits(xa-a->half,xa+a->half,fa,xb-b->half,xb+b->half,fb)&&
-        scaled_hits(ya+a0,ya+a1,fa,yb+b0,yb+b1,fb);
 }

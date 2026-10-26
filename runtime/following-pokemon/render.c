@@ -145,12 +145,13 @@ typedef struct { uint16_t heap,pad; Material *materials; Billboard *actors; uint
 _Static_assert(sizeof(Material)==40,"billboard material ABI");
 _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 /* A camera-facing quad leans back by its height, so a 64-pixel body reaches
- * walls a 32-pixel NPC never touches. The native submit keeps the bottom
+ * walls a 32-pixel NPC never touches. It draws native unless a wall stands
+ * within four tiles behind it. Then the native submit keeps the bottom
  * FWR_BASE_ROWS rows: the feet, where grass and the oval meet the body. The
  * rows above go through one private submit as FWR_STRIPS strips of
- * FWR_STRIP_ROWS, each moved toward the camera only as far as fwr_strip
- * needs, and kept behind the player where they cover them. Small steps keep
- * distance fog from showing one bright block. Same polygon id as the live
+ * FWR_STRIP_ROWS, each moved toward the camera only as far as its top needs
+ * to clear the wall line (fwr_strips). Small steps keep distance fog from
+ * showing one bright block. Same polygon id as the live
  * scene so the strips meet without an edge-marking seam; custom normal and
  * texcoord offsets are the live scene's, so lighting and mirrored frames
  * match. `live` is the native material while its face height is changed;
@@ -158,127 +159,69 @@ _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 #define FWR_STRIP_ROWS 8u
 #define FWR_STRIPS 7u
 #define FWR_BASE_ROWS (64u-FWR_STRIPS*FWR_STRIP_ROWS)
-/* Where the strips' top edges stand, along the ground in front of the feet.
- * In the open they stand upright over the feet: the depth an upright body
- * there would have, so a crane arm or sign in front still covers them.
- * With a building or wall on the tile behind the follower they also come
- * half a tile forward, ramped in over the first two strips, plus a quarter
- * unit per unit of height: middle rows about 15 units out and the top about
- * 22, clear of an awning or eave reaching a tile out from it. The extra fades
- * in and out over FWR_WALL_FADE draws. Only the 8 native rows (7 units) lean
- * back with the camera. */
-#define FWR_WALL_LEAN 1024
-#define FWR_WALL_FORWARD (8*4096)
-#define FWR_WALL_RAMP (14*4096)
-#define FWR_WALL_FADE 8
-static int32_t fwr_wallBlend;
-static struct { int16_t x,z,y; int8_t sx,sz; uint8_t valid,wall; } fwr_behind;
-/* The tile behind the follower, away from the camera along the ground: a
- * wall when it has no walkable layer within a tile of the feet, that layer
- * blocks movement, or a layer stands 1-4 tiles above them. One terrain query
- * per follower tile and camera quadrant. */
-static int wall_behind(const Actor *a,const FwrBasis *basis){
- int32_t ax=basis->toward.x<0?-basis->toward.x:basis->toward.x,az=basis->toward.z<0?-basis->toward.z:basis->toward.z;
- int8_t sx=0,sz=0;
- if(ax>=az)sx=basis->toward.x>0?-1:1;else sz=basis->toward.z>0?-1:1;
+/* The wall behind. Each time the follower changes tile, the four tiles
+ * behind it, away from the camera along the ground, are read; the first one
+ * that is not walkable at the follower's height is a wall: no walkable layer
+ * within a tile of the feet, that layer blocks movement, or a layer 1-4 tiles
+ * above them. Its face is that tile's near edge. Anything may jut a tile out
+ * of it (awnings, window boxes, eaves). Nothing in front of the follower is
+ * read, and NPCs and the player are not consulted. */
+#define FWR_WALL_TILES 4
+#define FWR_WALL_JUT FW_TILE
+#define FWR_WALL_MARGIN 4096
+static struct { int16_t x,z,y; int8_t sx,sz; uint8_t valid,tiles; } fwr_behind;
+static int wall_tiles(const Actor *a,int8_t sx,int8_t sz){
  int16_t tx=a->grid[0],tz=a->grid[2],ty=(int16_t)(a->world.y/FW_TILE);
- if(fwr_behind.valid&&fwr_behind.x==tx&&fwr_behind.z==tz&&fwr_behind.y==ty&&fwr_behind.sx==sx&&fwr_behind.sz==sz)return fwr_behind.wall;
+ if(fwr_behind.valid&&fwr_behind.x==tx&&fwr_behind.z==tz&&fwr_behind.y==ty&&fwr_behind.sx==sx&&fwr_behind.sz==sz)return fwr_behind.tiles;
  void *mapper=a->system?CALL(0x02166fe5,void*(*)(void*))(a->system):0;
- int wall=0;
- if(mapper){
+ int found=0;
+ for(int k=1;mapper&&!found&&k<=FWR_WALL_TILES;++k){
   /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height,
    * then the u16 layer count. */
   uint32_t terrain[65];
-  Vec at={a->world.x+sx*(int32_t)FW_TILE,a->world.y,a->world.z+sz*(int32_t)FW_TILE};
+  Vec at={a->world.x+sx*k*(int32_t)FW_TILE,a->world.y,a->world.z+sz*k*(int32_t)FW_TILE};
+  int wall=1;
   if(CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain)){
    unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
-   int walkable=0;
+   int walkable=0,raised=0;
    for(unsigned i=0;i<layers;++i){
     uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-a->world.y;
     if(type==UINT32_MAX||(type&0xffffu)==0xffu)continue;
-    if(above>(int64_t)FW_TILE&&above<4*(int64_t)FW_TILE)wall=1;
+    if(above>(int64_t)FW_TILE&&above<4*(int64_t)FW_TILE)raised=1;
     else if(above>=-(int64_t)FW_TILE&&above<=(int64_t)FW_TILE&&!((type>>16)&1u))walkable=1;
    }
-   if(!walkable)wall=1;
-  }else wall=1;
+   wall=raised||!walkable;
+  }
+  if(wall)found=k;
  }
- fwr_behind.x=tx;fwr_behind.z=tz;fwr_behind.y=ty;fwr_behind.sx=sx;fwr_behind.sz=sz;fwr_behind.valid=1;fwr_behind.wall=(uint8_t)wall;
- return wall;
+ fwr_behind.x=tx;fwr_behind.z=tz;fwr_behind.y=ty;fwr_behind.sx=sx;fwr_behind.sz=sz;fwr_behind.valid=1;fwr_behind.tiles=(uint8_t)found;
+ return found;
 }
+/* Where the strips' top edges stand: one vertical line, along the ground
+ * from the feet (positive toward the camera), at the wall face less the jut
+ * and a unit of margin. Rows that already clear it stay native, so the
+ * sprite leans back with the camera up to the line and stands straight up
+ * from there. With no wall the line is FWR_LINE_NATIVE, behind every row of
+ * a 56-unit body at any pitch, and the follower draws whole. The line moves
+ * FWR_LINE_STEP per draw toward its target, so a wall coming into range or
+ * a change of distance does not pop. */
+#define FWR_LINE_NATIVE (-4*(int32_t)FW_TILE)
+#define FWR_LINE_STEP (6*4096)
+static int32_t fwr_line=FWR_LINE_NATIVE;
 /* FWSD: the last 64-pixel draw. +8 draws split, +12 why the last one did
  * not (0 split; 1 not 64-pixel mode or flipped; 2 no scene or material; 3
  * material shared with a visible actor; 4 size; 5 strips refused the
- * camera), +16 bit per strip held back by a billboard in front, +20 sprites
- * that could hold it, then each strip's sx: its pull is (1 - sx / body sx)
- * of the eye distance. Strip 0 is the top. */
+ * camera; 6 no wall, drawn native), then each strip's sx at +24 (top strip
+ * first): its pull is (1 - sx / body sx) of the eye distance. Version 4:
+ * +56 tiles back to the wall (0 none), +60 the face's distance behind the
+ * feet and +64 the line, both 20.12 world units. */
 __attribute__((visibility("default"))) volatile struct {
- uint32_t magic,version,splits,reason,limited,others;int32_t sx[8];uint32_t covers,wall;int32_t blend;
-} FollowingStripDebug={.magic=0x44535746,.version=3};
-/* A sprite the strips cover on screen (the player, an NPC) is drawn again
- * after them, its upper three quarters brought forward just enough to stay
- * in front (fwr_strips `lift`). Same pixels, so it only decides who is on
- * top. Its feet band is not redrawn: grass and the oval still meet the
- * native feet, and that band still holds the strips back. A sprite nearer
- * than a redrawn one that overlaps it is redrawn a step further forward in
- * turn. Version 2 of FWSD records how many at +56; version 3 the wall
- * behind at +60 and the offset blend (0..4096) at +64. */
-#define FWR_COVERS 4u
-#define FWR_COVER_BANDS 3u
-static struct { Scene scene; Billboard actors[FWR_COVERS*FWR_COVER_BANDS]; Material materials[FWR_COVERS]; uint8_t actorCount,materialCount; } cover;
+ uint32_t magic,version,splits,reason,unused[2];int32_t sx[8];uint32_t tiles;int32_t face,line;
+} FollowingStripDebug={.magic=0x44535746,.version=4};
 _Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
 static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
-static void cover_sprites(Scene *scene,const FwrBasis *bp,const FwPoint *feet,const Billboard *const *bills,
-                          const FwrBody *bodies,int32_t *lift,unsigned count){
- cover.actorCount=cover.materialCount=0;
- int64_t scale=scene->scale.x;
- /* A redrawn sprite comes to depth gap + lift. Anything nearer that it
-  * overlaps on screen comes a unit in front of that, upper three quarters
-  * only, so the redraw never covers someone standing in front of it. */
- int32_t gap[FWR_OTHERS_MAX];
- for(unsigned k=0;k<count;++k)gap[k]=fwr_basis_gap(bp,&bodies[k].feet,feet);
- for(unsigned pass=0;pass<3;++pass)
-  for(unsigned k=0;k<count;++k){
-   if(lift[k]<=0)continue;
-   for(unsigned j=0;j<count;++j){
-    if(j==k||gap[j]<=gap[k])continue;
-    int32_t need=gap[k]+lift[k]+FWR_SORT_BEHIND-gap[j];
-    if(need<=lift[j]||!fwr_bands_overlap(bp,&bodies[k],bodies[k].height/4,bodies[k].height,&bodies[j],bodies[j].height/4,bodies[j].height))continue;
-    lift[j]=need;
-   }
-  }
- for(unsigned k=0;k<count&&cover.materialCount<FWR_COVERS;++k){
-  const Billboard *o=bills[k];
-  if(lift[k]<=0||(o->flags&31u)!=31u||(o->flags&0x0800u))continue; /* Opaque, not flipped vertically. */
-  unsigned mat=o->geom&0x3fffu;
-  if(mat>=scene->materialCount)continue;
-  const Material *m=&scene->materials[mat];
-  if(!m->cols||m->fh<8||(m->fh&3)||(o->sy&3)||o->sy<=0)continue;
-  /* A face h tall is four bands of h/4; band j of 64-pixel row r is face
-   * (4r+j). No divide: a sheet row holds one or two faces. */
-  unsigned sheetRow=0,col=o->frame;
-  while(col>=m->cols){col-=m->cols;++sheetRow;}
-  int32_t height=(int32_t)((2*scale*o->sy)>>12),band=height/4;
-  FwrPose pose={o->position,o->sx,o->sy},placed[FWR_COVER_BANDS];
-  unsigned j;
-  for(j=0;j<FWR_COVER_BANDS;++j)
-   if(!fwr_band(bp,&pose,height-(int32_t)(j+1)*band,lift[k],o->sy/4,&placed[j]))break;
-  if(j<FWR_COVER_BANDS)continue;
-  unsigned c=cover.materialCount++;
-  cover.materials[c]=*m;cover.materials[c].fh=(uint8_t)(m->fh/4);
-  for(j=0;j<FWR_COVER_BANDS;++j){
-   Billboard *s=&cover.actors[cover.actorCount++];
-   *s=*o;s->geom=(uint16_t)((o->geom&0xc000u)|c);
-   s->position=placed[j].position;s->sx=(int16_t)placed[j].sx;s->sy=(int16_t)placed[j].sy;
-   s->frame=(uint16_t)((sheetRow*4u+j)*m->cols+col);
-  }
- }
- if(!cover.actorCount)return;
- fwr_private_scene(&cover.scene,scene,cover.actors,cover.materials,cover.actorCount,cover.materialCount);
- cover.scene.polygon=scene->polygon;cover.scene.origin=scene->origin;
- for(unsigned i=4;i<20;++i)cover.scene.rest[i]=scene->rest[i];
-}
 static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){
- upper.live=0;cover.actorCount=cover.materialCount=0;
+ upper.live=0;
  (void)p;
  FollowingStripDebug.reason=1;
  if(a->descriptor[7]!=2||(b->flags&0x0800u))return 0; /* 64-pixel mode, not flipped vertically. */
@@ -293,21 +236,33 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
  if(scale<=0)return 0;
  int64_t height=(2*scale*b->sy)>>12,half=(scale*b->sx)>>12;
  if(height<=0||height>4*(int64_t)FW_TILE||half<=0||half>4*(int64_t)FW_TILE)return 0;
- /* Visible camera-facing billboards within three tiles: the player and the
-  * NPCs a strip must not be drawn over. A visible one on the follower's
-  * material would lose its upper rows, so that draws whole. */
- FwrBody others[FWR_OTHERS_MAX];const Billboard *otherBill[FWR_OTHERS_MAX];unsigned otherCount=0;
+ FollowingStripDebug.reason=5;
+ FwrBasis basis;
+ if(!fwr_basis(cam,&basis))return 0;
+ /* Away from the camera along the ground, on the nearer grid axis. */
+ int32_t ax=basis.toward.x<0?-basis.toward.x:basis.toward.x,az=basis.toward.z<0?-basis.toward.z:basis.toward.z;
+ int8_t sx=0,sz=0;
+ if(ax>=az)sx=basis.toward.x>0?-1:1;else sz=basis.toward.z>0?-1:1;
+ int tiles=wall_tiles(a,sx,sz);
+ int32_t target=FWR_LINE_NATIVE,face=0;
+ if(tiles){
+  /* The face is the near edge of the wall tile, from the feet as they are. */
+  int32_t c=sx?a->world.x:a->world.z,dir=sx?sx:sz,t=fw_tile(c);
+  int32_t edge=(dir<0?t-tiles+1:t+tiles)*(int32_t)FW_TILE;
+  face=dir<0?c-edge:edge-c;
+  target=FWR_WALL_JUT+FWR_WALL_MARGIN-face;
+  if(target<FWR_LINE_NATIVE)target=FWR_LINE_NATIVE;
+ }
+ if(fwr_line<target)fwr_line=fwr_line+FWR_LINE_STEP<target?fwr_line+FWR_LINE_STEP:target;
+ else if(fwr_line>target)fwr_line=fwr_line-FWR_LINE_STEP>target?fwr_line-FWR_LINE_STEP:target;
+ FollowingStripDebug.tiles=(uint32_t)tiles;FollowingStripDebug.face=face;FollowingStripDebug.line=fwr_line;
+ FollowingStripDebug.reason=6;
+ if(fwr_line<=FWR_LINE_NATIVE)return 0;
+ /* A visible actor on the follower's material would lose its upper rows. */
  FollowingStripDebug.reason=3;
  for(unsigned i=0;i<scene->actorCount;++i){
   const Billboard *o=&scene->actors[i];
-  if(o==b||!(o->flags&512)||(o->geom&0x3fffu)==0x3fffu)continue;
-  if((o->geom&0x3fffu)==mat)return 0;
-  if((o->geom>>14)!=0||o->sx<=0||o->sy<=0||otherCount>=FWR_OTHERS_MAX)continue;
-  int64_t dx=(int64_t)o->position.x-b->position.x,dz=(int64_t)o->position.z-b->position.z;
-  if(dx>3*(int64_t)FW_TILE||dx<-3*(int64_t)FW_TILE||dz>3*(int64_t)FW_TILE||dz<-3*(int64_t)FW_TILE)continue;
-  otherBill[otherCount]=o;
-  FwrBody *near=&others[otherCount++];
-  near->feet=o->position;near->half=(int32_t)((scale*o->sx)>>12);near->height=(int32_t)((2*scale*o->sy)>>12);
+  if(o!=b&&(o->flags&512)&&(o->geom&0x3fffu)==mat)return 0;
  }
  FwrPose body={b->position,b->sx,b->sy};
  int32_t row=(int32_t)height/64;
@@ -317,20 +272,11 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
   * __aeabi_uidiv import; a sheet row holds one or two faces. */
  unsigned sheetRow=0,col=b->frame;
  while(col>=m->cols){col-=m->cols;++sheetRow;}
- FwrPose out[FWR_STRIPS];uint16_t limited=0;int32_t lift[FWR_OTHERS_MAX];
+ FwrPose out[FWR_STRIPS];
  FollowingStripDebug.reason=5;
- FwrBasis basis;
- if(!fwr_basis(cam,&basis))return 0;
- int wall=wall_behind(a,&basis);
- fwr_wallBlend+=wall?4096/FWR_WALL_FADE:-4096/FWR_WALL_FADE;
- if(fwr_wallBlend<0)fwr_wallBlend=0;
- if(fwr_wallBlend>4096)fwr_wallBlend=4096;
- FollowingStripDebug.wall=(uint32_t)wall;FollowingStripDebug.blend=fwr_wallBlend;
- FwrStack stack={0,FWR_WALL_LEAN*fwr_wallBlend/4096,(int32_t)((int64_t)FWR_WALL_FORWARD*fwr_wallBlend/4096),FWR_WALL_RAMP};
- if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&stack,stripSy,others,otherCount,out,&limited,lift))return 0;
- cover_sprites(scene,&basis,&b->position,otherBill,others,lift,otherCount);
+ FwrStack stack={0,0,fwr_line,1};
+ if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&stack,stripSy,0,0,out,0,0))return 0;
  FollowingStripDebug.reason=0;++FollowingStripDebug.splits;
- FollowingStripDebug.limited=limited;FollowingStripDebug.others=otherCount;FollowingStripDebug.covers=cover.materialCount;
  for(unsigned i=0;i<FWR_STRIPS;++i)FollowingStripDebug.sx[i]=out[i].sx;
  /* Strip i shows rows 8i..8i+7 from the top of the frame; the native base
   * keeps the last 8. */
@@ -436,7 +382,6 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
  if(upper.live){
   upper.live=0;
   CALL(0x0204ebdd,void(*)(void*,void*,void*))(&upper.scene,camera,light);
-  if(cover.actorCount){CALL(0x0204ebdd,void(*)(void*,void*,void*))(&cover.scene,camera,light);cover.actorCount=0;}
  }
 }
 /* Nearest live quad within half a tile (XZ) and two tiles (Y) of actor

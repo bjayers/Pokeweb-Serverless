@@ -46,12 +46,6 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_strips.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.c_int32,c.c_uint,c.POINTER(Stack),c.c_int32,c.POINTER(Body),c.c_uint,c.POINTER(Pose),c.POINTER(c.c_uint16),c.POINTER(c.c_int32)]
   cls.lib.fwr_basis.argtypes=[c.POINTER(Camera),c.c_char_p]
   cls.lib.fwr_basis.restype=c.c_int
-  cls.lib.fwr_band.argtypes=[c.c_char_p,c.POINTER(Pose),c.c_int32,c.c_int32,c.c_int32,c.POINTER(Pose)]
-  cls.lib.fwr_band.restype=c.c_int
-  cls.lib.fwr_basis_gap.argtypes=[c.c_char_p,c.POINTER(Point),c.POINTER(Point)]
-  cls.lib.fwr_basis_gap.restype=c.c_int32
-  cls.lib.fwr_bands_overlap.argtypes=[c.c_char_p,c.POINTER(Body),c.c_int32,c.c_int32,c.POINTER(Body),c.c_int32,c.c_int32]
-  cls.lib.fwr_bands_overlap.restype=c.c_int
   cls.lib.fwr_strips.restype=c.c_int
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
@@ -839,30 +833,24 @@ class Rendering(unittest.TestCase):
    self.assertLess(abs(lift[0]-need),128,(lift,need))
   # Clearly behind the follower: no lift, nothing held.
   self.assertEqual(lifted(behind)[1:],(0,[0]))
-  # A sprite's band comes forward along its ray with its pixels unchanged.
+  # The wall line: a negative `forward` puts the top edges' line behind the
+  # feet. A strip whose native top already stands in front of it stays put;
+  # the rest stand on it, a vertical wall of tops along the ground.
   frame=c.create_string_buffer(256)
   self.assertEqual(self.lib.fwr_basis(c.byref(cam),frame),1)
-  sprite=Pose(Point(feet[0]+20*4096,feet[1],feet[2]+6*4096),8192,8192)
-  for low,pull in ((7*8192//2,0),(7*8192//2,20*4096),(7*8192,45*4096)):
-   out=Pose()
-   self.assertEqual(self.lib.fwr_band(frame,c.byref(sprite),low,pull,2048,c.byref(out)),1)
-   want=corners(xyz(sprite.position),7*8192,low,low+7*2*2048,eye,n,False)
-   got=corners(xyz(out.position),7*out.sx,0,7*2*out.sy,eye,n,False)
-   span=abs(want[2][1]-want[0][1])
-   for a,b in zip(want,got):
-    self.assertLess(abs(a[0]-b[0]),span/64);self.assertLess(abs(a[1]-b[1]),span/64)
-   moved=depth([out.position.x-sprite.position.x,out.position.y-sprite.position.y,out.position.z-sprite.position.z],n)
-   self.assertLess(abs(moved-pull),1024,(low,pull,moved))
-  # The redraw cascade's helpers: depth past the follower, and band overlap
-  # on screen against the same projection the strips use.
-  self.assertLess(abs(self.lib.fwr_basis_gap(frame,c.byref(front.feet),c.byref(Point(*feet)))-gap),64)
-  self.assertEqual(self.lib.fwr_basis_gap(frame,c.byref(far.feet),c.byref(Point(*feet))),0)
-  me=Body(Point(*feet),half,height)
-  for other in (front,beside,behind,far):
-   for lo,hi in ((0,height//4),(height//4,height),(height//2,height)):
-    want=rect_hits(corners(feet,half,lo,hi,eye,n,False),corners(xyz(other.feet),other.half,other.height//4,other.height,eye,n,False))
-    self.assertEqual(bool(self.lib.fwr_bands_overlap(frame,c.byref(me),lo,hi,c.byref(other),other.height//4,other.height)),want,(lo,hi))
-  self.assertEqual(self.lib.fwr_bands_overlap(frame,c.byref(me),10,5,c.byref(front),0,8),0)
+  r,up=basis(n);flat=math.hypot(n[0],n[2]);toward=[n[0]/flat,0,n[2]/flat]
+  for line in (-60*4096,-24*4096,-9*4096,0,9*4096):
+   wall=Stack(0,0,line,1);outs=(Pose*7)()
+   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(wall),2048,None,0,outs,None,None),1,line)
+   for i in range(7):
+    top=row*(64-8*i);o=outs[i]
+    pull=depth([o.position.x-feet[0],o.position.y-feet[1],o.position.z-feet[2]],n)
+    native_top=dot([up[k]*top for k in range(3)],toward)
+    edge=[o.position.x+up[0]*2*7*o.sy-feet[0],o.position.y+up[1]*2*7*o.sy-feet[1],o.position.z+up[2]*2*7*o.sy-feet[2]]
+    if native_top>=line:self.assertLess(abs(pull),64,(line,i))
+    else:self.assertLess(abs(dot(edge,toward)-line),2*4096,(line,i,dot(edge,toward)))
+  outs=(Pose*7)()
+  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,c.byref(Stack(0,0,-81*4096,1)),2048,None,0,outs,None,None),0)
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(*eye),Point(*target),3)),half,height,8*row,7,c.byref(stack),2048,None,0,outs,None,None),0)
   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(target[0],eye[1],target[2]),Point(*target),0)),half,height,8*row,7,c.byref(stack),2048,None,0,outs,None,None),0)
 if __name__=='__main__':unittest.main()
