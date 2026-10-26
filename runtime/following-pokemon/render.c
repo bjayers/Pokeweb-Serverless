@@ -156,14 +156,15 @@ _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
  * match. `live` is the native material while its face height is changed;
  * null when no split is active. */
 #define FWR_STRIP_ROWS 8u
-#define FWR_STRIPS 6u
+#define FWR_STRIPS 7u
 #define FWR_BASE_ROWS (64u-FWR_STRIPS*FWR_STRIP_ROWS)
-/* The hinge: above the native base (2/8 of the quad) the strips stand
- * upright along world Y, so only those 16 rows lean back with the camera.
- * A large sprite fills the top rows NPC art leaves empty, and an NPC-sized
- * lean (4/8) still reached buildings. */
-#define FWR_SAFE_EIGHTHS 2
-_Static_assert(FWR_SAFE_EIGHTHS*8==FWR_BASE_ROWS,"hinge on the native base");
+/* The strips stand on the follower's feet and lean forward a quarter unit
+ * per unit of height, so the top row sits about 14 units in front of the
+ * feet: clear of a wall at the tile's edge and of an awning over the tile.
+ * Only the 8 native rows (7 units) lean back with the camera. More lean
+ * clears deeper overhangs and draws the top over things standing just in
+ * front of the follower. */
+#define FWR_LEAN 1024
 _Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
 static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
 static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){
@@ -189,7 +190,7 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
   player=&them;
  }
  FwrPose body={b->position,b->sx,b->sy};
- int32_t row=(int32_t)height/64,safe=(int32_t)height*FWR_SAFE_EIGHTHS/8;
+ int32_t row=(int32_t)height/64;
  int16_t stripSy=(int16_t)(b->sy/(64/FWR_STRIP_ROWS));
  /* Faces are rows of the sheet. Face height h puts 64/h faces in each
   * 64-pixel row r, the first at r*64/h. A divide here would be an
@@ -197,8 +198,9 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
  unsigned sheetRow=0,col=b->frame;
  while(col>=m->cols){col-=m->cols;++sheetRow;}
  FwrPose out[FWR_STRIPS];
- if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,safe,stripSy,player,out))return 0;
- /* Strip i shows rows 8i..8i+7 from the top of the frame. */
+ if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,0,FWR_LEAN,stripSy,player,out))return 0;
+ /* Strip i shows rows 8i..8i+7 from the top of the frame; the native base
+  * keeps the last 8. */
  for(unsigned i=0;i<FWR_STRIPS;++i){
   Billboard *s=&upper.strips[i];
   *s=*b;s->geom=0;

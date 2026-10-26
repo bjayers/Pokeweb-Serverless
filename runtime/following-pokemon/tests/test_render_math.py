@@ -42,7 +42,7 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_box_advance_limit.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Point)]
   cls.lib.fwr_box_advance_limit.restype=c.c_int32
   cls.lib.fwr_cap_advance.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
-  cls.lib.fwr_strips.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.c_int32,c.c_uint,c.c_int32,c.c_int32,c.POINTER(Body),c.POINTER(Pose)]
+  cls.lib.fwr_strips.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.c_int32,c.c_int32,c.c_uint,c.c_int32,c.c_int32,c.c_int32,c.POINTER(Body),c.POINTER(Pose)]
   cls.lib.fwr_strips.restype=c.c_int
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
@@ -727,10 +727,11 @@ class Rendering(unittest.TestCase):
      n=[eye[i]-feet[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
      cam=Camera(Point(*eye),Point(*feet),projection);ortho=projection==2
      body=Pose(Point(*feet),16384,16384)
-     height=2*scale*body.sy;half=scale*body.sx;row=height//64;safe=height*2//8
-     pulls=[];outs=(Pose*6)()
-     self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,6,safe,body.sy//8,None,outs),1,(projection,yaw,pitch))
-     for i in range(6):
+     height=2*scale*body.sy;half=scale*body.sx;row=height//64;safe=0;lean=1024
+     pulls=[];outs=(Pose*7)()
+     self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,safe,lean,body.sy//8,None,outs),1,(projection,yaw,pitch))
+     r,up=basis(n);flat=math.hypot(n[0],n[2]);toward=[n[0]/flat,0,n[2]/flat]
+     for i in range(7):
       top=row*(64-8*i);bottom=top-8*row;out=outs[i]
       want=corners(feet,half,bottom,top,eye,n,ortho)
       got=corners(xyz(out.position),scale*out.sx,0,2*scale*out.sy,eye,n,ortho)
@@ -738,10 +739,18 @@ class Rendering(unittest.TestCase):
       for a,b in zip(want,got):
        self.assertLess(abs(a[0]-b[0]),span/64,(projection,yaw,pitch,i,want,got))
        self.assertLess(abs(a[1]-b[1]),span/64,(projection,yaw,pitch,i,want,got))
-      # Toward the eye by (top - safe) * tan(pitch), capped at two tiles.
+      # Orthographic: toward the eye by (top - safe) * (sin + lean) / cos,
+      # capped at five tiles. Perspective moves along each strip's own ray,
+      # so only the cap and the top edge below are exact there.
       pull=depth([out.position.x-feet[0],out.position.y-feet[1],out.position.z-feet[2]],n)
-      expected=min(max(0,top-safe)*math.tan(p),3*16*4096)
-      self.assertLess(abs(pull-expected),4096,(projection,yaw,pitch,i,pull,expected))
+      want_pull=max(0,top-safe)*(math.sin(p)+lean/4096)/math.cos(p)
+      if ortho:self.assertLess(abs(pull-min(want_pull,5*16*4096)),4096,(projection,yaw,pitch,i,pull,want_pull))
+      self.assertLessEqual(pull,5*16*4096+64,(projection,yaw,pitch,i,pull))
+      # Uncapped, the strip's top edge stands `lean` per unit of height in
+      # front of the feet along the ground: the stack leans a little forward.
+      if pull<5*16*4096-4096:
+       edge=[out.position.x+up[k]*2*scale*out.sy-feet[k] for k in (0,)]+[out.position.y+up[1]*2*scale*out.sy-feet[1],out.position.z+up[2]*2*scale*out.sy-feet[2]]
+       self.assertLess(abs(dot(edge,toward)-lean/4096*top),2*4096,(projection,yaw,pitch,i,dot(edge,toward),lean/4096*top))
       pulls.append(pull)
      # Higher strips never come forward less (capped ones tie to rounding).
      self.assertTrue(all(a>=b-64 for a,b in zip(pulls,pulls[1:])),pulls)
@@ -749,36 +758,36 @@ class Rendering(unittest.TestCase):
   # (a close swap pose), then level beside, then clearly behind the follower.
   eye=(2195456,1302017,47460865);target=(2195456,689441,46825472)
   cam=Camera(Point(*eye),Point(*target),0);n=[eye[i]-target[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
-  feet=target;body=Pose(Point(*feet),16384,16384);height=7*2*16384;half=7*16384;row=height//64;safe=height*2//8
+  feet=target;body=Pose(Point(*feet),16384,16384);height=7*2*16384;half=7*16384;row=height//64;safe=0
   def strip(player,i):
-   outs=(Pose*6)()
-   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,6,safe,2048,c.byref(player) if player else None,outs),1)
+   outs=(Pose*7)()
+   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,7,safe,1024,2048,c.byref(player) if player else None,outs),1)
    out=outs[i]
    return depth([out.position.x-feet[0],out.position.y-feet[1],out.position.z-feet[2]],n)
   front=Body(Point(feet[0],feet[1],feet[2]+6*4096),7*8192,7*2*8192)
   gap=depth([0,0,6*4096],n)
-  free=[strip(None,i) for i in range(6)]
+  free=[strip(None,i) for i in range(7)]
   def overlaps(player,i):
    top=row*(64-8*i)
    a=corners(feet,half,top-8*row,top,eye,n,False);b=corners(xyz(player.feet),player.half,0,player.height,eye,n,False)
    return min(x for x,_ in a)<=max(x for x,_ in b) and min(x for x,_ in b)<=max(x for x,_ in a) and \
           min(y for _,y in a)<=max(y for _,y in b) and min(y for _,y in b)<=max(y for _,y in a)
-  self.assertTrue(any(overlaps(front,i) and free[i]>gap for i in range(6)))
-  for i in range(6):
+  self.assertTrue(any(overlaps(front,i) and free[i]>gap for i in range(7)))
+  for i in range(7):
    if overlaps(front,i):self.assertLessEqual(strip(front,i),max(0,gap-4096)+16,i)
    else:self.assertLess(abs(strip(front,i)-free[i]),1,i)
   beside=Body(Point(feet[0]+20*4096,feet[1],feet[2]),7*8192,7*2*8192)
-  self.assertTrue(any(overlaps(beside,i) and free[i]>4096 for i in range(6)))
-  for i in range(6):
+  self.assertTrue(any(overlaps(beside,i) and free[i]>4096 for i in range(7)))
+  for i in range(7):
    if overlaps(beside,i):self.assertLess(abs(strip(beside,i)),64,i)
    else:self.assertLess(abs(strip(beside,i)-free[i]),1,i)
   behind=Body(Point(feet[0],feet[1],feet[2]-32*4096),7*8192,7*2*8192)
-  self.assertEqual([round(strip(behind,i)) for i in range(6)],[round(v) for v in free])
+  self.assertEqual([round(strip(behind,i)) for i in range(7)],[round(v) for v in free])
   far=Body(Point(feet[0]+80*4096,feet[1],feet[2]),7*8192,7*2*8192)
-  self.assertEqual([round(strip(far,i)) for i in range(6)],[round(v) for v in free])
-  outs=(Pose*6)()
-  for args in ((0,height,8*row,6),(half,height,0,6),(half,height,8*row,0),(half,8*row,8*row,6),(half,height,8*row,17)):
-   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),args[0],args[1],args[2],args[3],safe,2048,None,outs),0,args)
-  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(*eye),Point(*target),3)),half,height,8*row,6,safe,2048,None,outs),0)
-  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(target[0],eye[1],target[2]),Point(*target),0)),half,height,8*row,6,safe,2048,None,outs),0)
+  self.assertEqual([round(strip(far,i)) for i in range(7)],[round(v) for v in free])
+  outs=(Pose*7)()
+  for args in ((0,height,8*row,7,1024),(half,height,0,7,1024),(half,height,8*row,0,1024),(half,8*row,8*row,7,1024),(half,height,8*row,17,1024),(half,height,8*row,7,-1),(half,height,8*row,7,4097)):
+   self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),args[0],args[1],args[2],args[3],safe,args[4],2048,None,outs),0,args)
+  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(*eye),Point(*target),3)),half,height,8*row,7,safe,1024,2048,None,outs),0)
+  self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(Camera(Point(target[0],eye[1],target[2]),Point(*target),0)),half,height,8*row,7,safe,1024,2048,None,outs),0)
 if __name__=='__main__':unittest.main()

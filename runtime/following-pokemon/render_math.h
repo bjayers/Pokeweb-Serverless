@@ -147,21 +147,24 @@ int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
 /* A camera-facing quad seen from `camera`: feet, world half-width and world
  * height (2 * scene scale * sy; the field actor scene is 7.0). */
 typedef struct { FwPoint feet; int32_t half,height; } FwrBody;
-/* An upright top row of a 56-unit body is about 40 units forward at a 44°
- * camera. Past this a steep camera's top rows lean back again. */
-#define FWR_SPLIT_CAP (3 * FW_TILE)
+/* The top row of a 56-unit body with a quarter forward lean is about 74
+ * units forward at a 44° camera. Past this a steep camera's top rows lean
+ * back again. */
+#define FWR_SPLIT_CAP (5 * FW_TILE)
 /* Horizontal strips of a tall body for their own submit. `body` is the
  * submitted camera-facing quad (foot anchor), `half` its world half-width.
  * Strip i spans top - (i+1)*strip .. top - i*strip world units up the camera
  * plane with scale `strip_sy`. Rows below `safe` stay put. Above it a strip
- * moves toward the camera along its eye ray by (its top - safe) *
- * tan(pitch), capped at FWR_SPLIT_CAP, with its screen pixels unchanged.
+ * moves toward the camera along its eye ray until its top stands `lean`
+ * (20.12, 0..1) per unit of height past `safe` in front of the hinge: by
+ * (its top - safe) * (sin(pitch) + lean) / cos(pitch), capped at
+ * FWR_SPLIT_CAP, with its screen pixels unchanged.
  * Where it overlaps `player` (may be null) on screen it stays FWR_SORT_BEHIND
  * behind them, does not move when they are level, and is free when it is
  * clearly nearer. The camera basis is built once for all strips. Returns 0
  * for an unknown projection, a vertical camera or an unusable pose. */
 int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
-               unsigned count,int32_t safe,int32_t strip_sy,const FwrBody *player,FwrPose *output);
+               unsigned count,int32_t safe,int32_t lean,int32_t strip_sy,const FwrBody *player,FwrPose *output);
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,
     const FwPoint corners[8]);
 int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,
