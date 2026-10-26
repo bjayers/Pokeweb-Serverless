@@ -572,3 +572,26 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  if(!delta(out->position,*player_draw,&relative,8*FW_TILE)){*out=*native;return 0;}
  result->after=dot(relative,direction);return 1;
 }
+int fwr_split_top(const FwrPose *body,const FwrCamera *camera,FwrPose *out){
+ if(!body||!camera||!out)return 0;
+ *out=*body;
+ if(camera->projection>2||body->sx<=0||body->sy<2||body->sx>32767||body->sy>32767)return 0;
+ FwPoint view,junction;
+ if(!view_axis(camera,&view))return 0;
+ /* The native quad is 16*sy tall from its foot anchor. Its lower half is the
+  * NPC-sized part, and its top edge is where this half starts. */
+ int32_t height=body->sy*8;
+ if(!fwr_head_position(&body->position,camera,height,&junction))return 0;
+ FwrPose upper={junction,body->sx,body->sy/2};
+ /* A camera-facing quad leans back by its height times the camera's tilt.
+  * Pulling this half forward by its own height times tan(pitch) keeps it
+  * inside the room a 32-pixel quad already leans into. */
+ int32_t pull=0;
+ if(view.y>0){
+  uint32_t flat=root((uint32_t)(view.x*view.x+view.z*view.z));
+  pull=flat<512u?FWR_SPLIT_CAP:divide((int64_t)height*view.y,(int32_t)flat)+16;
+  if(pull>FWR_SPLIT_CAP)pull=FWR_SPLIT_CAP;
+ }
+ if(!pull){*out=upper;return 1;}
+ return shift_depth(&upper,camera,view,pull,out);
+}

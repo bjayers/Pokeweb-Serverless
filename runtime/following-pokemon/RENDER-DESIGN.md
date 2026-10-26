@@ -74,6 +74,19 @@ The cache has 32 slots and drops a registration with no error when it is full, s
 
 The first visible frame used to also birth the shadow task (`0x02194df5`) and, on a send-out, the flash model. Those still wait until the update after the body has been drawn. The ball still draws while the actor is hidden. The entrance effect-bank upload and the white-sheet bind run in the MapSpawnFinish hook, before the fade reveals the picture.
 
+## Tall followers
+
+Field actors are `BLACT_TYPE_FACE_CAMERA` quads (`BlActScene_Draw`, pokebw2 `src/gfl/billboard.c`). A quad parallel to the camera plane leans back by its height times sin(pitch), so at the captured 44° camera a 32-pixel NPC reaches about 1.4 tiles behind its feet and a 64-pixel follower about 2.8. Maps keep walls outside the first distance, not the second, and the top of a big sprite is cut where a wall or ledge is nearer than the quad.
+
+`fwr_draw` splits a 64-pixel body (descriptor byte 7 = 2) whose material is 64×64 faces, not shared with another visible actor, and not flipped vertically:
+
+- Lower half: the native submit, with the material's face height set to 32, the face moved to row `2r+1`, and `sy` halved, all restored after `0x0204f685`. Same size, anchor and depth as the player and every NPC. This is the only part that can overlap the player: following behind, beside, or in a close swap, the upper half is drawn above the player's 32-pixel head.
+- Upper half: a private `0x0204ebdd` submit of row `2r`, anchored on the lower half's top edge and moved toward the camera along its eye ray by its height times tan(pitch), capped at two tiles (`fwr_split_top`). `shift_depth` scales it so its pixels stay where they were. The upper half then never reaches farther back than a 32-pixel quad does.
+
+The private header takes the live polygon id, origin, custom normal and texcoord offsets, so the halves meet without an edge-marking seam and are lit the same. A follower that fails a check is drawn whole, as before. 32-pixel followers are unchanged.
+
+If a seam shows on hardware at the halves' boundary, the first thing to try is the polygon id in `split_body`.
+
 ## Scanline window
 
 The fade was never the variable. `GFL_G3DResUploadTexData` (`0x020494d8`) ends in `NNS_G3dTexLoad(tex, TRUE)` and `NNS_G3dPlttLoad(tex, TRUE)`, an immediate load: the texture banks go to the CPU for the copy and come back. `BlActMaterial_BindTexture` (`0x0204e55c`) calls it. The 3D engine reads those banks on every line it renders, from line 214 through line 191 of the next frame, so any upload from the field update blanks the lines rendered during the copy. The lines read a mix of stale texels and the new palette. Where they land depends on how far into the frame the update has run, which is why each map draws them at about the same height. Emulators render the whole frame at once and never show it.

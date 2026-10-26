@@ -139,6 +139,51 @@ static Billboard *billboard(void *system,Actor *a){
  if((b->geom>>14)!=0||!(b->flags&512))return 0;
  return b;
 }
+/* BlAct material and scene ABI, as in effects.c. */
+typedef struct { void *resource; uint16_t width,height; uint8_t fw,fh,cols,rows; uint32_t tex,pltt,format,dx,dy,texKey,plttKey; } Material;
+typedef struct { uint16_t heap,pad; Material *materials; Billboard *actors; uint16_t materialCount,actorCount; FwPoint scale; uint16_t diffuse,ambient,specular,emissive; uint8_t polygon,origin; uint16_t pad2; uint8_t rest[20]; } Scene;
+_Static_assert(sizeof(Material)==40,"billboard material ABI");
+_Static_assert(sizeof(Scene)==60,"billboard scene ABI");
+/* A camera-facing quad leans back by its height, so a 64-pixel body reaches
+ * walls a 32-pixel NPC never touches. Its lower half stays the native submit:
+ * same size and depth as the player, which is the only part that overlaps
+ * them. The upper half is drawn above the player's head in every pose, and
+ * goes through a private submit moved toward the camera (fwr_split_top).
+ * Same polygon id as the live scene so the two halves meet without an
+ * edge-marking seam. Custom normal and texcoord offsets are the live
+ * scene's, so lighting and mirrored frames match. `live` is the native
+ * material while its face height is halved; null when no split is active. */
+static struct { Scene scene; Billboard billboard; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
+static int split_body(void *system,Billboard *b,const Actor *a,const FwrCamera *cam){
+ upper.live=0;
+ if(a->descriptor[7]!=2||(b->flags&0x0800u))return 0; /* 64-pixel mode, not flipped vertically. */
+ Scene *scene=PTR(system,4);unsigned mat=b->geom&0x3fffu;
+ if(!scene||!scene->materials||!scene->actors||mat>=scene->materialCount)return 0;
+ Material *m=&scene->materials[mat];
+ if(m->fw!=64||m->fh!=64||!m->cols||(b->sy&1))return 0;
+ /* A visible NPC on the same material would lose its upper half. */
+ for(unsigned i=0;i<scene->actorCount;++i){
+  const Billboard *o=&scene->actors[i];
+  if(o!=b&&(o->geom&0x3fffu)==mat&&(o->flags&512))return 0;
+ }
+ FwrPose body={b->position,b->sx,b->sy},top;
+ if(!fwr_split_top(&body,cam,&top))return 0;
+ /* Faces are rows of the sheet. With 32-pixel faces, row 2r is the top of
+  * the 64-pixel row r and row 2r+1 its bottom. A divide here would be an
+  * __aeabi_uidiv import; a sheet row holds one or two faces. */
+ unsigned row=0,col=b->frame;
+ while(col>=m->cols){col-=m->cols;++row;}
+ upper.material=*m;upper.material.fh=32;
+ upper.billboard=*b;upper.billboard.geom=0;
+ upper.billboard.position=top.position;upper.billboard.sx=(int16_t)top.sx;upper.billboard.sy=(int16_t)top.sy;
+ upper.billboard.frame=(uint16_t)(row*2u*m->cols+col);
+ fwr_private_scene(&upper.scene,scene,&upper.billboard,&upper.material,1,1);
+ upper.scene.polygon=scene->polygon;upper.scene.origin=scene->origin;
+ for(unsigned i=4;i<20;++i)upper.scene.rest[i]=scene->rest[i];
+ upper.live=m;upper.frame=b->frame;upper.sy=b->sy;
+ m->fh=32;b->frame=(uint16_t)((row*2u+1u)*m->cols+col);b->sy=(int16_t)(b->sy/2);
+ return 1;
+}
 void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int sprite_y){
  Billboard *b=0,*p=0;FwrPose original={0},adjusted;int changed=0,lightingChanged=0;uint16_t originalFlags=0;
  effectPose.actor=effectPose.player=0;shadowTie.valid=shadowTie.hasPlayer=0;
@@ -206,13 +251,19 @@ void fwr_draw(void *system,void *camera,void *light,Actor *a,Actor *player,int s
    if(p){effectPose.player=player;effectPose.playerWorld=player->world;
     effectPose.playerSubmitted=(FwrEffectPose){{p->position.x,p->position.y,p->position.z},p->sx,p->sy};}
    if(changed){b->position=adjusted.position;b->sx=(int16_t)adjusted.sx;b->sy=(int16_t)adjusted.sy;}
+   split_body(system,b,a,&cam);
   }
  }
  CALL(0x0204f685,void(*)(void*,void*,void*))(system,camera,light);
  /* Drawing consumes the quad synchronously. The player billboard is never
-  * written. Restore only the follower quad and its light mask. */
+  * written. Restore only the follower quad, its material and its light mask. */
+ if(upper.live){upper.live->fh=64;b->frame=upper.frame;b->sy=upper.sy;}
  if(changed){b->position=original.position;b->sx=(int16_t)original.sx;b->sy=(int16_t)original.sy;}
  if(lightingChanged)b->flags=originalFlags;
+ if(upper.live){
+  upper.live=0;
+  CALL(0x0204ebdd,void(*)(void*,void*,void*))(&upper.scene,camera,light);
+ }
 }
 /* Nearest live quad within half a tile (XZ) and two tiles (Y) of actor
  * ground. An oval that sits on the player, inside six world pixels, is not
