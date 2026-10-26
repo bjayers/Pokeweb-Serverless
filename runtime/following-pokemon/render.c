@@ -161,10 +161,11 @@ _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 #define FWR_BASE_ROWS (64u-FWR_STRIPS*FWR_STRIP_ROWS)
 /* The wall behind. Each time the follower changes tile, the four tiles
  * behind it, away from the camera along the ground, are read in three
- * columns: the feet's and one tile either side, as wide as the sprite. The
- * nearest tile that is not walkable at the follower's height is the wall: no
- * walkable layer within a tile of the feet, that layer blocks movement, or a
- * layer 1-4 tiles above them. Its face is that tile's near edge. From
+ * columns: the feet's and one tile either side, as wide as the sprite. A
+ * side column whose tile beside the feet is already unwalkable is skipped.
+ * The nearest tile that is not walkable at the follower's height is the
+ * wall: no walkable layer within a tile of the feet, that layer blocks
+ * movement, or a layer 1-4 tiles above them. Its face is that tile's near edge. From
  * FWR_WALL_RISE up, anything may jut out of it, ramping to FWR_WALL_JUT over
  * FWR_WALL_RAMP of height (awnings, window boxes, eaves); lower rows only
  * clear the face, so a low ledge stays in front of them. Nothing in front of
@@ -175,31 +176,39 @@ _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 #define FWR_WALL_RAMP (14*4096)
 #define FWR_WALL_MARGIN 4096
 static struct { int16_t x,z,y; int8_t sx,sz; uint8_t valid,tiles; } fwr_behind;
+/* 1 when the tile at x,z is a wall at the follower's height: no walkable
+ * layer within a tile of the feet, that layer blocks movement, or a layer
+ * 1-4 tiles above them. */
+static int wall_at(void *mapper,const Actor *a,int32_t x,int32_t z){
+ /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height, then
+  * the u16 layer count. */
+ uint32_t terrain[65];
+ Vec at={x,a->world.y,z};
+ if(!CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain))return 1;
+ unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
+ int walkable=0,raised=0;
+ for(unsigned i=0;i<layers;++i){
+  uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-a->world.y;
+  if(type==UINT32_MAX||(type&0xffffu)==0xffu)continue;
+  if(above>(int64_t)FW_TILE&&above<4*(int64_t)FW_TILE)raised=1;
+  else if(above>=-(int64_t)FW_TILE&&above<=(int64_t)FW_TILE&&!((type>>16)&1u))walkable=1;
+ }
+ return raised||!walkable;
+}
 static int wall_tiles(const Actor *a,int8_t sx,int8_t sz){
  int16_t tx=a->grid[0],tz=a->grid[2],ty=(int16_t)(a->world.y/FW_TILE);
  if(fwr_behind.valid&&fwr_behind.x==tx&&fwr_behind.z==tz&&fwr_behind.y==ty&&fwr_behind.sx==sx&&fwr_behind.sz==sz)return fwr_behind.tiles;
  void *mapper=a->system?CALL(0x02166fe5,void*(*)(void*))(a->system):0;
  int found=0;
+ /* Columns run across the back axis. A side column whose own tile, beside
+  * the feet, is already a wall (a railing, a fence) is beside the sprite,
+  * not behind it, and is not read further. */
+ int open[3]={1,1,1};
+ for(int side=-1;mapper&&side<=1;side+=2)
+  open[side+1]=!wall_at(mapper,a,a->world.x+(sx?0:side)*(int32_t)FW_TILE,a->world.z+(sz?0:side)*(int32_t)FW_TILE);
  for(int k=1;mapper&&!found&&k<=FWR_WALL_TILES;++k)
-  for(int side=-1;!found&&side<=1;++side){
-   /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height,
-    * then the u16 layer count. Columns run across the back axis. */
-   uint32_t terrain[65];
-   Vec at={a->world.x+(sx*k+(sx?0:side))*(int32_t)FW_TILE,a->world.y,a->world.z+(sz*k+(sz?0:side))*(int32_t)FW_TILE};
-   int wall=1;
-   if(CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain)){
-    unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
-    int walkable=0,raised=0;
-    for(unsigned i=0;i<layers;++i){
-     uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-a->world.y;
-     if(type==UINT32_MAX||(type&0xffffu)==0xffu)continue;
-     if(above>(int64_t)FW_TILE&&above<4*(int64_t)FW_TILE)raised=1;
-     else if(above>=-(int64_t)FW_TILE&&above<=(int64_t)FW_TILE&&!((type>>16)&1u))walkable=1;
-    }
-    wall=raised||!walkable;
-   }
-   if(wall)found=k;
-  }
+  for(int side=-1;!found&&side<=1;++side)
+   if(open[side+1]&&wall_at(mapper,a,a->world.x+(sx*k+(sx?0:side))*(int32_t)FW_TILE,a->world.z+(sz*k+(sz?0:side))*(int32_t)FW_TILE))found=k;
  fwr_behind.x=tx;fwr_behind.z=tz;fwr_behind.y=ty;fwr_behind.sx=sx;fwr_behind.sz=sz;fwr_behind.valid=1;fwr_behind.tiles=(uint8_t)found;
  return found;
 }
