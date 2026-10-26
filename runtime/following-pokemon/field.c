@@ -237,6 +237,67 @@ static const uint8_t *walk_gaps(void){
  }
  return gaps;
 }
+static int large_actor(const Actor *a){return a->descriptor[7]==2;}
+/* Draw mode of an object code before an actor exists: descriptor byte 7
+ * from GetNPCMdlInfoForOBJCODE, which also reads 0x3000+ follower rows. */
+static int code_large(ActorSystem *sys,uint16_t code){
+ uint8_t config[28];
+ if(!sys||!code)return 0;
+ CALL(0x02167f19,void(*)(ActorSystem*,unsigned,void*))(sys,code,config);
+ return config[7]==2;
+}
+/* Interiors keep a 64-pixel follower in its ball and exteriors let it out:
+ * the area's exterior flag (FieldEffects_GetAreaIsExterior). A zone row in
+ * positioning.narc member 1 swaps the rule for that zone. Without field
+ * effects nothing is barred. */
+static int large_barred_at(void *field,unsigned zone){
+ void *effects=field?CALL(0x0218054d,void*(*)(void*))(field):0;
+ if(!effects)return 0;
+ int exterior=CALL(0x021a3779,int(*)(void*))(effects)!=0;
+ if(fwp_zone_flags(zone)&FWP_ZONE_LARGE_SWAP)exterior=!exterior;
+ return !exterior;
+}
+static int large_barred(void){
+ return fwfield_owner&&fwfield_player&&large_barred_at(fwfield_owner->field,fwfield_player->zone);
+}
+/* A 64-pixel body is 56 world units tall. A walkable layer over its feet
+ * lower than that (a bridge, an upper walkway) has the sprite coming up
+ * through it. Layers within a tile and a half are stairs and ledges. One
+ * terrain query per trail tile and height. */
+#define FW_FLOOR_LOW (FW_TILE+FW_TILE/2)
+#define FW_LARGE_TALL (3*FW_TILE+FW_TILE/2)
+#define FW_COVER_CLEAR 20u
+static struct { int32_t x,z,y; uint8_t valid,covered; } fwfield_cover;
+static uint8_t fwfield_held,fwfield_heldClear;
+static int under_floor(Actor *a,const FwSample *t){
+ int32_t tx=fw_tile(t->x),tz=fw_tile(t->z);
+ if(fwfield_cover.valid&&fwfield_cover.x==tx&&fwfield_cover.z==tz&&fwfield_cover.y==t->y)return fwfield_cover.covered;
+ /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height, then
+  * the u16 layer count. */
+ uint32_t terrain[65];
+ Vec at={t->x,t->y,t->z};int covered=0;
+ void *mapper=CALL(0x02166fe5,void*(*)(void*))(a->system);
+ if(mapper&&CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain)){
+  unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
+  for(unsigned i=0;i<layers&&!covered;++i){
+   uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-t->y;
+   if(type!=UINT32_MAX&&(type&0xffffu)!=0xffu&&above>FW_FLOOR_LOW&&above<FW_LARGE_TALL)covered=1;
+  }
+ }
+ fwfield_cover.x=tx;fwfield_cover.z=tz;fwfield_cover.y=t->y;fwfield_cover.valid=1;fwfield_cover.covered=(uint8_t)covered;
+ return covered;
+}
+/* 1 while a 64-pixel follower stays in its ball: barred here, or under a
+ * floor. Leaving cover waits FW_COVER_CLEAR updates, so a trail along a
+ * floor's edge does not flash it in and out. */
+static int large_held(Actor *a,const FwSample *t){
+ if(!large_actor(a)){fwfield_held=0;return 0;}
+ if(large_barred()){fwfield_held=1;fwfield_heldClear=FW_COVER_CLEAR;return 1;}
+ if(under_floor(a,t)){fwfield_held=1;fwfield_heldClear=0;return 1;}
+ if(!fwfield_held)return 0;
+ if(fwfield_heldClear<FW_COVER_CLEAR){++fwfield_heldClear;return 1;}
+ fwfield_held=0;return 0;
+}
 static int ease_from(const FwPoint *natural,const FwPoint *player,FwSample *start){
  uint32_t close=fw_trail_metric_to_point(&fwfield_follower.trail,walk_gaps(),natural->x,natural->z);
  if(!close||close>=FW_TILE){clear_ease();return 0;}
@@ -414,6 +475,18 @@ static void move(Actor *a) {
    }
   }
  }
+ if(large_held(a,&target)){
+  /* The blocked-step recall. The trail keeps recording and the hidden actor
+   * keeps its pose, so a release or an L/R switch sends out from there. */
+  if(!(a->flags&HIDDEN)&&fwfield_follower.state==FW_FOLLOWING)fwfx_recall(a);
+  a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
+  a->world=(Vec){target.x,target.y,target.z};
+  for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+  a->grid[0]=(int16_t)(target.x/FW_TILE);a->grid[1]=(int16_t)(target.y/FW_TILE);a->grid[2]=(int16_t)(target.z/FW_TILE);
+  CALL(0x02167099,void(*)(Actor*,uint32_t))(a,target.direction);
+  fwr_anchor(a,target.direction);
+  animation_gate(a);note_settled();return;
+ }
  Vec next={target.x,target.y,target.z};
  if(!fws_step_clear(a,&next)){
   if(!(a->flags&HIDDEN))fwfx_recall(a);
@@ -515,7 +588,7 @@ __attribute__((noinline)) static int config(void) {
     &&FollowingCoreAPI.publish(input.descriptors);
  CALL(0x02070de1,int(*)(void*))(file);
  fwfield_pageCount=0;
- if(ok){fwfield_stride=input.stride;fwfx_set_resource_count(header[5]);fwfield_configState=1;FollowingConfigDebug.stage=7;}
+ if(ok){fwfield_stride=input.stride;fwfx_set_resource_count(header[5]);fwfield_configState=1;FollowingConfigDebug.stage=7;fwp_zones_load();}
  else {fwfx_set_resource_count(0);FollowingCoreAPI.clear();fwfield_registrySize=fwfield_stride=0;}
  return ok;
 }
@@ -630,6 +703,9 @@ static void covered_spawn(void *field, ActorSystem *sys, uint16_t code, const Fw
  void *fp=PTR(field,0x94);
  Actor *player=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
  if(!player||!(player->flags&USE)){FollowingConfigDebug.covered=2;return;}
+ /* A large follower barred here stays in its ball; the field update builds
+  * it hidden and move() keeps it there. */
+ if(code_large(sys,code)&&large_barred_at(field,player->zone)){FollowingConfigDebug.covered=6;return;}
  unsigned free=0;
  for(unsigned i=0;i<sys->capacity;++i)if(!(sys->actors[i].flags&USE))++free;
  if(free<2){FollowingConfigDebug.covered=5;return;}
@@ -697,28 +773,46 @@ static void cycle_follower(void *game,void *field){
 #endif
  unsigned keys=CALL(0x0203df29,unsigned(*)(void))()&0x300u;
  if(keys!=0x100u && keys!=0x200u)return; /* Both shoulders together have no direction. */
- if(!owned() || fwfield_follower.state!=FW_FOLLOWING || !fwfield_player || fwt_active() || fwfx_busy())return;
+ if(!owned() || !fwfield_player || fwt_active() || fwfx_busy())return;
  Actor *actor=(Actor*)fwfield_follower.actor;
- if(actor->flags&HIDDEN)return;
+ /* Where a large follower is barred, L/R only brings out a small one, and a
+  * large one held in its ball can still be switched out. */
+ int barred=large_barred();
+ int held=barred&&fwfield_held&&large_actor(actor)&&(actor->flags&HIDDEN)&&fwfield_follower.state==FW_WAITING;
+ if(!held&&(fwfield_follower.state!=FW_FOLLOWING||(actor->flags&HIDDEN)))return;
  fwfx_prepare(actor);
  if(!fwfx_available())return; /* A switch must have its recall and send-out effects. */
  uint8_t oldFlying=fwfield_flying;
- FwPokemon next;int slot=-1;
- if(!select(game,field,&next,0,keys==0x100u?1:-1,&slot))return;
  uint8_t oldGap=fwfield_follower.side_gap;
  uint8_t oldDirectional[4];for(unsigned i=0;i<4;++i)oldDirectional[i]=fwfield_follower.directional_gap[i];
  int8_t oldY=fwfield_follower.sprite_y;
- uint16_t code=model(&next);
+ FwPokemon start=fwfield_follower.selected,next;
+ int8_t startSlot=fwfield_follower.slot;uint8_t startHas=fwfield_follower.has_selection;
+ int slot=-1,refused=0;uint16_t code=0;
+ /* select() steps from the current pick; a skipped large one becomes the
+  * pick for the next step. Six steps cover the party. */
+ for(unsigned tries=0;tries<6;++tries){
+  if(!select(game,field,&next,0,keys==0x100u?1:-1,&slot)){code=0;break;}
+  code=model(&next);
+  if(!code||!barred||!code_large(fwfield_owner,code))break;
+  code=0;refused=1;
+  if(startHas&&fw_same_identity(&next,&start))break;
+  fwfield_follower.selected=next;fwfield_follower.slot=(int8_t)slot;fwfield_follower.has_selection=1;
+ }
+ fwfield_follower.selected=start;fwfield_follower.slot=startSlot;fwfield_follower.has_selection=startHas;
  if(!code){
+  /* model() also set a skipped row's mount profile; read the current row. */
+  if(refused&&startHas)model(&start);
   fwfield_follower.side_gap=oldGap;fwfield_follower.sprite_y=oldY;
   for(unsigned i=0;i<4;++i)fwfield_follower.directional_gap[i]=oldDirectional[i];
   fwfield_flying=oldFlying;
+  if(refused)fwfx_cue(&actor->world);
   return;
  }
  fwfield_cyclePose=actor->world;
  for(unsigned i=0;i<3;++i)fwfield_cycleGrid[i]=actor->grid[i];
  fwfield_cycleFace=actor->face;
- fwfx_snapshot(actor);fwfx_recall(actor);
+ if(!held){fwfx_snapshot(actor);fwfx_recall(actor);}
  Actor *keep=fwfield_player;
  fwfield_cyclePending=1; /* The native delete callback must retain the route. */
  cleanup_impl(1);fwfield_player=keep;

@@ -37,6 +37,12 @@ static uint16_t fwfx_resourceCount;
 /* Stock White 2 battle effects: switch-out return 620 and send-out 621 both
  * use SE 1383 for the ball. Effect 619 is Sunny Day, not a ball effect. */
 #define FWFX_BALL_SE 1383u
+/* SEQ_SE_BEEP (pokebw2 generated/sound.txt), the menus' "can't do that". */
+#define FWFX_BEEP_SE 1367u
+/* Ticks the closed ball stays up for a refused switch, and how many of them
+ * shake it a pixel either way. */
+#define FWFX_CUE_TICKS 30
+#define FWFX_CUE_SHAKE 12
 __attribute__((visibility("default"))) volatile uint32_t FollowingEffectsDebug[8]={0x58465746,1,0,0,0,0,0,0};
 static uint32_t checksum(const uint8_t *p,unsigned n){uint32_t c=~0u;while(n--){c^=*p++;for(unsigned j=0;j<8;++j)c=(c>>1)^((0u-(c&1))&0xedb88320u);}return ~c;}
 static int verified(void){
@@ -261,6 +267,13 @@ void fwfx_recall(Actor *a){
  position(a);fwfx.mode=2;fwfx.age=0;FollowingEffectsDebug[2]=2;FollowingEffectsDebug[5]=0;FollowingEffectsDebug[4]++;
  CALL(0x02006255,void(*)(unsigned))(FWFX_BALL_SE);
 }
+/* A switch with nothing allowed to come out: the closed ball where the
+ * follower stands, a short shake, the beep. Mode 3. */
+void fwfx_cue(const Vec *at){
+ CALL(0x02006255,void(*)(unsigned))(FWFX_BEEP_SE);
+ if(fwfx.ready!=1||fwfx.mode||!at)return;
+ fwfx.transform.pos=*at;fwfx.transform.pos.z+=6*4096;fwfx.mode=3;fwfx.age=0;FollowingEffectsDebug[2]=3;FollowingEffectsDebug[5]=0;
+}
 int fwfx_busy(void){return fwfx.mode!=0;}
 int fwfx_recalling(void){return fwfx.mode==2;}
 int fwfx_available(void){return fwfx.ready==1;}
@@ -268,7 +281,7 @@ int fwfx_hides_actor(void){return fwfx.mode==1 && fwfx.age<2;}
 void fwfx_tick(void){
  ++fwfx_clock;held_pump();
  if(!fwfx.mode)return;
- if(++fwfx.age>=(fwfx.mode==1?10:FWFX_RECALL_TICKS)){fwfx_cancel();return;}
+ if(++fwfx.age>=(fwfx.mode==1?10:fwfx.mode==3?FWFX_CUE_TICKS:FWFX_RECALL_TICKS)){fwfx_cancel();return;}
  if(fwfx.mode==1 && fwfx.age==2)CALL(0x02006255,void(*)(unsigned))(FWFX_BALL_SE);
  FollowingEffectsDebug[2]=fwfx.mode;FollowingEffectsDebug[5]=fwfx.age;
 }
@@ -276,7 +289,12 @@ static void draw_emote(void *camera,void *light);
 void fwfx_draw(void *camera,void *light){
  draw_emote(camera,light);
  if(!fwfx.mode || fwfx.ready!=1)return;
- if(fwfx.mode==2 && fwfx.age<FWFX_RECALL_SPRITE_TICKS && fwfx.snapshot){
+ if(fwfx.mode==3){
+  Vec at=fwfx.transform.pos;
+  if(fwfx.age<FWFX_CUE_SHAKE)fwfx.transform.pos.x+=(fwfx.age&2)?4096:-4096;
+  CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
+  fwfx.transform.pos=at;
+ }else if(fwfx.mode==2 && fwfx.age<FWFX_RECALL_SPRITE_TICKS && fwfx.snapshot){
    /* Three recolored frames establish the silhouette, then five quick steps
     * pull it into the ball. The remaining four frames retain the ball art. */
    static const int scale[8]={4096,4096,4096,3440,2784,2112,1456,768};

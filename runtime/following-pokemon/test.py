@@ -10,6 +10,8 @@ subprocess.run([os.environ.get('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror'
 subprocess.run([str(BUILD/'logic-test')],check=True)
 subprocess.run([os.environ.get('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I',str(HERE),str(HERE/'tests/field_layout.c'),'-o',str(BUILD/'field-layout-test')],check=True)
 subprocess.run([str(BUILD/'field-layout-test')],check=True)
+subprocess.run([os.environ.get('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(HERE/'tests/positioning.c'),'-o',str(BUILD/'positioning-test')],check=True)
+subprocess.run([str(BUILD/'positioning-test')],check=True)
 subprocess.run([os.environ.get('PYTHON','python3'),'-m','unittest','discover','-s',str(HERE/'tests'),'-p','test_*.py'],check=True)
 
 subprocess.run([os.environ.get('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(HERE/'reactions.c'),str(HERE/'tests/reactions.c'),'-o',str(BUILD/'reactions-test')],check=True)

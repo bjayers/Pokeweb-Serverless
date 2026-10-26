@@ -117,3 +117,47 @@ Dialogue reach already scales with the gap. The two-tile corridors in
 and a large one keeps the same three units of partial-step room past reach.
 The native grid check admits the tile in front of the player and the next
 one, which covers 40 units. Reseeds lay 48 units of history.
+
+## Where 64-pixel followers come out
+
+A 64-pixel follower stays in its ball in an interior and comes out in an
+exterior. The area's exterior flag decides (`FieldEffects_GetAreaIsExterior`,
+the same flag seasons use). A zone row in `positioning.narc` member 1 swaps the
+rule for that zone: a large interior that lets it out, or a cramped exterior or
+cave that keeps it in.
+
+- Doors keep the existing recall before the fade. Inside, the MapSpawnFinish
+  covered spawn is skipped (`FollowingConfigDebug.covered` 6) and the field
+  update builds the actor hidden; `move()` keeps it hidden.
+- L/R where a large follower is barred skips large party members, and works
+  while the large one is in its ball. With no small one to bring out, the
+  closed ball shows where the follower stands, shakes a pixel either way, and
+  plays `SEQ_SE_BEEP` (1367); `fwfx_cue`, about a second.
+- The selection is the player's: a large follower left in its ball comes back
+  out at the next exterior; a small one chosen inside stays until switched.
+- Outdoors, a walkable layer 1.5–3.5 tiles above the follower's feet (a bridge
+  or upper walkway its 56-unit sprite would come through) also keeps it in its
+  ball, until the trail has been clear for 20 updates. One terrain query per
+  trail tile and height (`FieldG3DMapper_GetTerrainAll`).
+
+32-pixel followers are not affected.
+
+### Zone override member
+
+`positioning.narc` as installed has one member, the positioning table, and
+reads exactly as before. An editor may append member 1 (at most four members
+in all). The reader walks the NARC's FAT, so FNTB may be any 4-byte multiple
+from 8 to 256 bytes.
+
+| Offset | Size | Value |
+|---|---:|---|
+| 0 | 4 | `FWZO` (`46 57 5A 4F`) |
+| 4 | 2 | version, 1 |
+| 6 | 2 | row count, at most 256 |
+| 8 + 4n | 2 | zone ID |
+| 10 + 4n | 1 | flags; bit 0 swaps the large-follower rule. Other bits are reserved and ignored. |
+| 11 + 4n | 1 | 0 |
+
+The member may be longer than `8 + 4 × count` (alignment padding). A bad
+magic, version, count or reserved byte leaves no overrides; positioning still
+reads. Rows load once per field load (`fwp_zones_load`).

@@ -13,6 +13,8 @@ void fwfx_destroy(void);
  * and not an emote VRAM bind. The talk path owns that material. */
 void fwfx_warm(uint32_t heap);
 int fwfx_hides_actor(void);
+/* Closed ball at `at` with a one-pixel shake and the refusal beep. */
+void fwfx_cue(const Vec *at);
 int fwfx_busy(void);
 int fwfx_recalling(void);
 int fwfx_available(void);
