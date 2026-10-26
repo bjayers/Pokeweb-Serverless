@@ -8,7 +8,7 @@ _, _, _, _, funcs, _ = audit(field, elf)
 base, actor, stop, stack = 0x02300000, 0x02220000, 0x02008000, 0x023f0000
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(base, bytes(relocate(field, base, load_dependencies(uc))))
 target = (base + funcs['fwr_anchor'][0]) | 1
 

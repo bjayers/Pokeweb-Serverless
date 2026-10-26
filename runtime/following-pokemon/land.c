@@ -142,7 +142,7 @@ int fwland_begin(ActorSystem *owner,Actor *follower,Actor *player,void *field,
   if(!land.resources[i])goto fail;
   CALL(0x0204e599,void(*)(void*,unsigned,unsigned,unsigned,unsigned))(&land.materials[i],0,0x22u,32,32);
   if(land.materials[i].cols!=1||land.materials[i].rows!=1)goto fail;
-  CALL(0x0204e55d,void(*)(void*,void*))(&land.materials[i],land.resources[i]);
+  fw_vram_window();CALL(0x0204e55d,void(*)(void*,void*))(&land.materials[i],land.resources[i]);
   if(!land.materials[i].texKey||!land.materials[i].plttKey)goto fail;
  }
  land.active=1;land.invalid=0;land.error=0;land.runAnimating=land.hasDrawWorld=0;

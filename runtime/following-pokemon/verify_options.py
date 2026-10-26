@@ -71,7 +71,7 @@ ELF = PACKAGE_BUILD / f"PokewebFollowingOptions{MODULE_SUFFIX}.elf"
 _, _, _, _, functions, _ = audit(DLL, ELF)
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(BASE, bytes(relocate(DLL, BASE)))
 exports = module_exports(DLL, BASE)
 state = exports[symbol_hash("option")]

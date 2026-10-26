@@ -87,7 +87,7 @@ _, _, _, _, functions, _ = audit(dll, elf)
 base, stop, stack = 0x02300000, 0x02008000, 0x023f0000
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(base, bytes(relocate(dll, base, load_dependencies(uc))))
 def addr(name): return base + functions[name][0]
 def put(where, value): uc.mem_write(where, struct.pack("<I", value & 0xffffffff))

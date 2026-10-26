@@ -24,7 +24,7 @@ def verify(path):
  # All other captured RAM, including actors and the event chain, is protected.
  recent_start=occupants+0x7f0
  for activity in (1,11,31):
-  cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.ctl_set_cpu_model(UC_CPU_ARM_946);cpu.mem_map(base,0x1000000);cpu.mem_write(base,ram)
+  cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.ctl_set_cpu_model(UC_CPU_ARM_946);cpu.mem_map(base,0x1000000);cpu.mem_write(base,ram);cpu.mem_map(0x04000000,0x1000);cpu.mem_write(0x04000006,b'\xc4\x00')
   vm=0x02ef0000;program=vm+0x100
   cpu.mem_write(vm+32,struct.pack('<I',program));cpu.mem_write(program,struct.pack('<H',activity))
   cpu.reg_write(UC_ARM_REG_SP,stack);cpu.reg_write(UC_ARM_REG_LR,stop|1);cpu.reg_write(UC_ARM_REG_R0,vm)

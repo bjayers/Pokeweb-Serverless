@@ -8,7 +8,7 @@ CYCLES=int(os.environ.get("FOLLOWING_TEST_CYCLES","100"))
 DLL=PACKAGE_BUILD/f'PokewebFollowingField{MODULE_SUFFIX}.dll';ELF=PACKAGE_BUILD/f'PokewebFollowingField{MODULE_SUFFIX}.elf'
 code,bss,syms,rels,funcs,_=audit(DLL,ELF)
 BASE=0x02300000;STOP=0x02008000;STACK=0x023f0000
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 loaded=relocate(DLL,BASE,load_dependencies(uc))
 uc.mem_write(BASE,bytes(loaded))
 # Resolve exported state by the exact RPM hash table; functions retain text offsets.
@@ -543,7 +543,7 @@ if '--state' in sys.argv:
  path=Path(sys.argv[sys.argv.index('--state')+1]);_,ram=state_ram(path)
  debug=ram.find(b'FWDG');actor,player=struct.unpack_from('<II',ram,debug+32)
  field=struct.unpack_from('<I',ram,debug+56)[0];sidecar=state_follower(ram)
- cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.mem_map(RAM_BASE,0x1000000);cpu.mem_write(RAM_BASE,ram);cpu.mem_map(0x04000000,0x100000)
+ cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.mem_map(RAM_BASE,0x1000000);cpu.mem_write(RAM_BASE,ram);cpu.mem_map(0x04000000,0x100000);cpu.mem_write(0x04000006,b'\xc4\x00')
  newbase=0x02c00000;cpu.mem_write(newbase,bytes(relocate(DLL,newbase,{symbol_hash('FollowingCoreAPI'):STOP,symbol_hash('FollowingEventsAPI'):STOP})))
  scratch=0x023ef000;stack=0x023ef800;pose=scratch+1860;art=pose+12
  cpu.mem_write(scratch,ram[sidecar-RAM_BASE:sidecar-RAM_BASE+1856])

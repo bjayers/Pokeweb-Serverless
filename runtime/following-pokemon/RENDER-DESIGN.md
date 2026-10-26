@@ -74,6 +74,16 @@ The cache has 32 slots and drops a registration with no error when it is full, s
 
 The first visible frame used to also birth the shadow task (`0x02194df5`) and, on a send-out, the flash model. Those still wait until the update after the body has been drawn. The ball still draws while the actor is hidden. The entrance effect-bank upload and the white-sheet bind run in the MapSpawnFinish hook, before the fade reveals the picture.
 
+## Scanline window
+
+The fade was never the variable. `GFL_G3DResUploadTexData` (`0x020494d8`) ends in `NNS_G3dTexLoad(tex, TRUE)` and `NNS_G3dPlttLoad(tex, TRUE)`, an immediate load: the texture banks go to the CPU for the copy and come back. `BlActMaterial_BindTexture` (`0x0204e55c`) calls it. The 3D engine reads those banks on every line it renders, from line 214 through line 191 of the next frame, so any upload from the field update blanks the lines rendered during the copy. The lines read a mix of stale texels and the new palette. Where they land depends on how far into the frame the update has run, which is why each map draws them at about the same height. Emulators render the whole frame at once and never show it.
+
+Retail does not upload from the field update. Mid-map NPC sheets bind in `FldActSys_AsyncMatLoadTCBFunc`, a VBlank task (`src/ov036/fieldmap.c` in the pokebw2 decomp), and `MapSpawnFinish` loads run before the screen is shown.
+
+`fw_vram_window` in `native.h` spins until `VCOUNT` (`0x04000006`) is in 193–204, after the VBlank interrupt and before the 3D scan restarts, and every `0x020494d9` and `0x0204e55d` call in `effects.c`, `land.c` and `surf.c` goes through it. A 32×32 or 64×64 sheet copies in a few lines, so consecutive binds usually share one window. A bind can cost up to one frame of waiting. `FldActSys_LoadStaticBlact` in the `0x0217fe88` hook is the retail spawn-time path and stays as it is. The Unicorn verifiers map an I/O page with `VCOUNT` 196.
+
+If a line remains with this in place, it is not an upload from this module. Look for another immediate `GX_LoadTex`, `GX_LoadTexPltt`, or VRAM bank change outside VBlank.
+
 ## Round 2
 
 The rest snap was draw-only. The trail still rests at the gap-6 metric (about 1.375 tiles, straight-line 90110). Ease already ends on that pose.

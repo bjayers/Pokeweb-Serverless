@@ -20,7 +20,7 @@ audit(dll,elf)
 code,bss,syms,rels=read_module(dll)
 assert bss==0 and not any(s[4]&2 for s in syms)
 assert {r[0] for r in rels if r[1]!=255}=={a(0x21d12b4),a(0x21d12b8)}
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 for overlay in overlays.values():uc.mem_write(overlay.ramAddress,bytes(overlay.data))
 BASE=0x02300000;WORK=0x02280000;SETUP=WORK+0x400;MAIN=WORK+0x800;CON=WORK+0x900
 BPP0=WORK+0x1000;BPP1=WORK+0x1100;SEQ=WORK+0x2000;STOP=0x02008000

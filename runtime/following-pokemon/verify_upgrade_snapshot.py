@@ -26,7 +26,7 @@ def verify(state,rom_path):
   offset=adapter['address']-0x02000000;expect=bytes.fromhex(adapter['expectedHex'])
   assert ram[offset:offset+len(expect)]==expect,adapter['id']
  uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946)
- uc.mem_map(0x02000000,0x1000000);uc.mem_write(0x02000000,ram)
+ uc.mem_map(0x02000000,0x1000000);uc.mem_write(0x02000000,ram);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
  base=0x02480000;stop=0x02f00000;stack=0x02fff000
  dll=PACKAGE_BUILD/'PokewebFollowingFieldW2.dll'
  for name in ['PokewebFollowingFieldW2','PokewebFollowingCoreW2','PokewebFollowingEventsW2']:

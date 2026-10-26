@@ -142,7 +142,7 @@ def execute(dll,elf):
  randomizer=random.Random(946)
  cases.extend((randomizer.getrandbits(64),randomizer.getrandbits(64)) for _ in range(100))
  for base in (0x02300000,0x023b9090,0x023b9094):
-  uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+  uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
   loaded=relocate(dll,base,load_dependencies(uc))
   uc.mem_write(base,bytes(loaded))
   def call(name,args):

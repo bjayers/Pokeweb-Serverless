@@ -179,7 +179,7 @@ static int init(void){
   if(!fwfx.resources[i])return init_stop();
  }
  for(unsigned i=0;i<2;++i){
-  if(!CALL(0x020494d9,int(*)(void*))(fwfx.resources[i]))return init_stop();
+  fw_vram_window();if(!CALL(0x020494d9,int(*)(void*))(fwfx.resources[i]))return init_stop();
   fwfx.models[i]=CALL(0x02049759,void*(*)(void*,unsigned,void*))(fwfx.resources[i],0,fwfx.resources[i]);
   if(!fwfx.models[i])return init_stop();
  }
@@ -221,7 +221,7 @@ void fwfx_prepare(Actor *actor){
   unsigned light=3u*(color&31u)+6u*((color>>5)&31u)+((color>>10)&31u);
   palette[i]=(uint16_t)(i&&((minLight==maxLight)?(i&1u):(light>middle))?FWFX_WHITE:FWFX_LIGHT_CYAN);
  }
- CALL(0x0204e55d,void(*)(void*,void*))(&fwfx.whiteMaterial,fwfx.white);
+ fw_vram_window();CALL(0x0204e55d,void(*)(void*,void*))(&fwfx.whiteMaterial,fwfx.white);
  if(!fwfx.whiteMaterial.texKey || !fwfx.whiteMaterial.plttKey)free_white();
 }
 void fwfx_snapshot(Actor *a){
@@ -333,7 +333,7 @@ int fwfx_emote_begin(Actor *a,unsigned member){
   CALL(0x0204e599,void(*)(void*,unsigned,unsigned,unsigned,unsigned))(&fwemote.material[i],0,0x22,32,32);
   /* This object is the one fwr_private_scene stored. Binding any other
    * material and copying the words does not keep the reservation. */
-  CALL(0x0204e55d,void(*)(void*,void*))(&fwemote.material[i],fwemote.resources[i]);
+  fw_vram_window();CALL(0x0204e55d,void(*)(void*,void*))(&fwemote.material[i],fwemote.resources[i]);
   if(!fwemote.material[i].texKey||!fwemote.material[i].plttKey){fwfx_emote_end();return 0;}
  }
  /* The bind and the first submit must not share a scan. The next draw

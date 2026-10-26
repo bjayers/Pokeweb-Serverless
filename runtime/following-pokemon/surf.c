@@ -120,7 +120,7 @@ static int load(void){
   unsigned dimensions=surf.frameSize==64?0x33u:0x22u;
   CALL(0x0204e599,void(*)(void*,unsigned,unsigned,unsigned,unsigned))(&surf.materials[i],0,dimensions,surf.frameSize,surf.frameSize);
   if(surf.materials[i].cols!=1||surf.materials[i].rows!=1)goto fail;
-  CALL(0x0204e55d,void(*)(void*,void*))(&surf.materials[i],surf.resources[i]);
+  fw_vram_window();CALL(0x0204e55d,void(*)(void*,void*))(&surf.materials[i],surf.resources[i]);
   if(!surf.materials[i].texKey||!surf.materials[i].plttKey)goto fail;
  }
  surf.uploadTick=surf.tick;

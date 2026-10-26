@@ -21,7 +21,7 @@ def verify(rom_path):
   else:sp,form,gender,shiny,_,row=struct.unpack_from('<HBBBBH',data,at)
   rows[sp].append((form,gender,shiny,row));gaps[row]=(data[at+8]>>3)&7 if stride==12 else data[at+15]
   profiles[row]=bool(data[at+8]&4) if stride==12 else bool(data[at+11])
- uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+ uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
  base=0x02300000;core=0x022d0000;stop=0x02008000;stack=0x023f0000;pokemon=0x02210000
  dll=PACKAGE_BUILD/'PokewebFollowingFieldW2.dll';core_dll=PACKAGE_BUILD/'PokewebFollowingCoreW2.dll'
  for module in [dll,core_dll,PACKAGE_BUILD/'PokewebFollowingEventsW2.dll']:

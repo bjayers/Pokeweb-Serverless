@@ -8,7 +8,7 @@ import json
 DLL=PACKAGE_BUILD/'PokewebFollowingFieldW2.dll';ELF=PACKAGE_BUILD/'PokewebFollowingFieldW2.elf'
 code,bss,syms,rels,funcs,_=audit(DLL,ELF)
 BASE=0x02300000;STOP=0x02008000;STACK=0x023f0000
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x1000000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x1000000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(BASE,bytes(relocate(DLL,BASE,load_dependencies(uc))))
 raw=DLL.read_bytes();get=lambda o:struct.unpack_from('<I',raw,o)[0]
 h=get(8);info=h+get(h+8);sym=h+get(info+4);first,count=struct.unpack_from('<HH',raw,sym+8);hashat=h+get(sym+16)

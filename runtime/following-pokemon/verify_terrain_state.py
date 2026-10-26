@@ -42,7 +42,7 @@ def call(ram, target, args, observe=None):
     cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
     cpu.mem_map(BASE, 0x1000000)
     cpu.mem_write(BASE, ram)
-    cpu.mem_map(0x04000000, 0x100000)
+    cpu.mem_map(0x04000000, 0x100000);cpu.mem_write(0x04000006,b'\xc4\x00')
     cpu.reg_write(UC_ARM_REG_SP, STACK)
     cpu.reg_write(UC_ARM_REG_LR, STOP | 1)
     for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
@@ -130,7 +130,7 @@ def check_grass_draw(path, field_module):
     cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
     cpu.ctl_set_cpu_model(UC_CPU_ARM_946)
     cpu.mem_map(BASE, 0x1000000); cpu.mem_write(BASE, ram)
-    cpu.mem_map(0x04000000, 0x100000)
+    cpu.mem_map(0x04000000, 0x100000);cpu.mem_write(0x04000006,b'\xc4\x00')
     def u32(at): return struct.unpack('<I', cpu.mem_read(at, 4))[0]
     def u16(at): return struct.unpack('<H', cpu.mem_read(at, 2))[0]
     def put(at, value): cpu.mem_write(at, struct.pack('<I', value))

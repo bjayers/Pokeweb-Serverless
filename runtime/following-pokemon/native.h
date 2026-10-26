@@ -31,4 +31,21 @@ _Static_assert(sizeof(Moves)==20,"callbacks");
 #define CALL(address, type) ((type)(uintptr_t)(address))
 #define U32(base, offset) (*(uint32_t*)((uint8_t*)(base)+(offset)))
 #define PTR(base, offset) (*(void**)((uint8_t*)(base)+(offset)))
+/* GFL_G3DResUploadTexData (0x020494d9, also inside BlActMaterial_BindTexture
+ * 0x0204e55d) is NNS_G3dTexLoad(tex, TRUE): it maps the texture banks to the
+ * CPU, copies, and maps them back. The 3D engine reads those banks on every
+ * line it renders, from line 214 through line 191 of the next frame, so a
+ * call from the field update blanks the lines rendered during the copy. That
+ * is the one-frame line on a follower's first draw and on an emote. Retail
+ * binds mid-map NPC sheets from a VBlank task (FldActSys_AsyncMatLoadTCBFunc).
+ * Emulators render the frame at once and never show it. Start each upload
+ * after the VBlank interrupt has run and well before line 214. The bound
+ * covers more than one frame and only matters if VCOUNT never moves. */
+#define FW_VCOUNT (*(volatile uint16_t*)0x04000006)
+static inline void fw_vram_window(void){
+ for(unsigned spins=0;spins<0x100000u;++spins){
+  unsigned line=FW_VCOUNT&0x1ffu;
+  if(line>=193u&&line<=204u)return;
+ }
+}
 #endif

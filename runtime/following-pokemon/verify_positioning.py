@@ -11,7 +11,7 @@ _, _, _, _, functions, _ = audit(dll, elf)
 base, stop, stack, output = 0x02300000, 0x02008000, 0x023f0000, 0x02200000
 cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 cpu.ctl_set_cpu_model(UC_CPU_ARM_946)
-cpu.mem_map(0x02000000, 0x400000)
+cpu.mem_map(0x02000000, 0x400000);cpu.mem_map(0x04000000,0x1000);cpu.mem_write(0x04000006,b'\xc4\x00')
 cpu.mem_write(base, bytes(relocate(dll, base, load_dependencies(cpu))))
 
 member = bytearray(24 + 2 * 12 + 3 * 8)

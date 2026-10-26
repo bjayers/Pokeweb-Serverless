@@ -10,7 +10,7 @@ if profile=='black2':
 elif profile=='white2italy':
  from italy_port import port_address as a
 else:a=lambda address:address
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 BASE=0x02300000;STOP=0x02008000;RECALL=STOP+4
 F=0x02200000;SYS=F+0x1000;ACTOR=F+0x2000;FIELD=F+0x3000;GAME=F+0x4000
 DATA=F+0x5000;EVENT=F+0x6000;CHILD=EVENT+0x100;SETUP=F+0x7000
