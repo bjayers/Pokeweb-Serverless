@@ -345,14 +345,23 @@ int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const Fw
     int64_t lat2 = mx * mx + mz * mz - (int64_t)proj * proj;
     int32_t tol = (int32_t)FW_TILE / 4;
     if (lat2 > (int64_t)tol * tol) return -1;
+    /* The follower walks back to the origin while the player walks to it,
+     * at the player's pace. Past the longest authored gap (a 64-pixel bonus)
+     * they would only pass halfway along, after a one-tile knot has already
+     * ended, so the follower reaches the origin in one tile instead. */
+    uint32_t pace = span > (uint32_t)FW_TILE + FW_MAX_AUTHORED_GAP * 4096u ? (uint32_t)FW_TILE : span;
+    int32_t walked = proj >= (int32_t)pace ? (int32_t)span : div_s64((int64_t)proj * span, pace);
     /* One knot often ends before the follow gap. A step that has stopped
      * while still moving toward the follower is the rail equivalent of
-     * arriving on their tile. */
-    int done = proj >= (int32_t)span || (step_settled && proj >= 4096);
-    if (proj >= (int32_t)span) proj = (int32_t)span;
-    out->x = follower->x + div_s64(((int64_t)origin->x - follower->x) * proj, span);
-    out->y = follower->y + div_s64(((int64_t)origin->y - follower->y) * proj, span);
-    out->z = follower->z + div_s64(((int64_t)origin->z - follower->z) * proj, span);
+     * arriving on their tile, once the two have passed. A knot that stops
+     * short of that keeps the swap open; the reseed and its ease start
+     * behind the player, and a follower still in front of them would snap
+     * back to the fresh rest. */
+    int passed = proj >= (int32_t)span - walked;
+    int done = proj >= (int32_t)span || (step_settled && proj >= 4096 && passed);
+    out->x = follower->x + div_s64(((int64_t)origin->x - follower->x) * walked, span);
+    out->y = follower->y + div_s64(((int64_t)origin->y - follower->y) * walked, span);
+    out->z = follower->z + div_s64(((int64_t)origin->z - follower->z) * walked, span);
     return done;
 }
 /* Display form for the follower sprite, palette, and size row. Identity,

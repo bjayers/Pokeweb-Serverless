@@ -785,6 +785,22 @@ int main(void) {
     FwPoint oneKnot=origin;oneKnot.x+=(int32_t)FW_TILE;
     assert(fw_rail_swap_mirror(&gapFollower,&origin,&oneKnot,&mid,0)==0);
     assert(fw_rail_swap_mirror(&gapFollower,&origin,&oneKnot,&mid,1)==1);
+    /* Up to the longest authored gap the follower keeps the player's pace. */
+    assert(mid.x==gapFollower.x-(int32_t)FW_TILE&&mid.z==origin.z);
+    /* A 64-pixel follower 36 units back reaches the origin within one knot
+     * and has passed the player when it settles. */
+    FwPoint largeFollower=origin;largeFollower.x+=(int32_t)FW_TILE+(int32_t)FW_MAX_DIRECTIONAL_GAP*4096;
+    assert(fw_rail_swap_mirror(&largeFollower,&origin,&oneKnot,&mid,0)==0);
+    assert(fw_rail_swap_mirror(&largeFollower,&origin,&oneKnot,&mid,1)==1);
+    assert(mid.x==origin.x&&mid.z==origin.z);
+    FwPoint halfKnot=origin;halfKnot.x+=(int32_t)FW_TILE/2;
+    assert(fw_rail_swap_mirror(&largeFollower,&origin,&halfKnot,&mid,0)==0);
+    assert(mid.x>halfKnot.x&&mid.x<largeFollower.x-(int32_t)FW_TILE/2);
+    /* A knot that stops before they pass keeps the swap open. */
+    assert(fw_rail_swap_mirror(&largeFollower,&origin,&halfKnot,&mid,1)==0);
+    FwPoint threeQuarters=origin;threeQuarters.x+=3*(int32_t)FW_TILE/4;
+    assert(fw_rail_swap_mirror(&largeFollower,&origin,&threeQuarters,&mid,1)==1);
+    assert(mid.x<threeQuarters.x);
     FwPoint curveOrigin={0,0,0};
     FwPoint curveFollower={3*(int32_t)FW_TILE,0,4*(int32_t)FW_TILE};
     FwPoint curvePlayer={3*(int32_t)FW_TILE/2,0,2*(int32_t)FW_TILE};
