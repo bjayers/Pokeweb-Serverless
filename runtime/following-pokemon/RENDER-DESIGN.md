@@ -83,6 +83,8 @@ Field actors are `BLACT_TYPE_FACE_CAMERA` quads (`BlActScene_Draw`, pokebw2 `src
 - Lower half: the native submit, with the material's face height set to 32, the face moved to row `2r+1`, and `sy` halved, all restored after `0x0204f685`. Same size, anchor and depth as the player and every NPC. This is the only part that can overlap the player: following behind, beside, or in a close swap, the upper half is drawn above the player's 32-pixel head.
 - Upper half: a private `0x0204ebdd` submit of row `2r`, anchored on the lower half's top edge and moved toward the camera along its eye ray by its height times tan(pitch), capped at two tiles (`fwr_split_top`). `shift_depth` scales it so its pixels stay where they were. The upper half then never reaches farther back than a 32-pixel quad does.
 
+The halves meet at `scale × sy` above the feet. The field actor scene's scale is 7.0 (`BLACT_SCENE_SCALE` in `fldmmdl_blact.c`), so a 64-pixel quad is 56 world units tall. The first build assumed the 8.0 that `screen_span` uses and opened a four-unit gap. The pull, the anchor and the scale are recomputed from the live camera every frame, so pitch, yaw and zoom changes keep the halves joined.
+
 The private header takes the live polygon id, origin, custom normal and texcoord offsets, so the halves meet without an edge-marking seam and are lit the same. A follower that fails a check is drawn whole, as before. 32-pixel followers are unchanged.
 
 If a seam shows on hardware at the halves' boundary, the first thing to try is the polygon id in `split_body`.

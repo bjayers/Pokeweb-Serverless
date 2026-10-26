@@ -41,7 +41,7 @@ class Rendering(unittest.TestCase):
   cls.lib.fwr_box_advance_limit.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Point)]
   cls.lib.fwr_box_advance_limit.restype=c.c_int32
   cls.lib.fwr_cap_advance.argtypes=[c.POINTER(Pose),c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
-  cls.lib.fwr_split_top.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.POINTER(Pose)]
+  cls.lib.fwr_split_top.argtypes=[c.POINTER(Pose),c.POINTER(Camera),c.c_int32,c.POINTER(Pose)]
   cls.lib.fwr_split_top.restype=c.c_int
  @classmethod
  def tearDownClass(cls):cls.tmp.cleanup()
@@ -703,17 +703,18 @@ class Rendering(unittest.TestCase):
   self.assertLessEqual(north_kept.z,feet.z+6*4096)
   self.assertEqual(north_kept.x,feet.x);self.assertEqual(north_kept.y,feet.y)
  def test_split_top_keeps_pixels_and_clears_the_lean(self):
-  # Native quad: +/-8*sx wide and 0..16*sy tall from the foot anchor.
-  def corners(pose,eye,n,ortho,y0,y1):
+  # Native quad: +/-scale*sx wide and 0..2*scale*sy tall from the foot
+  # anchor. The field actor scene is 7.0; 8.0 checks another scale.
+  def corners(pose,eye,n,ortho,y0,y1,scale):
    r=[n[2],0,-n[0]];length=math.sqrt(dot(r,r));r=[x/length for x in r]
    up=[n[1]*r[2],n[2]*r[0]-n[0]*r[2],-n[1]*r[0]];out=[]
-   for x,y in [(-8*pose.sx,y0),(8*pose.sx,y0),(-8*pose.sx,y1),(8*pose.sx,y1)]:
+   for x,y in [(-scale*pose.sx,y0),(scale*pose.sx,y0),(-scale*pose.sx,y1),(scale*pose.sx,y1)]:
     point=[xyz(pose.position)[i]+r[i]*x+up[i]*y for i in range(3)]
     v=[point[i]-eye[i] for i in range(3)];depth=-dot(v,n)
     out.append((dot(v,r)/(1 if ortho else depth),dot(v,up)/(1 if ortho else depth)))
    return out
   feet=(2195456,585395,46825472)
-  for projection in (0,2):
+  for projection,scale in ((0,7),(2,7),(0,8)):
    for yaw in (0,37,90,200):
     for pitch in (20,44,52.58,65,80):
      y,p=map(math.radians,(yaw,pitch))
@@ -722,10 +723,11 @@ class Rendering(unittest.TestCase):
      n=[eye[i]-feet[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
      cam=Camera(Point(*eye),Point(*feet),projection)
      body=Pose(Point(*feet),16384,16384);top=Pose()
-     self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(cam),c.byref(top)),1,(projection,yaw,pitch))
+     height=scale*body.sy
+     self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(cam),height,c.byref(top)),1,(projection,yaw,pitch))
      ortho=projection==2
-     want=corners(body,eye,n,ortho,8*body.sy,16*body.sy)
-     got=corners(top,eye,n,ortho,0,16*top.sy)
+     want=corners(body,eye,n,ortho,height,2*height,scale)
+     got=corners(top,eye,n,ortho,0,2*scale*top.sy,scale)
      span=abs(want[2][1]-want[0][1])
      for a,b in zip(want,got):
       self.assertLess(abs(a[0]-b[0]),span/256,(projection,yaw,pitch,want,got))
@@ -733,12 +735,13 @@ class Rendering(unittest.TestCase):
      # Pulled toward the eye by the half's height times tan(pitch), capped.
      moved=[top.position.x-feet[0],top.position.y-feet[1],top.position.z-feet[2]]
      pull=dot(moved,n)
-     expected=min(8*body.sy*math.tan(p),2*16*4096)
+     expected=min(height*math.tan(p),2*16*4096)
      self.assertLess(abs(pull-expected),4096,(projection,yaw,pitch,pull,expected))
   level=Camera(Point(0,0,240*4096),Point(),0);body=Pose(Point(),16384,16384);top=Pose()
-  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(level),c.byref(top)),1)
+  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(level),7*16384,c.byref(top)),1)
   self.assertEqual((top.sx,top.sy),(16384,8192))
   for bad in (Pose(Point(),0,16384),Pose(Point(),16384,1)):
-   self.assertEqual(self.lib.fwr_split_top(c.byref(bad),c.byref(level),c.byref(top)),0)
-  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(Camera(Point(0,0,240*4096),Point(),3)),c.byref(top)),0)
+   self.assertEqual(self.lib.fwr_split_top(c.byref(bad),c.byref(level),7*16384,c.byref(top)),0)
+  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(level),0,c.byref(top)),0)
+  self.assertEqual(self.lib.fwr_split_top(c.byref(body),c.byref(Camera(Point(0,0,240*4096),Point(),3)),7*16384,c.byref(top)),0)
 if __name__=='__main__':unittest.main()

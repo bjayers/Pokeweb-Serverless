@@ -166,8 +166,12 @@ static int split_body(void *system,Billboard *b,const Actor *a,const FwrCamera *
   const Billboard *o=&scene->actors[i];
   if(o!=b&&(o->geom&0x3fffu)==mat&&(o->flags&512))return 0;
  }
+ /* The quad is 2*scale*sy tall, so its lower half is scale*sy. */
+ if(scene->scale.x<=0||b->sy<=0)return 0;
+ int64_t height=((int64_t)scene->scale.x*b->sy)>>12;
+ if(height<=0||height>4*(int64_t)FW_TILE)return 0;
  FwrPose body={b->position,b->sx,b->sy},top;
- if(!fwr_split_top(&body,cam,&top))return 0;
+ if(!fwr_split_top(&body,cam,(int32_t)height,&top))return 0;
  /* Faces are rows of the sheet. With 32-pixel faces, row 2r is the top of
   * the 64-pixel row r and row 2r+1 its bottom. A divide here would be an
   * __aeabi_uidiv import; a sheet row holds one or two faces. */

@@ -572,15 +572,14 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  if(!delta(out->position,*player_draw,&relative,8*FW_TILE)){*out=*native;return 0;}
  result->after=dot(relative,direction);return 1;
 }
-int fwr_split_top(const FwrPose *body,const FwrCamera *camera,FwrPose *out){
+int fwr_split_top(const FwrPose *body,const FwrCamera *camera,int32_t height,FwrPose *out){
  if(!body||!camera||!out)return 0;
  *out=*body;
- if(camera->projection>2||body->sx<=0||body->sy<2||body->sx>32767||body->sy>32767)return 0;
+ if(camera->projection>2||body->sx<=0||body->sy<2||body->sx>32767||body->sy>32767||height<=0)return 0;
  FwPoint view,junction;
  if(!view_axis(camera,&view))return 0;
- /* The native quad is 16*sy tall from its foot anchor. Its lower half is the
-  * NPC-sized part, and its top edge is where this half starts. */
- int32_t height=body->sy*8;
+ /* The lower half is the NPC-sized part, and its top edge is where this
+  * half starts. */
  if(!fwr_head_position(&body->position,camera,height,&junction))return 0;
  FwrPose upper={junction,body->sx,body->sy/2};
  /* A camera-facing quad leans back by its height times the camera's tilt.
