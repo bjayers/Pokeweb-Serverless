@@ -151,20 +151,27 @@ typedef struct { FwPoint feet; int32_t half,height; } FwrBody;
  * units forward at a 44° camera. Past this a steep camera's top rows lean
  * back again. */
 #define FWR_SPLIT_CAP (5 * FW_TILE)
+/* Where the strips' top edges stand, along the ground in front of the
+ * hinge `safe` world units up the quad: `forward` world units, ramped in over
+ * `ramp` units of height, plus `lean` (20.12, 0..1) per unit of height. */
+typedef struct { int32_t safe,lean,forward,ramp; } FwrStack;
+/* Nearby billboards that can hold a strip back. */
+#define FWR_OTHERS_MAX 16u
 /* Horizontal strips of a tall body for their own submit. `body` is the
  * submitted camera-facing quad (foot anchor), `half` its world half-width.
  * Strip i spans top - (i+1)*strip .. top - i*strip world units up the camera
- * plane with scale `strip_sy`. Rows below `safe` stay put. Above it a strip
- * moves toward the camera along its eye ray until its top stands `lean`
- * (20.12, 0..1) per unit of height past `safe` in front of the hinge: by
- * (its top - safe) * (sin(pitch) + lean) / cos(pitch), capped at
- * FWR_SPLIT_CAP, with its screen pixels unchanged.
- * Where it overlaps `player` (may be null) on screen it stays FWR_SORT_BEHIND
- * behind them, does not move when they are level, and is free when it is
- * clearly nearer. The camera basis is built once for all strips. Returns 0
- * for an unknown projection, a vertical camera or an unusable pose. */
+ * plane with scale `strip_sy`. Each moves toward the camera along its own eye
+ * ray until its top edge stands where `stack` says, capped at FWR_SPLIT_CAP
+ * of depth, with its screen pixels unchanged. A billboard in `others` (the
+ * player, NPCs) that a strip covers on screen keeps that strip
+ * FWR_SORT_BEHIND behind it; one level with the follower holds the strip
+ * still; one clearly behind does not count. `limited` (may be null) gets a
+ * bit per strip that was held back. The camera basis is built once for all
+ * strips. Returns 0 for an unknown projection, a vertical camera or an
+ * unusable pose. */
 int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
-               unsigned count,int32_t safe,int32_t lean,int32_t strip_sy,const FwrBody *player,FwrPose *output);
+               unsigned count,const FwrStack *stack,int32_t strip_sy,const FwrBody *others,unsigned other_count,
+               FwrPose *output,uint16_t *limited);
 int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,
     const FwPoint corners[8]);
 int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,

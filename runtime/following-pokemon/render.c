@@ -158,36 +158,55 @@ _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 #define FWR_STRIP_ROWS 8u
 #define FWR_STRIPS 7u
 #define FWR_BASE_ROWS (64u-FWR_STRIPS*FWR_STRIP_ROWS)
-/* The strips stand on the follower's feet and lean forward a quarter unit
- * per unit of height, so the top row sits about 14 units in front of the
- * feet: clear of a wall at the tile's edge and of an awning over the tile.
- * Only the 8 native rows (7 units) lean back with the camera. More lean
- * clears deeper overhangs and draws the top over things standing just in
- * front of the follower. */
-#define FWR_LEAN 1024
+/* Where the strips' top edges stand, along the ground in front of the feet:
+ * half a tile, ramped in over the first two strips, plus a quarter unit per
+ * unit of height. Middle rows sit about 15 units in front of the feet and
+ * the top row about 22: clear of a wall at the tile's edge and of an awning
+ * reaching a tile out from it. Only the 8 native rows (7 units) lean back
+ * with the camera. Billboards in front still hold the strips back
+ * (fwr_strips); map models in front of the follower do not. */
+static const FwrStack fwr_stack={0,1024,8*4096,14*4096};
+/* FWSD: the last 64-pixel draw. +8 draws split, +12 why the last one did
+ * not (0 split; 1 not 64-pixel mode or flipped; 2 no scene or material; 3
+ * material shared with a visible actor; 4 size; 5 strips refused the
+ * camera), +16 bit per strip held back by a billboard in front, +20 sprites
+ * that could hold it, then each strip's sx: its pull is (1 - sx / body sx)
+ * of the eye distance. Strip 0 is the top. */
+__attribute__((visibility("default"))) volatile struct {
+ uint32_t magic,version,splits,reason,limited,others;int32_t sx[8];
+} FollowingStripDebug={.magic=0x44535746,.version=1};
 _Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
 static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
 static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){
  upper.live=0;
+ (void)p;
+ FollowingStripDebug.reason=1;
  if(a->descriptor[7]!=2||(b->flags&0x0800u))return 0; /* 64-pixel mode, not flipped vertically. */
+ FollowingStripDebug.reason=2;
  Scene *scene=PTR(system,4);unsigned mat=b->geom&0x3fffu;
  if(!scene||!scene->materials||!scene->actors||mat>=scene->materialCount)return 0;
  Material *m=&scene->materials[mat];
+ FollowingStripDebug.reason=4;
  if(m->fw!=64||m->fh!=64||!m->cols||b->sy<=0||(b->sy&63)||b->sx<=0)return 0;
- /* A visible NPC on the same material would lose its upper rows. */
- for(unsigned i=0;i<scene->actorCount;++i){
-  const Billboard *o=&scene->actors[i];
-  if(o!=b&&(o->geom&0x3fffu)==mat&&(o->flags&512))return 0;
- }
  /* The quad is 2*scale*sy tall and scale*sx either side of its feet. */
  int64_t scale=scene->scale.x;
  if(scale<=0)return 0;
  int64_t height=(2*scale*b->sy)>>12,half=(scale*b->sx)>>12;
  if(height<=0||height>4*(int64_t)FW_TILE||half<=0||half>4*(int64_t)FW_TILE)return 0;
- FwrBody them,*player=0;
- if(p&&p!=b&&p->sx>0&&p->sy>0){
-  them=(FwrBody){p->position,(int32_t)((scale*p->sx)>>12),(int32_t)((2*scale*p->sy)>>12)};
-  player=&them;
+ /* Visible camera-facing billboards within three tiles: the player and the
+  * NPCs a strip must not be drawn over. A visible one on the follower's
+  * material would lose its upper rows, so that draws whole. */
+ FwrBody others[FWR_OTHERS_MAX];unsigned otherCount=0;
+ FollowingStripDebug.reason=3;
+ for(unsigned i=0;i<scene->actorCount;++i){
+  const Billboard *o=&scene->actors[i];
+  if(o==b||!(o->flags&512)||(o->geom&0x3fffu)==0x3fffu)continue;
+  if((o->geom&0x3fffu)==mat)return 0;
+  if((o->geom>>14)!=0||o->sx<=0||o->sy<=0||otherCount>=FWR_OTHERS_MAX)continue;
+  int64_t dx=(int64_t)o->position.x-b->position.x,dz=(int64_t)o->position.z-b->position.z;
+  if(dx>3*(int64_t)FW_TILE||dx<-3*(int64_t)FW_TILE||dz>3*(int64_t)FW_TILE||dz<-3*(int64_t)FW_TILE)continue;
+  FwrBody *near=&others[otherCount++];
+  near->feet=o->position;near->half=(int32_t)((scale*o->sx)>>12);near->height=(int32_t)((2*scale*o->sy)>>12);
  }
  FwrPose body={b->position,b->sx,b->sy};
  int32_t row=(int32_t)height/64;
@@ -197,8 +216,12 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
   * __aeabi_uidiv import; a sheet row holds one or two faces. */
  unsigned sheetRow=0,col=b->frame;
  while(col>=m->cols){col-=m->cols;++sheetRow;}
- FwrPose out[FWR_STRIPS];
- if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,0,FWR_LEAN,stripSy,player,out))return 0;
+ FwrPose out[FWR_STRIPS];uint16_t limited=0;
+ FollowingStripDebug.reason=5;
+ if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&fwr_stack,stripSy,others,otherCount,out,&limited))return 0;
+ FollowingStripDebug.reason=0;++FollowingStripDebug.splits;
+ FollowingStripDebug.limited=limited;FollowingStripDebug.others=otherCount;
+ for(unsigned i=0;i<FWR_STRIPS;++i)FollowingStripDebug.sx[i]=out[i].sx;
  /* Strip i shows rows 8i..8i+7 from the top of the frame; the native base
   * keeps the last 8. */
  for(unsigned i=0;i<FWR_STRIPS;++i){

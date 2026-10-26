@@ -262,29 +262,43 @@ static int large_barred(void){
 }
 /* A 64-pixel body is 56 world units tall. A walkable layer over its feet
  * lower than that (a bridge, an upper walkway) has the sprite coming up
- * through it. Layers within a tile and a half are stairs and ledges. One
- * terrain query per trail tile and height. */
+ * through it. Layers within a tile and a half are stairs and ledges. The
+ * trail point is probed, and a tile either way along the line toward the
+ * player, so the follower goes into its ball a tile before it walks under
+ * and comes out a tile after. Three terrain queries per trail tile. */
 #define FW_FLOOR_LOW (FW_TILE+FW_TILE/2)
 #define FW_LARGE_TALL (3*FW_TILE+FW_TILE/2)
 #define FW_COVER_CLEAR 20u
-static struct { int32_t x,z,y; uint8_t valid,covered; } fwfield_cover;
+static struct { int32_t x,z,y,sx,sz; uint8_t valid,covered; } fwfield_cover;
 static uint8_t fwfield_held,fwfield_heldClear;
-static int under_floor(Actor *a,const FwSample *t){
- int32_t tx=fw_tile(t->x),tz=fw_tile(t->z);
- if(fwfield_cover.valid&&fwfield_cover.x==tx&&fwfield_cover.z==tz&&fwfield_cover.y==t->y)return fwfield_cover.covered;
+static int floor_over(void *mapper,int32_t x,int32_t y,int32_t z){
  /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height, then
   * the u16 layer count. */
  uint32_t terrain[65];
- Vec at={t->x,t->y,t->z};int covered=0;
- void *mapper=CALL(0x02166fe5,void*(*)(void*))(a->system);
- if(mapper&&CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain)){
-  unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
-  for(unsigned i=0;i<layers&&!covered;++i){
-   uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-t->y;
-   if(type!=UINT32_MAX&&(type&0xffffu)!=0xffu&&above>FW_FLOOR_LOW&&above<FW_LARGE_TALL)covered=1;
-  }
+ Vec at={x,y,z};
+ if(!CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain))return 0;
+ unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
+ for(unsigned i=0;i<layers;++i){
+  uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-y;
+  if(type!=UINT32_MAX&&(type&0xffffu)!=0xffu&&above>FW_FLOOR_LOW&&above<FW_LARGE_TALL)return 1;
  }
- fwfield_cover.x=tx;fwfield_cover.z=tz;fwfield_cover.y=t->y;fwfield_cover.valid=1;fwfield_cover.covered=(uint8_t)covered;
+ return 0;
+}
+static int under_floor(Actor *a,const FwSample *t){
+ int32_t tx=fw_tile(t->x),tz=fw_tile(t->z),sx=0,sz=0;
+ if(fwfield_player){
+  int64_t dx=(int64_t)fwfield_player->world.x-t->x,dz=(int64_t)fwfield_player->world.z-t->z;
+  int64_t ax=dx<0?-dx:dx,az=dz<0?-dz:dz;
+  if(ax>=az&&dx)sx=dx>0?(int32_t)FW_TILE:-(int32_t)FW_TILE;
+  else if(dz)sz=dz>0?(int32_t)FW_TILE:-(int32_t)FW_TILE;
+ }
+ if(fwfield_cover.valid&&fwfield_cover.x==tx&&fwfield_cover.z==tz&&fwfield_cover.y==t->y&&
+    fwfield_cover.sx==sx&&fwfield_cover.sz==sz)return fwfield_cover.covered;
+ void *mapper=CALL(0x02166fe5,void*(*)(void*))(a->system);
+ int covered=mapper&&(floor_over(mapper,t->x,t->y,t->z)||
+  ((sx||sz)&&(floor_over(mapper,t->x+sx,t->y,t->z+sz)||floor_over(mapper,t->x-sx,t->y,t->z-sz))));
+ fwfield_cover.x=tx;fwfield_cover.z=tz;fwfield_cover.y=t->y;fwfield_cover.sx=sx;fwfield_cover.sz=sz;
+ fwfield_cover.valid=1;fwfield_cover.covered=(uint8_t)covered;
  return covered;
 }
 /* 1 while a 64-pixel follower stays in its ball: barred here, or under a

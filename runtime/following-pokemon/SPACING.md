@@ -137,8 +137,10 @@ cave that keeps it in.
   out at the next exterior; a small one chosen inside stays until switched.
 - Outdoors, a walkable layer 1.5–3.5 tiles above the follower's feet (a bridge
   or upper walkway its 56-unit sprite would come through) also keeps it in its
-  ball, until the trail has been clear for 20 updates. One terrain query per
-  trail tile and height (`FieldG3DMapper_GetTerrainAll`).
+  ball, until the trail has been clear for 20 updates. The trail point is
+  probed and so is a tile either way along the line toward the player, so it
+  goes in a tile before it walks under and comes out a tile after. Three
+  terrain queries per trail tile and height (`FieldG3DMapper_GetTerrainAll`).
 
 32-pixel followers are not affected.
 

@@ -578,10 +578,14 @@ static int scaled_hits(int32_t a0,int32_t a1,int64_t fa,int32_t b0,int32_t b1,in
  return (int64_t)a0*fb<=(int64_t)b1*fa&&(int64_t)b0*fa<=(int64_t)a1*fb;
 }
 int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
-               unsigned count,int32_t safe,int32_t lean,int32_t strip_sy,const FwrBody *player,FwrPose *out){
- if(!body||!camera||!out||!count||count>16)return 0;
+               unsigned count,const FwrStack *stack,int32_t strip_sy,const FwrBody *others,unsigned other_count,
+               FwrPose *out,uint16_t *limited){
+ if(!body||!camera||!stack||!out||!count||count>16||other_count>FWR_OTHERS_MAX||(other_count&&!others))return 0;
+ int32_t safe=stack->safe,lean=stack->lean,ahead=stack->forward,ramp=stack->ramp;
  if(camera->projection>2||body->sx<=0||body->sx>32767||strip_sy<=0||strip_sy>32767||half<=0||
-    strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0||lean<0||lean>4096)return 0;
+    strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0||safe<0||lean<0||lean>4096||
+    ahead<0||ahead>2*(int32_t)FW_TILE||ramp<=0||ramp>4*(int32_t)FW_TILE)return 0;
+ if(limited)*limited=0;
  /* Camera basis once per body: the head-attachment basis, without
   * renormalizing `up`, which is the cross of two unit vectors. */
  FwPoint view,ray;
@@ -600,34 +604,38 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
   * direction is negative: -sin(pitch). */
  FwPoint toward={divide((int64_t)view.x*4096,(int32_t)flat),0,divide((int64_t)view.z*4096,(int32_t)flat)};
  int32_t upToward=dot(up,toward),eyeToward=dot(ray,toward);
- /* Screen rectangles, as camera-plane spans over forward distance. */
- int64_t mineF=ortho?1:distance,theirF=1;
+ /* Screen rectangles, as camera-plane spans over forward distance. Every
+  * strip shares the body's columns and forward distance. */
+ int64_t mineF=ortho?1:distance;
  int32_t mineX=-dot(ray,right),mineY=-dot(ray,up);
- int overlapX=0,gap=0;int32_t theirY0=0,theirY1=0;
- if(player&&player->half>0&&player->height>0){
+ struct { int64_t f; int32_t y0,y1,gap; } near[FWR_OTHERS_MAX];
+ unsigned nears=0;
+ for(unsigned k=0;k<other_count;++k){
+  const FwrBody *o=&others[k];
   FwPoint them,relative;
-  if(delta(player->feet,camera->eye,&them,1<<27)&&delta(player->feet,body->position,&relative,8*(int32_t)FW_TILE)){
-   int32_t forward=-dot(them,view);
-   if(forward>=4*(int32_t)FW_TILE){
-    theirF=ortho?1:forward;
-    int32_t x=dot(them,right),y=dot(them,up);
-    overlapX=scaled_hits(mineX-half,mineX+half,mineF,x-player->half,x+player->half,theirF);
-    theirY0=y;theirY1=y+player->height;gap=dot(relative,view);
-   }
-  }
+  if(o->half<=0||o->height<=0||!delta(o->feet,camera->eye,&them,1<<27)||
+     !delta(o->feet,body->position,&relative,8*(int32_t)FW_TILE))continue;
+  int32_t forward=-dot(them,view),gap=dot(relative,view);
+  /* Clearly behind the follower: drawing over it is right. */
+  if(forward<4*(int32_t)FW_TILE||gap<-FWR_CLEAR_FRONT)continue;
+  int64_t f=ortho?1:forward;
+  int32_t x=dot(them,right),y=dot(them,up);
+  if(!scaled_hits(mineX-half,mineX+half,mineF,x-o->half,x+o->half,f))continue;
+  near[nears].f=f;near[nears].y0=y;near[nears].y1=y+o->height;near[nears].gap=gap;++nears;
  }
  for(unsigned i=0;i<count;++i){
   int32_t high=top-(int32_t)i*strip,low=high-strip;
   FwPoint junction={body->position.x+(int32_t)((int64_t)up.x*low/4096),
    body->position.y+(int32_t)((int64_t)up.y*low/4096),body->position.z+(int32_t)((int64_t)up.z*low/4096)};
   /* A camera-facing quad leans back by its height. Each strip comes
-   * forward along its eye ray until its top edge stands `lean` per unit of
-   * height past `safe` in front of the hinge, measured along the ground:
-   * with `lean` 0 the tops stand upright over it. The top gains `dh` ground
-   * units; moving a fraction k of the way to the eye gains k times its
-   * ground distance to the eye, and pulls the strip k * distance in depth. */
+   * forward along its eye ray until its top edge stands, measured along
+   * the ground, `forward` (ramped in over `ramp` of height) plus `lean` per
+   * unit of height past `safe` in front of the hinge. The top gains `dh`
+   * ground units; moving a fraction k of the way to the eye gains k times
+   * its ground distance to the eye, and pulls the strip k * distance. */
   int32_t pull=0;int64_t q=0;
-  int32_t dh=high>safe?(int32_t)((int64_t)(high-safe)*(lean-upToward)/4096):0;
+  int32_t past=high-safe;
+  int32_t dh=past>0?(int32_t)((int64_t)past*(lean-upToward)/4096)+divide((int64_t)ahead*(past<ramp?past:ramp),ramp):0;
   if(dh>0){
    if(ortho)pull=divide((int64_t)dh*4096,(int32_t)flat);
    else{
@@ -639,11 +647,12 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
    }
   }
   int32_t limit=FWR_SPLIT_CAP;
-  /* Where the strip covers the player on screen it stays a unit behind
-   * them. Level with them it does not move. Clearly in front, it is free. */
-  if(pull>0&&overlapX&&scaled_hits(mineY+low,mineY+high,mineF,theirY0,theirY1,theirF)){
-   int32_t allowed=gap>FWR_SORT_BEHIND?gap-FWR_SORT_BEHIND:gap<-FWR_CLEAR_FRONT?FWR_SPLIT_CAP:0;
-   if(allowed<limit)limit=allowed;
+  /* A sprite this strip covers on screen keeps it a unit behind them. One
+   * level with the follower holds it still. */
+  for(unsigned k=0;k<nears&&pull>0;++k){
+   if(!scaled_hits(mineY+low,mineY+high,mineF,near[k].y0,near[k].y1,near[k].f))continue;
+   int32_t allowed=near[k].gap>FWR_SORT_BEHIND?near[k].gap-FWR_SORT_BEHIND:0;
+   if(allowed<limit){limit=allowed;if(limited&&pull>allowed)*limited|=(uint16_t)(1u<<i);}
   }
   if(pull>limit){pull=limit;if(!ortho)q=pull>0?divide((int64_t)pull<<16,distance):0;}
   FwrPose *o=&out[i];
