@@ -158,9 +158,12 @@ _Static_assert(sizeof(Scene)==60,"billboard scene ABI");
 #define FWR_STRIP_ROWS 8u
 #define FWR_STRIPS 6u
 #define FWR_BASE_ROWS (64u-FWR_STRIPS*FWR_STRIP_ROWS)
-/* Rows above 3/8 of the quad come forward: below the 4/8 an NPC-sized quad
- * reaches, because a large sprite fills the top rows NPC art leaves empty. */
-#define FWR_SAFE_EIGHTHS 3
+/* The hinge: above the native base (2/8 of the quad) the strips stand
+ * upright along world Y, so only those 16 rows lean back with the camera.
+ * A large sprite fills the top rows NPC art leaves empty, and an NPC-sized
+ * lean (4/8) still reached buildings. */
+#define FWR_SAFE_EIGHTHS 2
+_Static_assert(FWR_SAFE_EIGHTHS*8==FWR_BASE_ROWS,"hinge on the native base");
 _Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
 static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
 static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){

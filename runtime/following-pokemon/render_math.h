@@ -147,7 +147,9 @@ int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
 /* A camera-facing quad seen from `camera`: feet, world half-width and world
  * height (2 * scene scale * sy; the field actor scene is 7.0). */
 typedef struct { FwPoint feet; int32_t half,height; } FwrBody;
-#define FWR_SPLIT_CAP (2 * FW_TILE)
+/* An upright top row of a 56-unit body is about 40 units forward at a 44°
+ * camera. Past this a steep camera's top rows lean back again. */
+#define FWR_SPLIT_CAP (3 * FW_TILE)
 /* Horizontal strips of a tall body for their own submit. `body` is the
  * submitted camera-facing quad (foot anchor), `half` its world half-width.
  * Strip i spans top - (i+1)*strip .. top - i*strip world units up the camera

@@ -727,7 +727,7 @@ class Rendering(unittest.TestCase):
      n=[eye[i]-feet[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
      cam=Camera(Point(*eye),Point(*feet),projection);ortho=projection==2
      body=Pose(Point(*feet),16384,16384)
-     height=2*scale*body.sy;half=scale*body.sx;row=height//64;safe=height*3//8
+     height=2*scale*body.sy;half=scale*body.sx;row=height//64;safe=height*2//8
      pulls=[];outs=(Pose*6)()
      self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,6,safe,body.sy//8,None,outs),1,(projection,yaw,pitch))
      for i in range(6):
@@ -740,7 +740,7 @@ class Rendering(unittest.TestCase):
        self.assertLess(abs(a[1]-b[1]),span/64,(projection,yaw,pitch,i,want,got))
       # Toward the eye by (top - safe) * tan(pitch), capped at two tiles.
       pull=depth([out.position.x-feet[0],out.position.y-feet[1],out.position.z-feet[2]],n)
-      expected=min(max(0,top-safe)*math.tan(p),2*16*4096)
+      expected=min(max(0,top-safe)*math.tan(p),3*16*4096)
       self.assertLess(abs(pull-expected),4096,(projection,yaw,pitch,i,pull,expected))
       pulls.append(pull)
      # Higher strips never come forward less (capped ones tie to rounding).
@@ -749,7 +749,7 @@ class Rendering(unittest.TestCase):
   # (a close swap pose), then level beside, then clearly behind the follower.
   eye=(2195456,1302017,47460865);target=(2195456,689441,46825472)
   cam=Camera(Point(*eye),Point(*target),0);n=[eye[i]-target[i] for i in range(3)];length=math.sqrt(dot(n,n));n=[v/length for v in n]
-  feet=target;body=Pose(Point(*feet),16384,16384);height=7*2*16384;half=7*16384;row=height//64;safe=height*3//8
+  feet=target;body=Pose(Point(*feet),16384,16384);height=7*2*16384;half=7*16384;row=height//64;safe=height*2//8
   def strip(player,i):
    outs=(Pose*6)()
    self.assertEqual(self.lib.fwr_strips(c.byref(body),c.byref(cam),half,height,8*row,6,safe,2048,c.byref(player) if player else None,outs),1)
