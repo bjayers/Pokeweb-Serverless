@@ -49,10 +49,14 @@ An HGSS Easter egg, 32-pixel followers only. Walk down any number of tiles,
 step one tile left or right, then turn to face down without moving. The
 follower is still above the corner tile by its gap; it takes the rest of the
 step onto the corner, two units an update, and stands beside the player
-facing down. `fw_trail_side_corner` reads that sequence from the trail. When
+facing down. `fw_trail_side_corner` reads that sequence from the facings
+the trail recorded, so a rail works the same way in its line frame: down is
+-side (1), assumed for every rail so far, and the sideways step is one knot
+along +/-front (2/3), half a tile to a tile and a half. A grid step must be
+exactly one tile. When
 the player moves again the follower holds until the trail pose has come down
 through the corner, so it never steps back up. Any other facing or path, a
-swap or ease in progress, rails, the ball, a 64-pixel follower, an effect, or
+swap or ease in progress, the ball, a 64-pixel follower, an effect, or
 an NPC on the corner leave the ordinary pose.
 
 Turn toward it to talk as usual. The talk corridor is read from the player

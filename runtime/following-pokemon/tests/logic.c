@@ -441,13 +441,14 @@ static void large_gap(void) {
 }
 /* Walk a path of (dx, dz) tile steps in two-unit samples from (x, z). */
 static FwSample walked;
+static unsigned walkFace = 4;
 static void walk(FwTrail *t, int32_t *x, int32_t *z, int dx, int dz, unsigned tiles) {
     const uint8_t gaps[4] = {12, 12, 12, 12};
     FwSample pose = walked;
     for (unsigned i = 0; i < tiles * 8; ++i) {
         *x += dx * 2 * 4096; *z += dz * 2 * 4096;
         FwSample s = sample(*x, 0, *z, 1, FW_WORLD);
-        s.direction = (uint8_t)(dz > 0 ? 1 : dz < 0 ? 0 : dx < 0 ? 2 : 3);
+        s.direction = (uint8_t)(walkFace < 4 ? walkFace : dz > 0 ? 1 : dz < 0 ? 0 : dx < 0 ? 2 : 3);
         if (fw_trail_push_directional(t, &s, &pose, gaps) == 1) walked = pose;
     }
 }
@@ -457,31 +458,48 @@ static void side_corner(void) {
     /* Down two tiles, then right one: the corner is the tile beside. */
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 0, 1, 2); walk(&t, &x, &z, 1, 0, 1);
-    assert(fw_trail_side_corner(&t, &c) && c.x == start && c.z == start + 2 * (int32_t)FW_TILE);
+    assert(fw_trail_side_corner(&t, 0, &c) && c.x == start && c.z == start + 2 * (int32_t)FW_TILE);
     /* The follower stands above the corner by its gap, on the leg. */
     assert(walked.x == c.x && walked.z < c.z && c.z - walked.z <= (int32_t)FW_TILE);
     /* Down one, then left one. */
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 0, 1, 1); walk(&t, &x, &z, -1, 0, 1);
-    assert(fw_trail_side_corner(&t, &c) && c.x == start && c.z == start + (int32_t)FW_TILE);
+    assert(fw_trail_side_corner(&t, 0, &c) && c.x == start && c.z == start + (int32_t)FW_TILE);
     /* Two tiles sideways, up then sideways, sideways then down, and only
      * down are not the stand. */
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 0, 1, 2); walk(&t, &x, &z, 1, 0, 2);
-    assert(!fw_trail_side_corner(&t, &c));
+    assert(!fw_trail_side_corner(&t, 0, &c));
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 0, -1, 2); walk(&t, &x, &z, 1, 0, 1);
-    assert(!fw_trail_side_corner(&t, &c));
+    assert(!fw_trail_side_corner(&t, 0, &c));
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 1, 0, 2); walk(&t, &x, &z, 0, 1, 1);
-    assert(!fw_trail_side_corner(&t, &c));
+    assert(!fw_trail_side_corner(&t, 0, &c));
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 0, 1, 3);
-    assert(!fw_trail_side_corner(&t, &c));
+    assert(!fw_trail_side_corner(&t, 0, &c));
     /* Moving on after the stand is not the stand any more. */
     fw_trail_clear(&t); x = z = start;
     walk(&t, &x, &z, 0, 1, 2); walk(&t, &x, &z, 1, 0, 1); walk(&t, &x, &z, 0, 1, 1);
-    assert(!fw_trail_side_corner(&t, &c));
+    assert(!fw_trail_side_corner(&t, 0, &c));
+    /* A rail line slanted on screen: -side (1) runs one way, one knot along
+     * +front (2) the other. Two units on each axis a sample, so a knot is
+     * about 23 units. The grid rule refuses it; the rail rule finds it. */
+    fw_trail_clear(&t); x = z = start;
+    walkFace = 1; walk(&t, &x, &z, 1, 1, 2);
+    int32_t cx = x, cz = z;
+    walkFace = 2; walk(&t, &x, &z, 1, -1, 1);
+    assert(!fw_trail_side_corner(&t, 0, &c));
+    assert(fw_trail_side_corner(&t, 1, &c) && c.x == cx && c.z == cz);
+    /* Two knots along the line, or +side (0) first, are not the stand. */
+    walk(&t, &x, &z, 1, -1, 1);
+    assert(!fw_trail_side_corner(&t, 1, &c));
+    fw_trail_clear(&t); x = z = start;
+    walkFace = 0; walk(&t, &x, &z, 1, 1, 2);
+    walkFace = 2; walk(&t, &x, &z, 1, -1, 1);
+    assert(!fw_trail_side_corner(&t, 1, &c));
+    walkFace = 4;
 }
 /* The resting ball walks the gap down to the tile behind the player and back
  * out, re-summing the trail on each change, while the player walks. */

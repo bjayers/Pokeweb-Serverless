@@ -475,7 +475,7 @@ static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  Vec vacated={origin.x,origin.y,origin.z};
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
  clear_ease();
- swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.player=*player;swapOn.savedFace=a->face;
+ beside.active=0;swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.player=*player;swapOn.savedFace=a->face;
  FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
  return drive_swap(a,sample,player);
 }
@@ -495,42 +495,56 @@ static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  Vec vacated={origin.x,origin.y,origin.z};
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
  clear_ease();
- swapOn.active=1;swapOn.departed=0;swapOn.follower=follower;swapOn.origin=origin;swapOn.savedFace=a->face;
+ beside.active=0;swapOn.active=1;swapOn.departed=0;swapOn.follower=follower;swapOn.origin=origin;swapOn.savedFace=a->face;
  FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
  return drive_swap(a,sample,player);
 }
 /* An Easter egg from HGSS, 32-pixel followers only. Walk down, step one
  * tile left or right, then turn to face down in place: the follower, still
- * on the tile above the corner by its gap, takes the rest of the step onto
- * the corner and stands beside the player facing down. Two units an update,
- * the walking pace. Any other facing, a moving player, a swap, an ease, a
- * rail, the ball, a large follower or an NPC on the corner leave it as is. */
+ * behind the corner by its gap, takes the rest of the step onto the corner
+ * and stands beside the player facing down. On a rail, down is -side and the
+ * sideways step is one knot along +/-front. Two units an update on each
+ * axis, the walking pace. Any other facing, a moving player, a swap, an
+ * ease, the ball, a large follower or an NPC on the corner leave it as is. */
+static uint32_t corner_span(int32_t x,int32_t z,const FwPoint *c){
+ uint32_t dx=x>c->x?(uint32_t)x-(uint32_t)c->x:(uint32_t)c->x-(uint32_t)x;
+ uint32_t dz=z>c->z?(uint32_t)z-(uint32_t)c->z:(uint32_t)c->z-(uint32_t)z;
+ return dx>dz?dx:dz;
+}
+static int32_t toward(int32_t from,int32_t to){
+ int64_t d=(int64_t)to-from;
+ if(d>2*4096)d=2*4096;else if(d<-2*4096)d=-2*4096;
+ return (int32_t)(from+d);
+}
 static int beside_step(Actor *a){
+ int rail=on_rail();
  if(large_actor(a)||fwfield_follower.state!=FW_FOLLOWING||(a->flags&HIDDEN)||
-    swapOn.active||ease.active||fwfx_busy()||on_rail()||fwfield_player->face!=1u||
-    !centered(&fwfield_player->world))return 0;
+    swapOn.active||ease.active||fwfx_busy()||fwfield_player->face!=1u||
+    (!rail&&!centered(&fwfield_player->world)))return 0;
+ const FwTrail *t=&fwfield_follower.trail;
+ if(!t->count)return 0;
+ /* The player stands on the newest sample: turned in place, not moving. */
+ const FwSample *p=&t->samples[(t->head+t->count-1u)%FW_TRAIL_CAPACITY];
+ if(p->x!=fwfield_player->world.x||p->z!=fwfield_player->world.z)return 0;
  FwPoint c;
- if(!fw_trail_side_corner(&fwfield_follower.trail,&c))return 0;
- int64_t side=(int64_t)fwfield_player->world.x-c.x;
- if(fwfield_player->world.z!=c.z||(side!=(int64_t)FW_TILE&&side!=-(int64_t)FW_TILE))return 0;
- if(a->world.x!=c.x||a->world.z>c.z||(int64_t)c.z-a->world.z>(int64_t)FW_TILE)return 0;
- if(a->world.z==c.z){beside.active=1;beside.at=c;return 0;}
+ if(!fw_trail_side_corner(t,rail,&c))return 0;
+ if(corner_span(a->world.x,a->world.z,&c)>FW_TILE)return 0;
+ if(!rail&&(a->world.x!=c.x||a->world.z>c.z))return 0;
+ if(a->world.x==c.x&&a->world.z==c.z){beside.active=1;beside.at=c;return 0;}
  Vec corner={c.x,c.y,c.z};
  if(!fws_step_clear(a,&corner))return 0;
- int32_t z=a->world.z+2*4096;if(z>c.z)z=c.z;
- bind_pose(a,c.x,z==c.z?c.y:a->world.y,z,1);
+ int32_t x=toward(a->world.x,c.x),z=toward(a->world.z,c.z);
+ bind_pose(a,x,x==c.x&&z==c.z?c.y:a->world.y,z,1);
  beside.active=1;beside.at=c;return 1;
 }
-/* Once the player moves on, the trail pose starts above the corner and
- * walks down through it. Hold the follower until it does, so there is no
- * step back up. */
+/* Once the player moves on, the trail pose starts behind the corner and
+ * walks through it. Hold the follower where it stands, on the corner or part
+ * way to it, until the trail pose comes as close to the corner as it is, so
+ * there is no step back. Then the hold ends for good. */
 static void beside_hold(const Actor *a,FwSample *target){
  if(!beside.active)return;
- /* Hold where it stands, on the corner or part way down to it, while the
-  * trail pose is still above it on that leg. A swap, reset or new trail
-  * moved it off the leg and ends the hold. */
- if(a->world.x==beside.at.x&&a->world.z<=beside.at.z&&(int64_t)beside.at.z-a->world.z<=(int64_t)FW_TILE&&
-    target->x==beside.at.x&&target->z<a->world.z){target->x=a->world.x;target->y=a->world.y;target->z=a->world.z;return;}
+ uint32_t held=corner_span(a->world.x,a->world.z,&beside.at),trail=corner_span(target->x,target->z,&beside.at);
+ if(held<=FW_TILE&&trail>held&&trail<=FW_TILE+FW_TILE/2){target->x=a->world.x;target->y=a->world.y;target->z=a->world.z;return;}
  beside.active=0;
 }
 static void move(Actor *a) {

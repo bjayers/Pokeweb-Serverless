@@ -83,9 +83,9 @@ int fw_trail_push(FwTrail *trail, const FwSample *sample, FwSample *follower, un
 int fw_trail_push_directional(FwTrail *trail, const FwSample *sample, FwSample *follower, const uint8_t gaps[4]);
 /* Re-sum the trail distance under new gaps. */
 void fw_trail_remeasure(FwTrail *trail, const uint8_t gaps[4]);
-/* 1 and the corner when the trail's newest steps are down onto a tile, then
- * one tile sideways: the HGSS side-by-side stand. */
-int fw_trail_side_corner(const FwTrail *trail, FwPoint *corner);
+/* 1 and the corner when the trail's newest steps face down (-side on a
+ * rail) onto a corner, then one step sideways: the HGSS side-by-side stand. */
+int fw_trail_side_corner(const FwTrail *trail, int rail, FwPoint *corner);
 /* Add a connection delta to every live sample. Distances stay valid.
  * Returns 0 and clears the trail if any coordinate would overflow. */
 int fw_trail_translate(FwTrail *trail, int32_t dx, int32_t dy, int32_t dz);

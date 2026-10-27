@@ -156,29 +156,39 @@ int fw_trail_translate(FwTrail *t, int32_t dx, int32_t dy, int32_t dz) {
     }
     return 1;
 }
-/* The HGSS side-by-side stand. Walking back from the newest sample (the
- * player's tile): exactly one tile sideways at the same z to the corner,
- * then straight above it, that is, the player came down onto the corner.
- * The vertical leg needs one sample; it is checked for one tile, or to the
- * trail's end, which a short gap trims to less. */
-int fw_trail_side_corner(const FwTrail *t, FwPoint *corner) {
+/* The HGSS side-by-side stand, read from the facings the trail recorded
+ * (the player's face: a world compass on a grid, the line frame on a rail).
+ * Walking back from the newest sample, the player's tile: one step facing 2
+ * or 3 (left/right, or +/-front) to the corner, the last sample facing 1
+ * (down, or -side). Behind the corner, samples facing 1 for one tile or to
+ * the trail's end, at least one of them away from it. A grid step is exactly
+ * one tile on one axis; a rail step is one knot, so half a tile to one and a
+ * half. */
+static uint32_t span(const FwSample *a, const FwSample *b) {
+    uint64_t x = abs_delta(a->x, b->x), z = abs_delta(a->z, b->z);
+    return isqrt(x * x + z * z);
+}
+int fw_trail_side_corner(const FwTrail *t, int rail, FwPoint *corner) {
     if (!t || !corner || t->count < 3) return 0;
     const FwSample *p = &t->samples[index_at(t, t->count - 1)], *c = 0;
+    if (p->direction != 2 && p->direction != 3) return 0;
     int i = (int)t->count - 2;
     for (; i >= 0; --i) {
         const FwSample *s = &t->samples[index_at(t, (unsigned)i)];
-        uint32_t dx = abs_delta(s->x, p->x);
-        if (s->z != p->z || dx > FW_TILE) return 0;
-        if (dx == FW_TILE) { c = s; break; }
+        if (s->direction == 1) { c = s; break; }
+        if (s->direction != p->direction) return 0;
     }
     if (!c) return 0;
-    int32_t last = c->z; int up = 0;
+    uint32_t dx = abs_delta(c->x, p->x), dz = abs_delta(c->z, p->z), side = span(c, p);
+    if (!rail && !((dx == FW_TILE && !dz) || (dz == FW_TILE && !dx))) return 0;
+    if (rail && (side < FW_TILE / 2 || side > FW_TILE + FW_TILE / 2)) return 0;
+    int up = 0;
     for (--i; i >= 0; --i) {
         const FwSample *s = &t->samples[index_at(t, (unsigned)i)];
-        if (s->x != c->x || s->z > last) return 0;
-        last = s->z;
-        if (s->z < c->z) up = 1;
-        if (abs_delta(c->z, s->z) >= FW_TILE) break;
+        uint32_t back = span(c, s);
+        if (back >= FW_TILE) { up = 1; break; }
+        if (s->direction != 1) return 0;
+        if (back) up = 1;
     }
     if (!up) return 0;
     corner->x = c->x; corner->y = c->y; corner->z = c->z;
