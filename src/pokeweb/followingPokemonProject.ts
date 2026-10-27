@@ -694,9 +694,10 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
   return { registry, registryBytes, descriptors: descriptors.save(), resources: resources.save(),
     config: encodeFollowerNativeConfig(registryBytes, registry.descriptorCount, registry.resourceCount) };
 }
-/* Core bridge ABI each profile's bundled package was built against. ABI 4
- * adds the resident summon token; the other profiles' packages predate it. */
-function followerCoreAbi(profile: FollowerProfile): number { return profile === "stock" ? 4 : 3; }
+/* Core bridge ABIs a bundled package may record. ABI 4 adds the resident
+ * summon token; packages built before it record 3. The field and core DLLs
+ * come from one publish and are both pinned by hash, so either is a pair. */
+const FOLLOWER_CORE_ABIS: readonly number[] = [3, 4];
 /* A receipt from a previous version whose field, events, core, Options and
  * battle modules were replaced by hand with exactly the bundled current build
  * (a local build installed outside Pokeweb). Every other owned file is still
@@ -990,7 +991,8 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
   const eventsDll = new Uint8Array(await eventsResponse.arrayBuffer());
   if (await followerRomSha256(eventsDll) !== fingerprint.eventsSha256 || (variant === "full" && fingerprint.eventsAbi !== binaryContractFor(profile).eventsAbi) || (variant === "base" && fingerprint.eventsAbi !== 4)) throw new Error("Follower event module fingerprint mismatch.");
   const coreDll = new Uint8Array(await coreResponse.arrayBuffer());
-  if (await followerRomSha256(coreDll) !== runtimeManifest.coreSha256 || runtimeManifest.coreAbi !== followerCoreAbi(profile)) throw new Error("Follower core module fingerprint mismatch.");
+  if (await followerRomSha256(coreDll) !== runtimeManifest.coreSha256) throw new Error("Follower core module fingerprint mismatch: the bundled core DLL is not the one runtime.json records.");
+  if (!FOLLOWER_CORE_ABIS.includes(runtimeManifest.coreAbi)) throw new Error(`Follower core module ABI ${runtimeManifest.coreAbi} is not supported.`);
   const optionsDll = new Uint8Array(await optionsResponse.arrayBuffer());
   const battleDll = new Uint8Array(await battleResponse.arrayBuffer());
   if (await followerRomSha256(battleDll) !== runtimeManifest.battleModuleSha256) throw new Error("Follower battle module fingerprint mismatch.");
