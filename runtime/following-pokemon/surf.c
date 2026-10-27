@@ -36,11 +36,6 @@ static struct {
  int8_t riderOffsets[8];
 } surf;
 
-__attribute__((visibility("default"))) volatile struct {
- uint32_t magic,version,loaded,active,captures,draws,frame,reason;
- uint32_t ordinarySuppressed,entrySuppressed,forwarded,lastSource,lastTick;
-} FollowingSurfDebug={.magic=0x46535746,.version=2};
-
 static uint16_t read16(const uint8_t *p){return p[0]|(uint16_t)p[1]<<8;}
 static uint32_t read32(const uint8_t *p){return read16(p)|(uint32_t)read16(p+2)<<16;}
 static int lookup_record(void *file,unsigned count,unsigned species,unsigned form,unsigned gender,unsigned shiny,unsigned members,uint16_t *base,uint16_t *frameSize){
@@ -95,7 +90,6 @@ static void release_resources(void){
   surf.resources[i]=0;
   surf.materials[i]=(SurfMaterial){0};
  }
- FollowingSurfDebug.loaded=0;
 }
 void fwsurf_destroy(void){
  release_resources();
@@ -106,7 +100,6 @@ void fwsurf_destroy(void){
  surf.lookupSpecies=surf.memberBase=surf.frameSize=0;
  surf.lookupForm=surf.lookupGender=surf.lookupShiny=0;
  for(unsigned i=0;i<8;++i)surf.riderOffsets[i]=0;
- FollowingSurfDebug.active=0;
 }
 static int load(void){
  if(surf.ready)return surf.ready>0;
@@ -124,9 +117,9 @@ static int load(void){
   if(!surf.materials[i].texKey||!surf.materials[i].plttKey)goto fail;
  }
  surf.uploadTick=surf.tick;
- surf.ready=1;FollowingSurfDebug.loaded=1;return 1;
+ surf.ready=1;return 1;
 fail:
- release_resources();surf.ready=-1;FollowingSurfDebug.reason=1;return 0;
+ release_resources();surf.ready=-1;return 0;
 }
 int fwsurf_prepare(ActorSystem *system,unsigned appearance,unsigned tick){
  if(!system||!system->field||!(appearance&1023u))return 0;
@@ -145,7 +138,7 @@ int fwsurf_prepare(ActorSystem *system,unsigned appearance,unsigned tick){
  if(surf.memberBase==0xffff||CALL(0x0203a2d5,uint32_t(*)(uint32_t))(system->resourceHeap)<49152u)return 0;
  surf.entryPending=1;surf.entryTick=tick;surf.tick=tick;
  if(!load()){surf.entryPending=0;return 0;}
- surf.active=0;surf.hasMount=0;FollowingSurfDebug.active=0;
+ surf.active=0;surf.hasMount=0;
  return 1;
 }
 void fwsurf_update(ActorSystem *system,unsigned appearance,unsigned surfing,unsigned tick){
@@ -175,12 +168,11 @@ void fwsurf_update(ActorSystem *system,unsigned appearance,unsigned surfing,unsi
  if(!surfing && (!surf.entryPending || tick-surf.entryTick>90u)){
   if(surf.ready)release_resources();
   surf.ready=surf.active=0;surf.hasMount=0;surf.entryPending=0;
-  FollowingSurfDebug.active=0;
   return;
  }
  surf.owner=system;surf.player=player;surf.tick=tick;
- surf.active=0;FollowingSurfDebug.active=0;
- if(!surf.ready&&CALL(0x0203a2d5,uint32_t(*)(uint32_t))(system->resourceHeap)<49152){FollowingSurfDebug.reason=2;return;}
+ surf.active=0;
+ if(!surf.ready&&CALL(0x0203a2d5,uint32_t(*)(uint32_t))(system->resourceHeap)<49152){return;}
  if(!load())return;
  if(!surf.hasMount
 #ifdef FW_MOUNT
@@ -195,7 +187,7 @@ void fwsurf_update(ActorSystem *system,unsigned appearance,unsigned surfing,unsi
   surf.captured=tick;
   surf.hasMount=2;
  }
- surf.active=1;FollowingSurfDebug.active=1;FollowingSurfDebug.reason=0;
+ surf.active=1;
 }
 
 static int capture_mount(void *control,unsigned index){
@@ -207,34 +199,28 @@ static int capture_mount(void *control,unsigned index){
  surf.mount=*(Vec*)(object+8);
  surf.captured=surf.tick;
  surf.hasMount=2;
- ++FollowingSurfDebug.captures;
  return 1;
 }
 
 /* The native mount can draw before the player-mode change is visible to the
  * preceding field update. Arm either audited Surf draw callsite on its first
  * validated mount object; load textures in the following field update. */
-static void draw_mount(void *control,unsigned index,unsigned source){
+static void draw_mount(void *control,unsigned index){
  if(surf.owner&&surf.lookupSpecies&&surf.memberBase!=0xffff&&surf.ready>=0&&capture_mount(control,index)){
   if(!surf.entryPending&&!surf.active)surf.entryTick=surf.tick;
   surf.entryPending=1;
-  if(surf.ready==1){surf.active=1;FollowingSurfDebug.active=1;}
-  if(source)++FollowingSurfDebug.entrySuppressed;
-  else ++FollowingSurfDebug.ordinarySuppressed;
-  FollowingSurfDebug.lastSource=source;
-  FollowingSurfDebug.lastTick=surf.tick;
+  if(surf.ready==1){surf.active=1;}
   return;
  }
- ++FollowingSurfDebug.forwarded;
  CALL(0x021c0309,void(*)(void*,unsigned))(control,index);
 }
 __attribute__((visibility("default"))) void FollowingSurfMountDraw(void *control,unsigned index){
- draw_mount(control,index,0);
+ draw_mount(control,index);
 }
 
 /* Keep a distinct symbol for the entry hook's audited binary contract. */
 __attribute__((visibility("default"))) void FollowingSurfEntryMountDraw(void *control,unsigned index){
- draw_mount(control,index,1);
+ draw_mount(control,index);
 }
 
 static SurfBillboard *rider_billboard(void *system){
@@ -301,7 +287,6 @@ void fwsurf_draw(void *system,void *camera,void *light,unsigned afterPlayer){
  }
  fwr_private_scene(&surf.scene,native,&surf.billboard,surf.materials,1,16);
  CALL(0x0204ebdd,void(*)(void*,void*,void*))(&surf.scene,camera,light);
- FollowingSurfDebug.frame=frame;++FollowingSurfDebug.draws;
 }
 
 void fwsurf_draw_scene(void *system,void *camera,void *light,Actor *follower,Actor *player,int sprite_y){

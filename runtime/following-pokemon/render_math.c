@@ -74,50 +74,6 @@ int fwr_head_position(const FwPoint *base,const FwrCamera *camera,int32_t height
   base->y+divide((int64_t)up.y*height,4096),base->z+divide((int64_t)up.z*height,4096)};
  return 1;
 }
-int32_t fwr_box_advance_limit(const FwrPose *body,const FwrCamera *camera,const FwPoint corners[8]){
- FwPoint view,right,up,ray,relative;
- int32_t minX=INT32_MAX,maxX=INT32_MIN,minY=INT32_MAX,maxY=INT32_MIN;
- int32_t minDepth=INT32_MAX,maxDepth=INT32_MIN;
- if(camera->projection>2||body->sx<=0||body->sy<=0||body->sx>32767||body->sy>32767||
-    !delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
- right=(FwPoint){view.z*4096,0,-view.x*4096};
- if(!axis(right,&right))return 0;
- up=(FwPoint){view.y*right.z,view.z*right.x-view.x*right.z,-view.y*right.x};
- if(!axis(up,&up)||!delta(camera->eye,body->position,&ray,1<<27))return 0;
- int32_t distance=dot(ray,view);
- if(distance<4*FW_TILE)return 0;
- for(unsigned i=0;i<8;++i){
-  if(!delta(corners[i],body->position,&relative,16*FW_TILE))return 2*FW_TILE;
-  int32_t depth=dot(relative,view),x=dot(relative,right),y=dot(relative,up);
-  if(camera->projection!=2){
-   if(distance-depth<4*FW_TILE)return 0;
-   x=divide((int64_t)x*distance,distance-depth);y=divide((int64_t)y*distance,distance-depth);
-  }
-  if(x<minX)minX=x;
-  if(x>maxX)maxX=x;
-  if(y<minY)minY=y;
-  if(y>maxY)maxY=y;
-  if(depth<minDepth)minDepth=depth;
-  if(depth>maxDepth)maxDepth=depth;
- }
- /* Native sprite geometry spans +/-8*sx and 0..16*sy from its foot anchor.
-  * Empty texture margins can only make this conservative overlap smaller. */
- if(minX>=body->sx*8||maxX<=-body->sx*8||minY>=body->sy*16||maxY<=0||maxDepth<=0)return 2*FW_TILE;
- /* A geometric tie gap can collapse to the same native 15-bit Z value at
-  * the field camera distance. Reserve the same four-unit clearance used
-  * for native NPCs; never advance a baseline with less room than that. */
- return minDepth>FWR_PROP_FOREGROUND_GAP?minDepth-FWR_PROP_FOREGROUND_GAP:0;
-}
-int fwr_cap_advance(const FwrPose *baseline,const FwrPose *adjusted,
-                    const FwrCamera *camera,int32_t limit,FwrPose *out){
- *out=*adjusted;FwPoint view,relative;
- if(limit<0||limit>2*FW_TILE||camera->projection>2||
-    !delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view)||
-    !delta(adjusted->position,baseline->position,&relative,8*FW_TILE))return 0;
- int32_t advance=dot(relative,view);
- if(advance<=limit)return 0;
- return shift_depth(adjusted,camera,view,limit-advance-16,out);
-}
 int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
                      const FwrCamera *camera,FwrPose *out){
  *out=*native;
@@ -194,69 +150,6 @@ int32_t fwr_view_gap(const FwPoint *point,const FwPoint *origin,const FwrCamera 
  if(!point||!origin||!view_axis(camera,&view)||!delta(*point,*origin,&relative,8*(int32_t)FW_TILE))return 0;
  return dot(relative,view);
 }
-/* Camera basis. `view` points toward the eye. `right` and `up` span the
- * camera plane, matching the head-attachment basis. */
-static int camera_plane(const FwrCamera *camera,FwPoint *view,FwPoint *right,FwPoint *up){
- FwPoint flat;
- if(!view_axis(camera,view))return 0;
- flat=(FwPoint){view->z,0,-view->x};
- flat.x*=4096;flat.z*=4096;
- if(!axis(flat,right))return 0;
- flat=(FwPoint){view->y*right->z,view->z*right->x-view->x*right->z,-view->y*right->x};
- return axis(flat,up);
-}
-/* Screen interval of one camera-facing quad, in 16.16. Orthographic values
- * stay in 20.12, which is the same comparison space for both sprites. */
-static int screen_span(const FwrPose *pose,const FwrCamera *camera,FwPoint view,FwPoint right,FwPoint up,
-                       int32_t *x0,int32_t *x1,int32_t *y0,int32_t *y1){
- FwPoint fromEye;
- if(!pose||pose->sx<=0||pose->sy<=0||pose->sx>32767||pose->sy>32767)return 0;
- if(!delta(pose->position,camera->eye,&fromEye,1<<27))return 0;
- int32_t forward=-dot(fromEye,view);
- if(forward<4*(int32_t)FW_TILE)return 0;
- int32_t rx=dot(fromEye,right),uy=dot(fromEye,up);
- int32_t half=pose->sx*8,tall=pose->sy*16;
- int32_t left=rx-half,rightEdge=rx+half,bottom=uy,top=uy+tall;
- if(camera->projection==2){*x0=left;*x1=rightEdge;*y0=bottom;*y1=top;return 1;}
- *x0=divide((int64_t)left<<16,forward);
- *x1=divide((int64_t)rightEdge<<16,forward);
- *y0=divide((int64_t)bottom<<16,forward);
- *y1=divide((int64_t)top<<16,forward);
- return 1;
-}
-static int span_hits(int32_t a0,int32_t a1,int32_t b0,int32_t b1){
- if(a0>a1){int32_t t=a0;a0=a1;a1=t;}
- if(b0>b1){int32_t t=b0;b0=b1;b1=t;}
- return a0<=b1&&b0<=a1;
-}
-int fwr_sprites_overlap(const FwrPose *a,const FwrPose *b,const FwrCamera *camera){
- FwPoint view,right,up;
- int32_t ax0,ax1,ay0,ay1,bx0,bx1,by0,by1;
- if(!a||!b||!camera||camera->projection>2)return 0;
- if(!camera_plane(camera,&view,&right,&up))return 0;
- if(!screen_span(a,camera,view,right,up,&ax0,&ax1,&ay0,&ay1))return 0;
- if(!screen_span(b,camera,view,right,up,&bx0,&bx1,&by0,&by1))return 0;
- return span_hits(ax0,ax1,bx0,bx1)&&span_hits(ay0,ay1,by0,by1);
-}
-int32_t fwr_follow_margin(const FwrCamera *camera,uint32_t ease_s,int32_t depth_rel,int overlap,int flat){
- int32_t margin=fwr_sort_margin(camera,ease_s);
- /* The ease already blends this gap. Stairs keep the height policy. An idle
-  * overlap that is not clearly in front needs the swap-sized gap: a corner
-  * step can sit a unit toward the camera after shadow clearance and still
-  * lose the Z test. */
- if(ease_s<65536u||!flat||!overlap||depth_rel>fwr_clear_front(camera))return margin;
- int32_t strong=fwr_sort_margin(camera,0);
- return strong>margin?strong:margin;
-}
-int fwr_follow_tuck(int policy,int32_t depth_rel,int32_t clear,int easing,int overlap,int flat){
- if(policy==-1)return 1;
- if(depth_rel>clear)return 0;
- if(easing&&policy==1)return 1;
- /* Idle overlap adds a tuck only when the follower is behind or tied. A
-  * front-ordered quad that is already nearer stays there, so the north
-  * foreground restore is not pulled back through the player. */
- return flat&&overlap&&depth_rel<=0&&policy!=-2;
-}
 int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
                     const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *out){
  *out=*follower;
@@ -271,26 +164,6 @@ int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
  int32_t change=target-current;
  if(change<-cap)change=-cap;
  return shift_depth(follower,camera,direction,change-16,out);
-}
-int32_t fwr_ground_back(const FwrPose *pose,const FwrCamera *camera,int32_t foot_y){
- if(!pose||!camera||camera->projection>2)return 0;
- if(pose->position.y<=foot_y)return 0;
- FwPoint view;
- if(!delta(camera->eye,camera->target,&view,1<<27)||!axis(view,&view))return 0;
- int32_t drop=pose->position.y-foot_y,limit;
- if(camera->projection==2){
-  if(view.y<=0)return 2*(int32_t)FW_TILE;
-  limit=divide((int64_t)drop<<12,view.y);
- }else{
-  FwPoint ray;
-  if(!delta(camera->eye,pose->position,&ray,1<<27)||ray.y<=0)return 2*(int32_t)FW_TILE;
-  int32_t distance=dot(ray,view);
-  if(distance<4*(int32_t)FW_TILE)return 0;
-  limit=divide((int64_t)drop*distance,ray.y);
- }
- if(limit<0)return 0;
- if(limit>2*(int32_t)FW_TILE)return 2*(int32_t)FW_TILE;
- return limit;
 }
 int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
                     const FwrCamera *camera,FwrPose *out){
@@ -374,10 +247,6 @@ int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
  *out=cursor;
  return moved;
 }
-int fwr_shadow_behind(const FwrPose *shadow,const FwPoint *sprite,
-                      const FwrCamera *camera,FwrPose *out){
- return fwr_shadow_tuck(shadow,sprite,camera,FWR_SHADOW_KEEP,out);
-}
 int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
                      const FwPoint *sprite,const FwrCamera *camera,int32_t keep,FwrPose *out){
  *out=*shadow;
@@ -390,10 +259,6 @@ int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
   * such as the 2-pixel North tuck (FWR_NORTH_ART_Y). This ensures wide sprites 
   * push the shadow back far enough to clear their geometry. */
  return fwr_shadow_tuck(shadow,sprite,camera,keep,out);
-}
-int fwr_shadow_on_feet(const FwrPose *shadow,const FwPoint *feet,
-                       const FwPoint *sprite,const FwrCamera *camera,FwrPose *out){
- return fwr_shadow_match(shadow,feet,sprite,camera,FWR_SHADOW_KEEP,out);
 }
 int fwr_oval_behind(const FwrPose *shadow,const FwrCamera *camera,FwrPose *out){
  if(!shadow||!camera||!out)return 0;
@@ -437,32 +302,6 @@ void fwr_private_scene(void *dst,const void *live,const void *actors,const void 
   * 3DS edge buffer draws as black lines. Stay off the live id. */
  d[36]=s[36]==1?2:1;
 }
-int fwr_world_apart(const FwPoint *follower,const FwPoint *player,unsigned face,
-                   int32_t step,FwPoint *out){
- if(!follower||!player||!out)return 0;
- *out=*follower;
- if(step<FWR_TIE_MARGIN||step>(int32_t)FW_TILE)return 0;
- int64_t dx=(int64_t)follower->x-player->x,dz=(int64_t)follower->z-player->z;
- if(dx>8*(int64_t)FW_TILE||dx<-8*(int64_t)FW_TILE||dz>8*(int64_t)FW_TILE||dz<-8*(int64_t)FW_TILE)return 0;
- uint64_t adx=dx<0?(uint64_t)-dx:(uint64_t)dx,adz=dz<0?(uint64_t)-dz:(uint64_t)dz;
- uint32_t horiz=isqrt(adx*adx+adz*adz);
- int32_t ox,oz;
- if(horiz<4096){
-  ox=oz=0;
-  if(face==0)oz=step;
-  else if(face==1)oz=-step;
-  else if(face==2)ox=step;
-  else if(face==3)ox=-step;
-  else return 0;
- }else{
-  ox=divide(dx*step,(int32_t)horiz);
-  oz=divide(dz*step,(int32_t)horiz);
- }
- int64_t x=(int64_t)follower->x+ox,z=(int64_t)follower->z+oz;
- if(x<INT32_MIN||x>INT32_MAX||z<INT32_MIN||z>INT32_MAX)return 0;
- out->x=(int32_t)x;out->y=follower->y;out->z=(int32_t)z;
- return 1;
-}
 int fwr_plane_keep(const FwPoint *feet,const FwrCamera *camera,int32_t viewKeep,FwPoint *out){
  if(!feet||!camera||!out)return 0;
  *out=*feet;
@@ -480,16 +319,6 @@ int fwr_plane_keep(const FwPoint *feet,const FwrCamera *camera,int32_t viewKeep,
  int64_t x=(int64_t)feet->x-mx,z=(int64_t)feet->z-mz;
  if(x<INT32_MIN||x>INT32_MAX||z<INT32_MIN||z>INT32_MAX)return 1;
  out->x=(int32_t)x;out->y=feet->y;out->z=(int32_t)z;
- return 1;
-}
-int fwr_shadow_on_plane(const FwrPose *shadow,const FwPoint *feet,
-                        const FwrCamera *camera,FwrPose *out){
- if(!shadow||!feet||!camera||!out)return 0;
- *out=*shadow;
- if(camera->projection>2||shadow->sx<=0||shadow->sy<=0||shadow->sx>32767||shadow->sy>32767)return 0;
- FwPoint planted;
- if(!fwr_plane_keep(feet,camera,FWR_PROP_FOREGROUND_GAP,&planted))return 0;
- out->position=planted;
  return 1;
 }
 int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
@@ -572,11 +401,6 @@ int fwr_correct(const FwPoint *world,const FwPoint *player_world,
  if(!delta(out->position,*player_draw,&relative,8*FW_TILE)){*out=*native;return 0;}
  result->after=dot(relative,direction);return 1;
 }
-/* 1 when [a0,a1]/fa and [b0,b1]/fb overlap. Forward distances are
- * positive, so cross-multiplying compares without a divide. */
-static int scaled_hits(int32_t a0,int32_t a1,int64_t fa,int32_t b0,int32_t b1,int64_t fb){
- return (int64_t)a0*fb<=(int64_t)b1*fa&&(int64_t)b0*fa<=(int64_t)a1*fb;
-}
 int fwr_basis(const FwrCamera *camera,FwrBasis *out){
  /* The head-attachment basis, without renormalizing `up`, which is the
   * cross of two unit vectors. */
@@ -621,42 +445,17 @@ static int band_pose(const FwrBasis *b,const FwrPose *body,int32_t distance,int3
  return o->sx>0&&o->sy>0;
 }
 int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
-               unsigned count,const FwrStack *stack,int32_t strip_sy,const FwrBody *others,unsigned other_count,
-               FwrPose *out,uint16_t *limited,int32_t *lift){
- if(!body||!camera||!stack||!out||!count||count>16||other_count>FWR_OTHERS_MAX||(other_count&&!others))return 0;
+               unsigned count,const FwrStack *stack,int32_t strip_sy,FwrPose *out){
+ if(!body||!camera||!stack||!out||!count||count>16)return 0;
  int32_t base=stack->base,ahead=stack->forward,rise=stack->rise,ramp=stack->ramp;
  if(camera->projection>2||body->sx<=0||body->sx>32767||strip_sy<=0||strip_sy>32767||half<=0||
     strip<=0||top>5*(int32_t)FW_TILE||top-(int64_t)strip*count<0||base<-5*(int32_t)FW_TILE||base>2*(int32_t)FW_TILE||
     ahead<0||ahead>2*(int32_t)FW_TILE||rise<0||rise>5*(int32_t)FW_TILE||ramp<=0||ramp>4*(int32_t)FW_TILE)return 0;
- if(limited)*limited=0;
- for(unsigned k=0;lift&&k<other_count;++k)lift[k]=0;
  FwrBasis b;FwPoint ray;
  if(!fwr_basis(camera,&b)||!delta(camera->eye,body->position,&ray,1<<27))return 0;
  int32_t distance=dot(ray,b.view);
  if(distance<4*(int32_t)FW_TILE)return 0;
  int32_t eyeToward=dot(ray,b.toward);
- /* Screen rectangles, as camera-plane spans over forward distance. Every
-  * strip shares the body's columns and forward distance. A sprite's bottom
-  * quarter is its feet band; with `lift` the rest is redrawn over the
-  * strips instead of holding them back. */
- int64_t mineF=b.ortho?1:distance;
- int32_t mineX=-dot(ray,b.right),mineY=-dot(ray,b.up);
- struct { int64_t f; int32_t y0,feet,y1,gap; uint8_t k; } near[FWR_OTHERS_MAX];
- unsigned nears=0;
- for(unsigned k=0;k<other_count;++k){
-  const FwrBody *o=&others[k];
-  FwPoint them,relative;
-  if(o->half<=0||o->height<=0||!delta(o->feet,camera->eye,&them,1<<27)||
-     !delta(o->feet,body->position,&relative,8*(int32_t)FW_TILE))continue;
-  int32_t forward=-dot(them,b.view),gap=dot(relative,b.view);
-  /* Clearly behind the follower: drawing over it is right. */
-  if(forward<4*(int32_t)FW_TILE||gap<-FWR_CLEAR_FRONT)continue;
-  int64_t f=b.ortho?1:forward;
-  int32_t x=dot(them,b.right),y=dot(them,b.up);
-  if(!scaled_hits(mineX-half,mineX+half,mineF,x-o->half,x+o->half,f))continue;
-  near[nears].f=f;near[nears].y0=y;near[nears].y1=y+o->height;
-  near[nears].feet=lift?y+o->height/4:y+o->height;near[nears].gap=gap;near[nears].k=(uint8_t)k;++nears;
- }
  for(unsigned i=0;i<count;++i){
   int32_t high=top-(int32_t)i*strip,low=high-strip;
   /* A camera-facing quad leans back by its height. Each strip comes
@@ -679,21 +478,7 @@ int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t 
     else{q=divide((int64_t)dh<<16,gain);pull=(int32_t)(q*distance/65536);}
    }
   }
-  int32_t limit=FWR_SPLIT_CAP;
-  /* A sprite's feet band this strip covers on screen keeps it a unit
-   * behind; level with the follower, it holds the strip still. */
-  for(unsigned k=0;k<nears&&pull>0;++k){
-   if(!scaled_hits(mineY+low,mineY+high,mineF,near[k].y0,near[k].feet,near[k].f))continue;
-   int32_t allowed=near[k].gap>FWR_SORT_BEHIND?near[k].gap-FWR_SORT_BEHIND:0;
-   if(allowed<limit){limit=allowed;if(limited&&pull>allowed)*limited|=(uint16_t)(1u<<i);}
-  }
-  if(pull>limit){pull=limit;q=-1;}
-  /* The rest of a sprite this strip covers comes forward over it. */
-  for(unsigned k=0;lift&&k<nears&&pull>0;++k){
-   if(near[k].feet>=near[k].y1||!scaled_hits(mineY+low,mineY+high,mineF,near[k].feet,near[k].y1,near[k].f))continue;
-   int32_t need=pull-near[k].gap+FWR_SORT_BEHIND;
-   if(need>lift[near[k].k])lift[near[k].k]=need;
-  }
+  if(pull>FWR_SPLIT_CAP){pull=FWR_SPLIT_CAP;q=-1;}
   if(!band_pose(&b,body,distance,low,pull,q,strip_sy,&out[i]))return 0;
  }
  return 1;

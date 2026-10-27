@@ -425,10 +425,7 @@ static void large_gap(void) {
     assert(player0 - after.x >= rest - 4096 && player0 - after.x <= rest + 4096);
     assert(fw_trail_reseed_along(&seeded, &far, &at, large, &after) == 1);
     assert(fw_trail_reseed(&seeded, &far, &at, over, &after) == 0);
-    FwPoint player = {player0, 0, 0}, follower = {player0 + rest, 0, 0};
-    assert(fw_grid_talk_span(&player, &follower, 3, FW_MAX_DIRECTIONAL_GAP) == 1);
-    assert(fw_grid_talk_span(&player, &follower, 3, FW_MAX_AUTHORED_GAP) == 0);
-    assert(fw_grid_talk_span(&player, &follower, 3, FW_MAX_DIRECTIONAL_GAP + 1) == 0);
+    FwPoint player = {player0, 0, 0};
     /* Two units past reach is corrected; the corridor keeps the same three
      * units past reach that two tiles give a gap of 12. */
     FwPoint beyond = {player0 + (int32_t)FW_DIALOGUE_REACH(FW_MAX_DIRECTIONAL_GAP) + 2 * 4096, 0, 0}, pulled = beyond;
@@ -897,29 +894,15 @@ int main(void) {
     assert(fw_rail_swap_turn(0,0,-(int)FW_TILE)==0);
     assert(fw_rail_swap_turn(3,-5,1)==3);
     assert(fw_rail_swap_turn(9,1,1)==0);
-    /* Curved talk: front and side deltas, including a chord whose world
-     * compass is south while the line's +front is the 3-4-5 diagonal. */
-    assert(fw_rail_face_toward(5,0)==2&&fw_rail_face_toward(-4,0)==3);
-    assert(fw_rail_face_toward(0,3)==0&&fw_rail_face_toward(0,-1)==1);
-    assert(fw_rail_face_toward(3,1)==2&&fw_rail_face_toward(-5,2)==3);
-    assert(fw_rail_face_toward(1,4)==0&&fw_rail_face_toward(2,-5)==1);
-    assert(fw_rail_face_toward(4,4)==2&&fw_rail_face_toward(-4,4)==3);
+    /* Curved talk: a chord whose world compass is south while the line's
+     * +front is the 3-4-5 diagonal. */
     assert(fw_rail_face_at(3*(int)FW_TILE,4*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==2);
     assert(fw_rail_face_at(-4*(int)FW_TILE,3*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==0);
     assert(fw_rail_face_at(-3*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==3);
     assert(fw_rail_face_at(4*(int)FW_TILE,-3*(int)FW_TILE,3*(int)FW_TILE,4*(int)FW_TILE,-4*(int)FW_TILE,3*(int)FW_TILE)==1);
     assert(fw_rail_face_at(1,0,0,0,0,0)==4);
-    /* Wide rail knot is talkable. Two grid tiles, and the old 22-unit north
-       rejection, still fail. One grid tile still succeeds. */
+    /* Wide rail knot is talkable. */
     FwPoint talkPlayer={10*(int32_t)FW_TILE,0,10*(int32_t)FW_TILE};
-    FwPoint talkFar=talkPlayer;talkFar.x-=2*(int32_t)FW_TILE;
-    assert(!fw_grid_talk_span(&talkPlayer,&talkFar,2,12));
-    FwPoint talkNear=talkPlayer;talkNear.x-=(int32_t)FW_TILE;
-    assert(fw_grid_talk_span(&talkPlayer,&talkNear,2,0)==1);
-    FwPoint talkNorth=talkPlayer;talkNorth.z-=22*4096;
-    assert(!fw_grid_talk_span(&talkPlayer,&talkNorth,0,0));
-    talkNorth.z=talkPlayer.z-(int32_t)FW_TILE;
-    assert(fw_grid_talk_span(&talkPlayer,&talkNorth,0,0)==1);
     FwPoint wide=talkPlayer;wide.x+=2*(int32_t)FW_TILE+20000;
     assert(fw_rail_segment_reach(&talkPlayer,&wide,&wide,0)==1);
     FwPoint railDiagonal=talkPlayer;railDiagonal.x+=3*(int32_t)FW_TILE/2;railDiagonal.z+=(int32_t)FW_TILE;

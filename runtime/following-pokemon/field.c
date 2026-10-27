@@ -67,7 +67,6 @@ static int fwfield_configState,fwfield_eventsReady;
 /* A manual choice lives only in the field runtime; party data is untouched.
  * Keep the previous safe follower tile for the recall -> send-out sequence. */
 static Vec fwfield_cyclePose;
-static int16_t fwfield_cycleGrid[3];
 static uint16_t fwfield_cycleFace;
 static uint8_t fwfield_cyclePending;
 #ifdef FW_ARCEUS_SURF
@@ -76,10 +75,6 @@ static uint32_t fwfield_surfAppearance;
 static FweRestore fwfield_restore;
 /* Actor built in MapSpawnFinish, before FollowingUpdate owns the system.
  * fw_init clears the follower struct; these statics keep the actor. */
-/* 1 from the covered adopt until the first field update that is not the
- * entrance fade. That fade must not delete the actor the covered render
- * already submitted. A later door fade still recalls. */
-static uint8_t fwfield_population;
 /* 1 while the next follower should be placed at once, with its send-out,
  * instead of waiting for the player to walk: boot, SELECT turning it on, and
  * a menu or battle that closed the field with the follower out. A map change
@@ -108,13 +103,10 @@ static unsigned fwfield_registrySize,fwfield_stride,fwfield_pageFirst,fwfield_pa
  * slot was real and HIDDEN was clear, so the covered render submits it with
  * the zone NPCs. Search RAM for 46 57 43 47. Word +4 is version 5. Word +24
  * is insert. Word +36 is covered. */
-API volatile struct {uint32_t magic,version,stage,registryBytes,cacheBytes,reads,insert,uid,mat,covered;} FollowingConfigDebug={.magic=0x47435746,.version=5,.cacheBytes=FW_REGISTRY_PAGE,.mat=0xffffffffu};
 /* Searchable emulator diagnostics; values never become save data. */
 API volatile struct { uint32_t magic,version,ticks,spawns,deletes,reason,species,fwfield_code,actor,fwfield_player,visible,resets,system,systemFlags,field,cameraYaw,cameraPitch,depthClass,depthX,depthY,depthZ,modelSize; } FollowingDebug={.magic=0x47445746,.version=2};
-API volatile struct { uint32_t magic,version,attempts,attached,actor,playerFlags,actorFlags; } FollowingShadowDebug={.magic=0x48535746,.version=1};
 /* FWSW: active during a reverse step, face applied this frame, progress along
  * the vacated tile, blocked when that tile was not enterable. */
-API volatile struct { uint32_t magic,version,active,face,progress,blocked; } FollowingSwapDebug={.magic=0x57535746,.version=1};
 static struct { uint8_t active,departed,rail; uint16_t savedFace; FwPoint follower,origin,player; } swapOn;
 /* Post-swap gap. Not sidecar state: the 1856-byte follower is fixed, and a
  * reload drops this with the overlay. `close_keep` is the metric of the pose
@@ -125,7 +117,7 @@ static uint8_t haveSettled,haveLast;
 /* The HGSS side-by-side stand: the follower on the corner tile beside the
  * player, held until the trail passes that corner again. */
 static struct { uint8_t active; FwPoint at; uint32_t last; } beside;
-static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
+static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;}
 static void clear_ease(void){ease.active=0;ease.traveled=ease.close_keep=0;}
 void fw_depth_query(int *swapping,int *easing,uint32_t *traveled){
  if(swapping)*swapping=swapOn.active?1:0;
@@ -220,12 +212,6 @@ static void note_settled(void){
  else if(on_rail()&&haveLast){settled=fwfield_player->world;haveSettled=1;}
  haveLast=1;
 }
-static uint32_t swap_progress(const FwPoint *from,const FwPoint *to){
- int64_t dx=(int64_t)to->x-from->x,dz=(int64_t)to->z-from->z;
- if(dx<0)dx=-dx;
- if(dz<0)dz=-dz;
- uint64_t p=(uint64_t)dx+(uint64_t)dz;return p>0xffffffffu?0xffffffffu:(uint32_t)p;
-}
 static void bind_pose(Actor *a,int32_t x,int32_t y,int32_t z,unsigned face){
  a->world=(Vec){x,y,z};
  for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
@@ -233,14 +219,13 @@ static void bind_pose(Actor *a,int32_t x,int32_t y,int32_t z,unsigned face){
  CALL(0x02167099,void(*)(Actor*,uint32_t))(a,face);
  fwr_anchor(a,face);
  a->moveflags&=~(2048u|4096u);
- FollowingSwapDebug.face=face;
 }
 static void recall_blocked(Actor *a){
  if(!(a->flags&HIDDEN))fwfx_recall(a);
  else if(fwfx_resting()){fwfx_rest_recall();fwfield_ballOff=1;}
  a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
  fw_trail_clear(&fwfield_follower.trail);++FollowingDebug.resets;
- clear_swap();clear_ease();drop_settled();FollowingSwapDebug.blocked=1;
+ clear_swap();clear_ease();drop_settled();
 }
 /* 1 when `natural` is strictly closer than a fresh load, along the reseeded
  * trail. The follower turns in place on that pose, or on the start floor when
@@ -410,7 +395,7 @@ static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,co
  }
  /* Drop the tile left behind by the swap. Grid matches the pose just bound. */
  for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
- clear_swap();FollowingSwapDebug.face=face;
+ clear_swap();
  settled=fwfield_player->world;haveSettled=centered(&settled)?1:0;
  reveal_follower(a);
  /* A ball that swapped stays the ball. */
@@ -447,8 +432,6 @@ static int drive_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  if(!near_origin(player))swapOn.departed=1;
  swapOn.player=*player;
  bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fw_swap_face(fwfield_player->face,1));
- FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
- FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
  if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
  animation_gate(a);return 1;
 }
@@ -473,8 +456,6 @@ static int drive_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  }
  if(!(onOrigin&&mirror==0))swapOn.departed=1;
  bind_pose(a,mirrored.x,mirrored.y,mirrored.z,fwfield_player->face^1u);
- FollowingSwapDebug.active=1;FollowingSwapDebug.blocked=0;
- FollowingSwapDebug.progress=swap_progress(&swapOn.follower,&mirrored);
  if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
  animation_gate(a);return 1;
 }
@@ -489,7 +470,6 @@ static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
  clear_ease();
  beside.active=0;swapOn.active=1;swapOn.departed=0;swapOn.rail=1;swapOn.follower=follower;swapOn.origin=origin;swapOn.player=*player;swapOn.savedFace=a->face;
- FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
  return drive_swap(a,sample,player);
 }
 static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
@@ -509,7 +489,6 @@ static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  if(!fws_step_clear(a,&vacated)){recall_blocked(a);return 1;}
  clear_ease();
  beside.active=0;swapOn.active=1;swapOn.departed=0;swapOn.follower=follower;swapOn.origin=origin;swapOn.savedFace=a->face;
- FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
  return drive_swap(a,sample,player);
 }
 /* An Easter egg from HGSS, 32-pixel followers only. Walk down, step one
@@ -576,7 +555,6 @@ static void beside_hold(const Actor *a,FwSample *target){
  *  3. Either side at the follow distance, facing the player.
  * Neither: the ordinary walk-in. A large follower kept in its ball here
  * comes out as the resting ball, one tile away like the ball's walk. */
-API volatile struct { uint32_t magic,version,source,decision,placed,placements,unloadZone,unloadX,unloadZ,sightZone,sightX,sightZ,walkIns; } FollowingSummonDebug={.magic=0x4d535746,.version=2,.source=1};
 static int dir_dx(unsigned d){return d==2?-1:d==3?1:0;}
 static int dir_dz(unsigned d){return d==0?-1:d==1?1:0;}
 static int tile_open(Actor *p,int steps,unsigned d,int32_t *height){
@@ -638,7 +616,7 @@ static void summon_out(Actor *a,int ball){
   if(!fwfx_available())fwfx_prepare(a);
   fwfx_out(a);fwfield_follower.state=FW_FOLLOWING;
  }
- note_settled();++FollowingSummonDebug.placements;
+ note_settled();
 }
 static int summon_place(Actor *a){
  Actor *p=fwfield_player;
@@ -662,22 +640,21 @@ static int summon_place(Actor *a){
    if(!step_open(a,p,fp,rail,d,&step)||!step_pose(a,p,rail,d,&step,&pose,1))continue;
    clear_ease();bind_pose(a,step.x,step.y,step.z,1);
    beside.active=1;beside.at=(FwPoint){step.x,step.y,step.z};beside.last=FW_TILE+FW_TILE/2;
-   summon_out(a,0);FollowingSummonDebug.placed=3;return 1;
+   summon_out(a,0);return 1;
   }
  }
  unsigned back=p->face^1u;
  if(step_open(a,p,fp,rail,back,&step)&&place_pose(a,p,rail,back,&step,&pose,&ball)){
   clear_ease();bind_pose(a,pose.x,pose.y,pose.z,p->face);
-  summon_out(a,ball);FollowingSummonDebug.placed=ball?5:1;return 1;
+  summon_out(a,ball);return 1;
  }
  for(unsigned i=0;i<2;++i){
   unsigned d=p->face<2?2u+i:i;
   if(!step_open(a,p,fp,rail,d,&step)||!place_pose(a,p,rail,d,&step,&pose,&ball))continue;
   clear_ease();bind_pose(a,pose.x,pose.y,pose.z,d^1u);
-  summon_out(a,ball);FollowingSummonDebug.placed=ball?5:2;return 1;
+  summon_out(a,ball);return 1;
  }
  fw_trail_clear(&fwfield_follower.trail);
- FollowingSummonDebug.placed=4;
  return 0;
 }
 static void move(Actor *a) {
@@ -769,7 +746,7 @@ static void move(Actor *a) {
 #endif
   /* A send-out must have its ball. Load the banks now if nothing has. */
   if(!fwfx_available())fwfx_prepare(a);
-  fwfx_out(a);++FollowingSummonDebug.walkIns;
+  fwfx_out(a);
  }
  reveal_follower(a);
  fwfield_follower.state=FW_FOLLOWING; FollowingDebug.visible=!(a->flags&HIDDEN);
@@ -827,15 +804,14 @@ static int followers_off(void *game){
 }
 static int registry_read(void *file,unsigned at,void *out,unsigned n){
  if(at>fwfield_registrySize||n>fwfield_registrySize-at)return 0;
- ++FollowingConfigDebug.reads;
  return CALL(0x02070e55,int(*)(void*,int,unsigned))(file,(int)at,0)
   &&CALL(0x02070e6d,unsigned(*)(void*,void*,unsigned))(file,out,n)==n;
 }
 __attribute__((noinline)) static int config(void) {
  if(fwfield_configState)return fwfield_configState>0;
- fwfield_configState=-1;fwfield_pageCount=0;FollowingConfigDebug.stage=1;
+ fwfield_configState=-1;fwfield_pageCount=0;
  if(FollowingCoreAPI.abi!=FWC_ABI||FollowingCoreAPI.size!=sizeof(FwcApi))return 0;
- FollowingCoreAPI.clear();FollowingConfigDebug.stage=2;
+ FollowingCoreAPI.clear();
  uint32_t file[32],header[8];
  CALL(0x02070ca9,void(*)(void*))(file);
  if(!CALL(0x02070ecd,int(*)(void*,const char*))(file,"rom:/following/native.bin"))return 0;
@@ -845,17 +821,15 @@ __attribute__((noinline)) static int config(void) {
  if(ok)ok=header[0]==0x544e5746&&header[1]==1&&header[2]==2&&header[3]>=32&&header[3]<=REGISTRY_MAX&&header[4]<=65535&&header[5]<=65535&&header[7]==0;
  if(!ok)return 0;
  fwfield_registryCrc=header[6];fwfield_descriptorCount=(uint16_t)header[4];
- FollowingConfigDebug.stage=3;FollowingConfigDebug.registryBytes=header[3];
  CALL(0x02070ca9,void(*)(void*))(file);
  if(!CALL(0x02070ecd,int(*)(void*,const char*))(file,"rom:/following/runtime-registry.bin"))return 0;
  fwfield_registrySize=CALL(0x02070ded,unsigned(*)(void*))(file);
  FwRegistryInput input={registry_read,file,fwfield_page,fwfield_index,FW_MAX_SPECIES+2,fwfield_registrySize,header[6],header[4],header[5],0,0};
- FollowingConfigDebug.stage=4;
  ok=fwfield_registrySize==header[3]&&fw_registry_stream(&input)
     &&FollowingCoreAPI.publish(input.descriptors);
  CALL(0x02070de1,int(*)(void*))(file);
  fwfield_pageCount=0;
- if(ok){fwfield_stride=input.stride;fwfx_set_resource_count(header[5]);fwfield_configState=1;FollowingConfigDebug.stage=7;fwp_zones_load();}
+ if(ok){fwfield_stride=input.stride;fwfx_set_resource_count(header[5]);fwfield_configState=1;fwp_zones_load();}
  else {fwfx_set_resource_count(0);FollowingCoreAPI.clear();fwfield_registrySize=fwfield_stride=0;}
  return ok;
 }
@@ -912,7 +886,7 @@ __attribute__((noinline)) static uint16_t model(const FwPokemon *p) {
  return first<end?fallback:0;
 fail:
  if(opened)CALL(0x02070de1,int(*)(void*))(file);
- fwfield_pageCount=0;FollowingConfigDebug.stage=8;return 0;
+ fwfield_pageCount=0;return 0;
 }
 static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,int direction,int *chosenSlot) {
  void *party=CALL(0x0201735d,void*(*)(void*))(game);
@@ -970,19 +944,15 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
  * appeared already out, with no send-out. The line that early spawn was
  * hiding came from mid-frame texture uploads, which now wait for VBlank.
  * A config miss on this first try is cleared; the field update can retry.
- * Emote sheets stay off this path.
- * FollowingConfigDebug.insert records the cache lookup. 8 means FindCachedObjMat
- * found uid with a material and flags bit 2 clear. Read it after the
- * entrance fade, before the next zone. */
+ * Emote sheets stay off this path. */
 #ifdef FW_STOCK
 API void FollowingPreloadFollower(void *field, void *actorSystem) {
- FollowingConfigDebug.insert=1;FollowingConfigDebug.uid=0;FollowingConfigDebug.mat=0xffffffffu;FollowingConfigDebug.covered=0;
  if(!field||!actorSystem)return;
  void *game=PTR(field,8);
- if(!game){FollowingConfigDebug.insert=2;return;}
- if(followers_off(game)){FollowingConfigDebug.insert=3;return;}
+ if(!game){return;}
+ if(followers_off(game)){return;}
  int fresh=!fwfield_configState;
- if(!config()){if(fresh)fwfield_configState=0;FollowingConfigDebug.insert=4;return;}
+ if(!config()){if(fresh)fwfield_configState=0;return;}
  /* Effect-bank upload (0x020494d9 inside fwfx_warm). The entrance fade is a
   * live 3D scan, and this hook is the last field work before that picture is
   * swapped. Doing it here keeps the write off the frames the fade reveals.
@@ -992,18 +962,10 @@ API void FollowingPreloadFollower(void *field, void *actorSystem) {
  fwfx_warm(((ActorSystem*)actorSystem)->resourceHeap);
  fwfield_warmed=fwfx_available()?actorSystem:0;
  FwPokemon selected;int slot=-1;
- if(!select(game,field,&selected,0,0,&slot)){FollowingConfigDebug.insert=5;return;}
+ if(!select(game,field,&selected,0,0,&slot)){return;}
  uint16_t code=model(&selected);
- if(!code){FollowingConfigDebug.insert=6;return;}
+ if(!code){return;}
  CALL(0x0219386d,void(*)(void*,unsigned))(actorSystem,code);
- uint16_t found[2]={0xffffu,0};
- void *blact=PTR(actorSystem,40);
- int hit=blact&&CALL(0x02193e05,int(*)(void*,unsigned,uint16_t*,uint16_t*))(blact,code,&found[0],&found[1]);
- FollowingConfigDebug.uid=code;
- FollowingConfigDebug.mat=(uint32_t)found[0]|((uint32_t)found[1]<<16);
- if(hit&&found[0]!=0xffffu&&!(found[1]&2u))FollowingConfigDebug.insert=8;
- else if(hit)FollowingConfigDebug.insert=9;
- else FollowingConfigDebug.insert=7;
 }
 #endif
 static void cycle_follower(void *game,void *field){
@@ -1051,7 +1013,6 @@ static void cycle_follower(void *game,void *field){
   return;
  }
  fwfield_cyclePose=actor->world;
- for(unsigned i=0;i<3;++i)fwfield_cycleGrid[i]=actor->grid[i];
  fwfield_cycleFace=actor->face;
  if(!held){fwfx_snapshot(actor);fwfx_recall(actor);}
  Actor *keep=fwfield_player;
@@ -1071,9 +1032,6 @@ static void cycle_track(void){
  if(step<0){fwfield_cyclePending=0;return;}
  if(step==1){
   fwfield_cyclePose=(Vec){target.x,target.y,target.z};
-  fwfield_cycleGrid[0]=(int16_t)(target.x/FW_TILE);
-  fwfield_cycleGrid[1]=(int16_t)(target.y/FW_TILE);
-  fwfield_cycleGrid[2]=(int16_t)(target.z/FW_TILE);
   fwfield_cycleFace=target.direction;
  }
 }
@@ -1148,7 +1106,6 @@ static void select_toggle(void *field,int ownTalk,int paused,uint32_t *reason){
  }else{
   set_followers_off(game,0);*reason&=~4096u;
   fwfield_summon=1;fwfield_summonSeen=1;fwfield_summonMatch=0;fwfield_summonAt=p->world;
-  FollowingSummonDebug.source=2;FollowingSummonDebug.decision=4;FollowingSummonDebug.placed=0;
  }
 }
 static void before(ActorSystem *sys) {
@@ -1171,8 +1128,7 @@ static void before(ActorSystem *sys) {
      FollowingCoreAPI.consume(FWRE_SUMMON_TOKEN,&request,sizeof(request))){
    fwfield_summon=1;fwfield_summonMatch=request.source!=FWRE_SUMMON_BOOT;
    fwfield_summonZone=(uint16_t)request.zone;fwfield_summonFrom=(Vec){request.x,0,request.z};
-   FollowingSummonDebug.source=request.source;FollowingSummonDebug.decision=FollowingSummonDebug.placed=0;
-  }else FollowingSummonDebug.source=0;
+  }
   fw_init(&fwfield_follower,++fwfield_generation);
   if(keepManual){fwfield_follower.selected=manual;fwfield_follower.slot=(int8_t)manualSlot;fwfield_follower.has_selection=1;}
   fwfield_eventsReady=fws_attach(sys,&fwfield_follower,fwfield_generation,scene_recall);
@@ -1217,13 +1173,12 @@ static void before(ActorSystem *sys) {
    if(!fwfield_summonSeen){
     unsigned zone=fw_field_zone(field);
     fwfield_summonSeen=1;fwfield_summonAt=at;
-    FollowingSummonDebug.sightZone=zone;FollowingSummonDebug.sightX=(uint32_t)at.x;FollowingSummonDebug.sightZ=(uint32_t)at.z;
     if(fwfield_summonMatch&&(zone!=fwfield_summonZone||at.x!=fwfield_summonFrom.x||at.z!=fwfield_summonFrom.z)){
-     fwfield_summon=0;FollowingSummonDebug.decision=2;
-    }else FollowingSummonDebug.decision=fwfield_summonMatch?1:4;
+     fwfield_summon=0;
+    }
     fwfield_summonMatch=0;
    }
-   else if(at.x!=fwfield_summonAt.x||at.y!=fwfield_summonAt.y||at.z!=fwfield_summonAt.z){fwfield_summon=0;FollowingSummonDebug.decision=3;}
+   else if(at.x!=fwfield_summonAt.x||at.y!=fwfield_summonAt.y||at.z!=fwfield_summonAt.z){fwfield_summon=0;}
   }
   if(!fwfield_player || !(fwfield_player->flags&USE) || (fwfield_player->flags&HIDDEN) || ((fwfield_player->moveflags&8)&&!ownTalk&&!paused))reason|=4;
   if(fp && CALL(0x0219a705,unsigned(*)(void*))(fp)!=0)reason|=8;
@@ -1251,20 +1206,13 @@ static void before(ActorSystem *sys) {
   if(!reason&&!ownTalk&&!paused&&!fwt_active())cycle_follower(game,field);
  }
  FollowingDebug.reason=reason;
- /* Bits 4 and 16 are the player-hidden and fade gates. The actor created
-  * before the covered render stays through that entrance, with the zone NPCs. */
- if(fwfield_population&&reason&&!(reason&~(4u|16u))){
-  if(reason&16)fwfx_warm(sys->resourceHeap);
-  return;
- }
- if(reason){fwfield_population=0;if(fwfield_eventsReady)FollowingEventsAPI.discard();clear_restore();fwt_cancel();
+ if(reason){if(fwfield_eventsReady)FollowingEventsAPI.discard();clear_restore();fwt_cancel();
 #ifdef FW_MOUNT
   if(fwland_active()){((Actor*)fwfield_follower.actor)->flags|=HIDDEN;fwland_end();}
   fwfield_landCarry=0;
 #endif
   if(!(reason&4096)&&(reason&16))fwfx_warm(sys->resourceHeap);
   if(owned() && !( ((Actor*)fwfield_follower.actor)->flags&HIDDEN) && (reason&(8|16|32)))fwfx_recall((Actor*)fwfield_follower.actor);else if(fwfield_follower.actor)fwfx_cancel();cleanup();return;}
- fwfield_population=0;
 #ifdef FW_MOUNT
  if(fwland_invalid()&&owned()){
   Actor *a=(Actor*)fwfield_follower.actor;
@@ -1274,7 +1222,7 @@ static void before(ActorSystem *sys) {
  }
 #endif
  FollowingDebug.fwfield_player=(uint32_t)fwfield_player; FollowingDebug.species=fwfield_follower.selected.species; FollowingDebug.fwfield_code=fwfield_code;
- if(fwfield_follower.actor && !owned() && !fwfield_population){fwfield_follower.actor=0;fw_trail_clear(&fwfield_follower.trail);clear_ease();}
+ if(fwfield_follower.actor && !owned()){fwfield_follower.actor=0;fw_trail_clear(&fwfield_follower.trail);clear_ease();}
  if(paused&&fwfield_restore.magic!=FWE_RESTORE_MAGIC)return;
  /* Only a matching storage return may reconstruct during a paused event. */
  if(fwfield_restore.magic==FWE_RESTORE_MAGIC&&(!fw_same_identity(&fwfield_restore.selected,&fwfield_follower.selected)
@@ -1485,12 +1433,7 @@ API void FollowingUpdate(ActorSystem *sys) {
 #endif
      shown && !firstBody && fwfield_player && (fwfield_player->moveflags&SHADOW_SET) &&
      !(fwfield_player->moveflags&SHADOW_VANISH) && !(a->moveflags&SHADOW_SET)){
-   FollowingShadowDebug.actor=(uint32_t)a;
-   FollowingShadowDebug.playerFlags=fwfield_player->moveflags;
-   FollowingShadowDebug.actorFlags=a->moveflags;
-   ++FollowingShadowDebug.attempts;
    CALL(0x02194df5,void(*)(Actor*))(a);
-   FollowingShadowDebug.attached=!!(a->moveflags&SHADOW_SET);
   }
   /* A hidden door actor is not on screen yet. Binding its sheet on the frame
    * the world reappears, or on the body's first raster, is the scanline. */
@@ -1558,7 +1501,6 @@ API int FollowingUnload(void *game,void *field) {
    /* A map change consumes any older request, so it cannot carry over. */
    if(arm)FollowingCoreAPI.store(FWRE_SUMMON_TOKEN,&request,sizeof(request));
    else FollowingCoreAPI.consume(FWRE_SUMMON_TOKEN,&request,sizeof(request));
-   FollowingSummonDebug.unloadZone=arm?request.zone:0;FollowingSummonDebug.unloadX=(uint32_t)request.x;FollowingSummonDebug.unloadZ=(uint32_t)request.z;
   }
   fwfield_summon=0;
  }
@@ -1571,7 +1513,6 @@ API int FollowingUnload(void *game,void *field) {
  fwsurf_destroy();fwfield_surfAppearance=0;
 #endif
 fwfield_pageCount=fwfield_stride=0;
- fwfield_population=0;
  fwfield_owner=0;fwfield_configState=0;fwfield_registrySize=0;return FollowingOriginalUnload(game,field); }
 
 /* Original event providers retain first refusal for every retail event. */

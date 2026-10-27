@@ -27,14 +27,12 @@ def desmume_ram(data):
 
 def diagnostics(ram):
  result={}
- for signature,count in [(b'FWDG',22),(b'FWFX',8),(b'FWRD',20),(b'FWCG',6),(b'FWSH',7),(b'FWSM',13)]:
+ for signature,count in [(b'FWDG',22),(b'FWFX',8),(b'FWRD',20)]:
   pos=ram.find(signature)
   if pos>=0:
    version=struct.unpack_from('<I',ram,pos+4)[0]
    if signature==b'FWDG' and version==1:count=15
-   if signature==b'FWCG' and version>=4:count=10
-   elif signature==b'FWCG' and version>=3:count=9
-   if version in (1,2) or (signature==b'FWCG' and version in (3,4,5)):
+   if version in (1,2):
     result[signature.decode()]={'address':hex(pos+0x2000000),'values':struct.unpack_from('<'+str(count)+'I',ram,pos)}
  pos=ram.find(b'FWSE')
  if pos>=0 and pos+48+32*24<=len(ram):

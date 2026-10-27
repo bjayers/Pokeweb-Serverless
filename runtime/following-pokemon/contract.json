@@ -3914,15 +3914,6 @@
       "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
     },
     {
-      "id": "field-find-cached-obj-mat",
-      "module": "field",
-      "segment": "36",
-      "address": 35208708,
-      "expectedHex": "08b51430fff75eff08bd0000",
-      "abi": "Thumb FieldBlAct_FindCachedObjMat; r0=FieldBlAct*, r1=object code, r2=u16* material, r3=u16* flags. Returns nonzero when the code is cached. No patch is written at this site.",
-      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
-    },
-    {
       "id": "menu-app-call-callback",
       "module": "field",
       "segment": "12",

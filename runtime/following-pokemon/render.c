@@ -224,36 +224,21 @@ static int wall_tiles(const Actor *a,int8_t sx,int8_t sz){
 #define FWR_LINE_NATIVE (-4*(int32_t)FW_TILE)
 #define FWR_LINE_STEP (12*4096)
 static int32_t fwr_line=FWR_LINE_NATIVE;
-/* FWSD: the last 64-pixel draw. +8 draws split, +12 why the last one did
- * not (0 split; 1 not 64-pixel mode or flipped; 2 no scene or material; 3
- * material shared with a visible actor; 4 size; 5 strips refused the
- * camera; 6 no wall, drawn native), then each strip's sx at +24 (top strip
- * first): its pull is (1 - sx / body sx) of the eye distance. Version 4:
- * +56 tiles back to the wall (0 none), +60 the face's distance behind the
- * feet and +64 the face line (the jut is added above it), both 20.12
- * world units. */
-__attribute__((visibility("default"))) volatile struct {
- uint32_t magic,version,splits,reason,unused[2];int32_t sx[8];uint32_t tiles;int32_t face,line;
-} FollowingStripDebug={.magic=0x44535746,.version=4};
 _Static_assert(64u%FWR_BASE_ROWS==0&&FWR_BASE_ROWS%FWR_STRIP_ROWS==0,"face windows tile the frame");
 static struct { Scene scene; Billboard strips[FWR_STRIPS]; Material material; Material *live; uint16_t frame; int16_t sy; } upper;
 static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *p,const FwrCamera *cam){
  upper.live=0;
  (void)p;
- FollowingStripDebug.reason=1;
  if(a->descriptor[7]!=2||(b->flags&0x0800u))return 0; /* 64-pixel mode, not flipped vertically. */
- FollowingStripDebug.reason=2;
  Scene *scene=PTR(system,4);unsigned mat=b->geom&0x3fffu;
  if(!scene||!scene->materials||!scene->actors||mat>=scene->materialCount)return 0;
  Material *m=&scene->materials[mat];
- FollowingStripDebug.reason=4;
  if(m->fw!=64||m->fh!=64||!m->cols||b->sy<=0||(b->sy&63)||b->sx<=0)return 0;
  /* The quad is 2*scale*sy tall and scale*sx either side of its feet. */
  int64_t scale=scene->scale.x;
  if(scale<=0)return 0;
  int64_t height=(2*scale*b->sy)>>12,half=(scale*b->sx)>>12;
  if(height<=0||height>4*(int64_t)FW_TILE||half<=0||half>4*(int64_t)FW_TILE)return 0;
- FollowingStripDebug.reason=5;
  FwrBasis basis;
  if(!fwr_basis(cam,&basis))return 0;
  /* Away from the camera along the ground, on the nearer grid axis. */
@@ -272,11 +257,8 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
  }
  if(fwr_line<target)fwr_line=fwr_line+FWR_LINE_STEP<target?fwr_line+FWR_LINE_STEP:target;
  else if(fwr_line>target)fwr_line=fwr_line-FWR_LINE_STEP>target?fwr_line-FWR_LINE_STEP:target;
- FollowingStripDebug.tiles=(uint32_t)tiles;FollowingStripDebug.face=face;FollowingStripDebug.line=fwr_line;
- FollowingStripDebug.reason=6;
  if(fwr_line<=FWR_LINE_NATIVE)return 0;
  /* A visible actor on the follower's material would lose its upper rows. */
- FollowingStripDebug.reason=3;
  for(unsigned i=0;i<scene->actorCount;++i){
   const Billboard *o=&scene->actors[i];
   if(o!=b&&(o->flags&512)&&(o->geom&0x3fffu)==mat)return 0;
@@ -290,11 +272,8 @@ static int split_body(void *system,Billboard *b,const Actor *a,const Billboard *
  unsigned sheetRow=0,col=b->frame;
  while(col>=m->cols){col-=m->cols;++sheetRow;}
  FwrPose out[FWR_STRIPS];
- FollowingStripDebug.reason=5;
  FwrStack stack={fwr_line,FWR_WALL_JUT,FWR_WALL_RISE,FWR_WALL_RAMP};
- if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&stack,stripSy,0,0,out,0,0))return 0;
- FollowingStripDebug.reason=0;++FollowingStripDebug.splits;
- for(unsigned i=0;i<FWR_STRIPS;++i)FollowingStripDebug.sx[i]=out[i].sx;
+ if(!fwr_strips(&body,cam,(int32_t)half,(int32_t)height,row*(int32_t)FWR_STRIP_ROWS,FWR_STRIPS,&stack,stripSy,out))return 0;
  /* Strip i shows rows 8i..8i+7 from the top of the frame; the native base
   * keeps the last 8. */
  for(unsigned i=0;i<FWR_STRIPS;++i){

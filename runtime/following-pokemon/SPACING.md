@@ -113,14 +113,6 @@ change. It is the resident summon token in the core module (`FwreSummon`,
 boot as a game load, stored only by a menu or battle unload, consumed by any
 other unload and read once by the next field.
 
-`FollowingSummonDebug` (magic `FWSM`, RAM bytes `46 57 53 4d`) version 2:
-word +8 source (1 game load, 2 SELECT, 3 menu, 5 battle, 0 none),
-+12 decision (1 same tile, 2 cancelled by a different zone or tile, 3
-cancelled by moving, 4 no tile to match), +16 placement (1 behind, 2 side,
-3 face-down stand, 4 no open tile, 5 ball), +20 placements so far, +24..+32
-the unload zone (0 when the unload did not arm), x and z, +36..+44 the
-judged zone, x and z, +48 walk-in send-outs.
-
 ## Storage and compatibility
 
 Stock White 2 0.6.89 widens the dialogue corridor sideways from one-third to

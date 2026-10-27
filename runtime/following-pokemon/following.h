@@ -115,11 +115,9 @@ int fw_rail_swap_mirror(const FwPoint *follower, const FwPoint *origin, const Fw
  * the finished swap uses the player's own facing. */
 unsigned fw_swap_face(unsigned player_face, int moving);
 /* Rail facing is relative to the line: 0 +side, 1 -side, 2 +front, 3 -front.
- * `dFront`/`dSide` are player minus follower. The larger axis wins; a tie
- * faces along the line. */
-unsigned fw_rail_face_toward(int d_front, int d_side);
-/* Same choice from world deltas. `front_*` is the +front step and `side_*`
- * is the +side step. Returns 4 when both steps are degenerate. */
+ * The larger axis wins; a tie faces along the line. From world deltas:
+ * `front_*` is the +front step and `side_*` is the +side step. Returns 4 when
+ * both steps are degenerate. */
 unsigned fw_rail_face_at(int rel_x, int rel_z, int front_x, int front_z, int side_x, int side_z);
 /* Post-swap facing. Both actors share the player's line, so this is the
  * player's rail facing on a straight line and on a curve. The chord is the
@@ -158,8 +156,6 @@ int fw_trail_pose_behind(const FwTrail *trail, const uint8_t gaps[4], uint32_t k
 /* Metric from the newest sample back to the trail projection of (x, z).
  * 0 when it is not on the trail. Never more than one tile. */
 uint32_t fw_trail_metric_to_point(const FwTrail *trail, const uint8_t gaps[4], int32_t x, int32_t z);
-/* Grid talk box: one tile of reach on the facing axis. Two tiles do not pass. */
-int fw_grid_talk_span(const FwPoint *player, const FwPoint *follower, unsigned face, unsigned gap);
 /* Follower lies on the segment from the player to the adjacent rail point.
  * The segment may be wider than a grid tile. A point past that rail point fails. */
 int fw_rail_segment_reach(const FwPoint *player, const FwPoint *follower, const FwPoint *forward, unsigned gap);

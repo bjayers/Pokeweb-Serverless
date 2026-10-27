@@ -334,12 +334,6 @@ unsigned fw_swap_face(unsigned player_face, int moving) {
     if (player_face > 3) return 0;
     return moving ? player_face ^ 1u : player_face;
 }
-unsigned fw_rail_face_toward(int d_front, int d_side) {
-    int a_front = d_front < 0 ? -d_front : d_front;
-    int a_side = d_side < 0 ? -d_side : d_side;
-    if (a_front >= a_side) return d_front >= 0 ? 2u : 3u;
-    return d_side >= 0 ? 0u : 1u;
-}
 unsigned fw_rail_face_at(int rel_x, int rel_z, int front_x, int front_z, int side_x, int side_z) {
     uint32_t span_front = segment_span(front_x, front_z), span_side = segment_span(side_x, side_z);
     int use_front = span_front >= 256u, use_side = span_side >= 256u;
@@ -423,20 +417,6 @@ unsigned fw_follower_form(unsigned species, unsigned form) {
     for (unsigned i = 0; i < sizeof fw_forced_forms / sizeof fw_forced_forms[0]; ++i)
         if (fw_forced_forms[i].species == species) return fw_forced_forms[i].form;
     return form;
-}
-int fw_grid_talk_span(const FwPoint *player, const FwPoint *follower, unsigned face, unsigned gap) {
-    if (!player || !follower || face > 3 || gap > FW_MAX_DIRECTIONAL_GAP) return 0;
-    int x = follower->x - player->x, z = follower->z - player->z, y = follower->y - player->y;
-    int ax = x < 0 ? -x : x, az = z < 0 ? -z : z, ay = y < 0 ? -y : y;
-    if (ax > (int)(face >= 2 ? FW_DIALOGUE_REACH(gap) : FW_DIALOGUE_REACH(0)) ||
-        az > (int)(face < 2 ? FW_DIALOGUE_REACH(gap) : FW_DIALOGUE_REACH(0)) ||
-        ay > 8 * 4096) return 0;
-    int vx = face == 2 ? -256 : face == 3 ? 256 : 0, vz = face == 0 ? -256 : face == 1 ? 256 : 0;
-    int length = vx * vx + vz * vz, px = x / 256, pz = z / 256;
-    int along = px * vx + pz * vz, lateral = px * vz - pz * vx;
-    if (lateral < 0) lateral = -lateral;
-    if (!length || along < length / 2 || along > length + length / 8 + (int)gap * length / 16) return 0;
-    return lateral <= length / 2;
 }
 int fw_rail_segment_reach(const FwPoint *player, const FwPoint *follower, const FwPoint *forward, unsigned gap) {
     if (!player || !follower || !forward || gap > FW_MAX_DIRECTIONAL_GAP) return 0;

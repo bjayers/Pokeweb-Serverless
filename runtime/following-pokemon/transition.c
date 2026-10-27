@@ -11,11 +11,7 @@ static struct {
  uint8_t phase,slot,dir,shore,steps;
 } transition;
 
-__attribute__((visibility("default"))) volatile struct {
- uint32_t magic,version,phase,entries,exits,returns,failures,direction,shore;
-} FollowingTransitionDebug={.magic=0x54535746,.version=1};
-
-static void phase(unsigned value){transition.phase=(uint8_t)value;FollowingTransitionDebug.phase=value;}
+static void phase(unsigned value){transition.phase=(uint8_t)value;}
 /* The retail shore predicate recognizes only terrain 0x41/0x44. Some maps
  * put a water-flagged sand tile at the waterline instead. Let the native
  * two-tile collision and final dry-tile flags decide whether it is a shore. */
@@ -118,15 +114,13 @@ void *fwtm_enter(void *game,void *field,const FwPokemon *selected,int slot,
   (game,0,entry_event,4);
  if(!event){goto fail;}
  PTR(PTR(event,12),0)=transition.task;
- FollowingTransitionDebug.direction=direction;FollowingTransitionDebug.shore=transition.shore;
- ++FollowingTransitionDebug.entries;
  /* The substituted walk command has no jump sound of its own. */
  CALL(0x02006255,void(*)(unsigned))(1374u);
  return event;
 fail:
  if(transition.task){CALL(0x021bac51,void(*)(void*))(transition.task);transition.task=0;}
  player->face=oldFace;player->oldFace=oldPreviousFace;
- phase(TM_IDLE);++FollowingTransitionDebug.failures;return 0;
+ phase(TM_IDLE);return 0;
 }
 void fwtm_observe_exit(void *event,void *game,void *field){
  (void)game;
@@ -141,8 +135,6 @@ void fwtm_observe_exit(void *event,void *game,void *field){
  transition.dir=(uint8_t)dir;
  transition.shore=*(uint16_t*)((uint8_t*)work+6)==1u;
  transition.steps=0;phase(TM_EXIT);
- FollowingTransitionDebug.direction=dir;FollowingTransitionDebug.shore=transition.shore;
- ++FollowingTransitionDebug.exits;
 }
 unsigned fwtm_appearance(void *game){
  if(transition.phase==TM_IDLE||!same_party(game,transition.slot,&transition.pokemon,0))return 0;
@@ -154,7 +146,7 @@ int fwtm_return_ready(void *game,const FwPokemon *selected){
   same_party(game,transition.slot,&transition.pokemon,1);
 }
 int fwtm_return_pending(void){return transition.phase==TM_RETURN;}
-void fwtm_return_done(void){if(transition.phase==TM_RETURN)++FollowingTransitionDebug.returns;phase(TM_IDLE);}
+void fwtm_return_done(void){phase(TM_IDLE);}
 void fwtm_cancel(void){
  if(transition.task){CALL(0x021bac51,void(*)(void*))(transition.task);transition.task=0;}
  phase(TM_IDLE);
