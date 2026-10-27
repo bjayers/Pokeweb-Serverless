@@ -81,10 +81,10 @@ static FweRestore fwfield_restore;
 static uint8_t fwfield_population;
 /* 1 while the next follower should be placed at once, with its send-out,
  * instead of waiting for the player to walk: boot, SELECT turning it on, and
- * a field unloaded with the follower out (menus, battles). An unload records
- * the player's zone and tile; the next field only places when the player is
- * back on that tile, so a door, Fly, Escape Rope or any warp keeps the
- * walk-in. The player moving first, or no open tile, clears it. */
+ * a menu or battle that closed the field with the follower out. A map change
+ * is neither, so it keeps the walk-in. The unload also records the zone and
+ * tile, and the return must be on them. The player moving first, or no open
+ * tile, clears it. */
 static uint8_t fwfield_summon=1,fwfield_summonSeen,fwfield_summonMatch;
 static uint16_t fwfield_summonZone;
 static Vec fwfield_summonAt,fwfield_summonFrom;
@@ -1499,15 +1499,17 @@ API int FollowingUnload(void *game,void *field) {
   FollowingEventsAPI.preserveMount(field,fwfield_generation,&mount);
  else FollowingEventsAPI.discardMount();
 #endif
- /* Leaving with the follower out (a menu or battle) places it on return
-  * to this same tile. */
+ /* Only a menu or a battle closing the field places the follower on
+  * return; every map change goes through this same unload and keeps the
+  * walk-in. The return must also land on this same tile. */
  {
   void *fp=field?PTR(field,0x94):0;
   Actor *pl=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
-  fwfield_summon=(uint8_t)(pl&&(owned()||followers_off(PTR(field,8))));
+  int menu=fws_menu_active(),battle=fws_battle_entry();
+  fwfield_summon=(uint8_t)(pl&&(menu||battle)&&(owned()||followers_off(PTR(field,8))));
   fwfield_summonMatch=1;
   if(pl){fwfield_summonZone=fw_field_zone(field);fwfield_summonFrom=pl->world;}
-  FollowingSummonDebug.source=fwfield_summon?3:0;FollowingSummonDebug.decision=FollowingSummonDebug.placed=0;
+  FollowingSummonDebug.source=!fwfield_summon?0:menu?3:5;FollowingSummonDebug.decision=FollowingSummonDebug.placed=0;
   FollowingSummonDebug.unloadZone=fwfield_summonZone;FollowingSummonDebug.unloadX=(uint32_t)fwfield_summonFrom.x;FollowingSummonDebug.unloadZ=(uint32_t)fwfield_summonFrom.z;
  }
  fws_detach();fwfield_eventsReady=0;cleanup();fwt_unload();fwfx_destroy();fwfx_set_resource_count(0);FollowingCoreAPI.clear();

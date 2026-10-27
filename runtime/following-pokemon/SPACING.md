@@ -73,13 +73,15 @@ writes. Off plays the recall on a visible follower, takes a resting ball
 with the ball sound, or plays that sound alone, then removes the follower.
 On brings the follower out at once.
 
-The same placement runs at boot, and after any field unloaded with the
-follower out or with Followers off: menus that leave the field, battles,
-the options screen. The unload records the field's zone and the player's
-tile. The next field judges them once no event holds it, so a door's step
-out or a warp's arrival has already happened, and places only when the
-player is back on that tile in that zone. A door, Fly, Escape Rope or any
-other warp keeps the walk-in. The player moving first cancels it.
+The same placement runs at boot, and when a menu or a battle closed the
+field with the follower out or with Followers off (the options screen is a
+menu). Every map change goes through the same unload
+(`FieldRoutine_MapUnload`), so the unload only arms the placement while the
+X-menu event (`fws_menu_active`) or a battle chain (`fws_battle_entry`) owns
+the field. Doors, Fly, Escape Rope and other warps keep the walk-in. As a
+second guard the unload records the field's zone and the player's tile, and
+the next field, once no event holds it, places only when the player is back
+on that tile in that zone. The player moving first cancels it.
 
 Placement runs on grids and rails. Each step is probed from the player with
 the native checks: on a grid `ActorRouteCollCheckOneTileInDir` (`0x0215e4f1`)
@@ -99,7 +101,7 @@ a barred zone, or under a floor) comes out as the resting ball one tile
 away, its gap already walked to 0, with no send-out.
 
 `FollowingSummonDebug` (magic `FWSM`, RAM bytes `46 57 53 4d`) version 1:
-word +8 source (1 boot, 2 SELECT, 3 unload with the follower out, 0 none),
+word +8 source (1 boot, 2 SELECT, 3 menu, 5 battle, 0 none),
 +12 decision (1 same tile, 2 cancelled by a different zone or tile, 3
 cancelled by moving, 4 no tile to match), +16 placement (1 behind, 2 side,
 3 face-down stand, 4 no open tile, 5 ball), +20 placements so far, +24..+32
