@@ -694,6 +694,18 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
   return { registry, registryBytes, descriptors: descriptors.save(), resources: resources.save(),
     config: encodeFollowerNativeConfig(registryBytes, registry.descriptorCount, registry.resourceCount) };
 }
+/* The runtime draws the follower at registry Y minus descriptor byte 14 (plus
+ * two pixels). Byte 14 is cleared on follower rows, so the native shadow stays
+ * on the ground; move its value into registry Y first so the sprite does not
+ * move. A fresh install copies the retail byte into both, and clearing only
+ * the descriptor lifted every sprite by that much. */
+function clearFollowerDescriptorY(registry: FollowerRegistry, descriptor: Uint8Array): void {
+  for (const entry of registry.entries) {
+    const at = 4 + entry.descriptorRow * 28 + 14, native = (descriptor[at] << 24) >> 24;
+    entry.offsets[1] = Math.max(-128, Math.min(127, entry.offsets[1] - native));
+    descriptor[at] = 0;
+  }
+}
 /* Core bridge ABIs a bundled package may record. ABI 4 adds the resident
  * summon token; packages built before it record 3. The field and core DLLs
  * come from one publish and are both pinned by hash, so either is a pair. */
@@ -1044,9 +1056,9 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
     resources = readFollowingFile(project, rom, FOLLOWER_RESOURCE_PATH)!.slice();
     const resourceFiles = new NARC(resources).files;
     deriveFollowerSpacing(decoded, resourceFiles);
-    deriveFollowerGrounding(decoded, resourceFiles, new NARC(readFollowingFile(project, rom, "a/0/1/6")!).files);
     const descriptorArchive = new NARC(descriptors);
-    for (const entry of decoded.entries) descriptorArchive.files[0][4 + entry.descriptorRow * 28 + 14] = 0;
+    clearFollowerDescriptorY(decoded, descriptorArchive.files[0]);
+    deriveFollowerGrounding(decoded, resourceFiles, new NARC(readFollowingFile(project, rom, "a/0/1/6")!).files);
     descriptors = descriptorArchive.save();
     const savedWorkspace = readFollowerWorkspace(project, rom);
     if (savedWorkspace) {
@@ -1120,8 +1132,8 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
     }
     decoded.resourceCount = resourceArchive.files.length;
     deriveFollowerSpacing(decoded, resourceArchive.files);
+    clearFollowerDescriptorY(decoded, descriptorArchive.files[0]);
     deriveFollowerGrounding(decoded, resourceArchive.files, new NARC(readFollowingFile(project, rom, "a/0/1/6")!).files);
-    for (const entry of decoded.entries) descriptorArchive.files[0][4 + entry.descriptorRow * 28 + 14] = 0;
     resources = resourceArchive.save(); descriptors = descriptorArchive.save();
     const previous = registry, zoneBytes = decoded.zones.length * 8;
     registry = encodeFollowerRegistry(decoded);
