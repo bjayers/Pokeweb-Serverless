@@ -124,11 +124,17 @@ int fwt_reach(FwFollower *f,Actor *p,Actor *a,void *field){
  }else if(!length)return 0;
  /* A bounded connected trail proves both actors occupy the same corridor.
     Use the rail tangent too, so rotated/curved paths retain normal reach.
-    On a wide knot the axis limit is that segment, not a fixed two tiles. */
- for(unsigned i=0;i<f->trail.count;++i){const FwSample *s=&f->trail.samples[(f->trail.head+i)%FW_TRAIL_CAPACITY];
+    On a wide knot the axis limit is that segment, not a fixed two tiles.
+    The trail is read from the player back to the follower. A follower
+    standing exactly on a recorded sample, as the side-by-side stand leaves it
+    on its corner, ends the corridor there; the older leg behind it runs off
+    at a right angle and is not between the two. A follower between samples
+    still checks the whole trail. */
+ for(unsigned i=f->trail.count;i-->0;){const FwSample *s=&f->trail.samples[(f->trail.head+i)%FW_TRAIL_CAPACITY];
   if(s->generation!=f->generation||abs32(s->y-a->world.y)>8*4096)return 0;
   int dx=(s->x-p->world.x)/256,dz=(s->z-p->world.z)/256;
   if(abs32(dx)>axis||abs32(dz)>axis||abs32(dx*vz-dz*vx)>(int)((unsigned)length/2))return 0;
+  if(i+1<f->trail.count&&s->x==a->world.x&&s->z==a->world.z)break;
  }
  if(!controller){
   int16_t gx,gy,gz;CALL(0x0219aacd,void(*)(void*,void*,void*,void*))(PTR(field,0x94),&gx,&gy,&gz);

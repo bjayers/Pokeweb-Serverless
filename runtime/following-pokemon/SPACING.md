@@ -55,6 +55,11 @@ through the corner, so it never steps back up. Any other facing or path, a
 swap or ease in progress, rails, the ball, a 64-pixel follower, an effect, or
 an NPC on the corner leave the ordinary pose.
 
+Turn toward it to talk as usual. The talk corridor is read from the player
+back to the follower and ends on the sample it stands on, so the leg it came
+down, at a right angle behind it, does not refuse the talk. It turns to face
+the player for the talk and back afterwards, and stays on the corner.
+
 ## Storage and compatibility
 
 Stock White 2 0.6.89 widens the dialogue corridor sideways from one-third to
