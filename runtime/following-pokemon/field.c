@@ -3,6 +3,7 @@
 #include "interaction.h"
 #include "scene.h"
 #include "core_api.h"
+#include "resident_events.h"
 #include "registry.h"
 #include "render.h"
 #include "positioning.h"
@@ -82,14 +83,13 @@ static uint8_t fwfield_population;
 /* 1 while the next follower should be placed at once, with its send-out,
  * instead of waiting for the player to walk: boot, SELECT turning it on, and
  * a menu or battle that closed the field with the follower out. A map change
- * is neither, so it keeps the walk-in. The unload also records the zone and
- * tile, and the return must be on them. The player moving first, or no open
- * tile, clears it. */
-static uint8_t fwfield_summon=1,fwfield_summonSeen,fwfield_summonMatch;
-/* 1 from a new field until the player first presses the D-pad. A door's
- * step off the mat, or out of the doorway, is the game's own movement; the
- * trail drops it, so the walk-in starts from the player's first steps. */
-static uint8_t fwfield_entryHold;
+ * is neither, so it keeps the walk-in. This module reloads with its overlay
+ * on every field, so the request crosses the reload as the resident summon
+ * token (FwreSummon): valid from boot, stored only by a menu or battle
+ * unload, read once by the next field. The return must also be on the
+ * unload's zone and tile. The player moving first, or no open tile, clears
+ * it. */
+static uint8_t fwfield_summon,fwfield_summonSeen,fwfield_summonMatch;
 static uint16_t fwfield_summonZone;
 static Vec fwfield_summonAt,fwfield_summonFrom;
 /* 1 after something stepped onto the resting ball: the trail restarts and
@@ -576,7 +576,7 @@ static void beside_hold(const Actor *a,FwSample *target){
  *  3. Either side at the follow distance, facing the player.
  * Neither: the ordinary walk-in. A large follower kept in its ball here
  * comes out as the resting ball, one tile away like the ball's walk. */
-API volatile struct { uint32_t magic,version,source,decision,placed,placements,unloadZone,unloadX,unloadZ,sightZone,sightX,sightZ,entryDrops,walkIns; } FollowingSummonDebug={.magic=0x4d535746,.version=2,.source=1};
+API volatile struct { uint32_t magic,version,source,decision,placed,placements,unloadZone,unloadX,unloadZ,sightZone,sightX,sightZ,walkIns; } FollowingSummonDebug={.magic=0x4d535746,.version=2,.source=1};
 static int dir_dx(unsigned d){return d==2?-1:d==3?1:0;}
 static int dir_dz(unsigned d){return d==0?-1:d==1?1:0;}
 static int tile_open(Actor *p,int steps,unsigned d,int32_t *height){
@@ -687,13 +687,6 @@ static void move(Actor *a) {
  if(paused){clear_swap();drop_settled();}
  else if(swapOn.active){if(drive_swap(a,&sample,&player))return;}
  else if(begin_swap(a,&sample,&player))return;
- if(fwfield_entryHold){
-  if(!paused&&(CALL(0x0203df4d,unsigned(*)(void))()&0xf0u))fwfield_entryHold=0;
-  else if(fwfield_follower.state==FW_WAITING&&(a->flags&HIDDEN)&&!fwfield_summon){
-   if(fwfield_follower.trail.count>1)++FollowingSummonDebug.entryDrops;
-   fw_trail_clear(&fwfield_follower.trail);
-  }
- }
  int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,walk_gaps());
  if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;clear_swap();clear_ease();drop_settled();animation_gate(a); return; }
  /* An event may own the sprite, but the route has to keep the player's
@@ -1162,7 +1155,14 @@ static void before(ActorSystem *sys) {
   int manualSlot=fwfield_follower.slot;
   int keepManual=fwfield_owner&&fwfield_follower.has_selection&&manualSlot>=0;
   fws_detach();cleanup();fwt_unload();if(sys!=fwfield_warmed)fwfx_destroy();fwfield_warmed=0;fwfield_owner=sys;
-  fwfield_summonSeen=0;fwfield_entryHold=1;
+  fwfield_summonSeen=0;fwfield_summon=fwfield_summonMatch=0;
+  FwreSummon request;
+  if(FollowingCoreAPI.abi==FWC_ABI&&FollowingCoreAPI.size==sizeof(FwcApi)&&
+     FollowingCoreAPI.consume(FWRE_SUMMON_TOKEN,&request,sizeof(request))){
+   fwfield_summon=1;fwfield_summonMatch=request.source!=FWRE_SUMMON_BOOT;
+   fwfield_summonZone=(uint16_t)request.zone;fwfield_summonFrom=(Vec){request.x,0,request.z};
+   FollowingSummonDebug.source=request.source;FollowingSummonDebug.decision=FollowingSummonDebug.placed=0;
+  }else FollowingSummonDebug.source=0;
   fw_init(&fwfield_follower,++fwfield_generation);
   if(keepManual){fwfield_follower.selected=manual;fwfield_follower.slot=(int8_t)manualSlot;fwfield_follower.has_selection=1;}
   fwfield_eventsReady=fws_attach(sys,&fwfield_follower,fwfield_generation,scene_recall);
@@ -1517,11 +1517,15 @@ API int FollowingUnload(void *game,void *field) {
   void *fp=field?PTR(field,0x94):0;
   Actor *pl=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
   int menu=fws_menu_active(),battle=fws_battle_entry();
-  fwfield_summon=(uint8_t)(pl&&(menu||battle)&&(owned()||followers_off(PTR(field,8))));
-  fwfield_summonMatch=1;
-  if(pl){fwfield_summonZone=fw_field_zone(field);fwfield_summonFrom=pl->world;}
-  FollowingSummonDebug.source=!fwfield_summon?0:menu?3:5;FollowingSummonDebug.decision=FollowingSummonDebug.placed=0;
-  FollowingSummonDebug.unloadZone=fwfield_summonZone;FollowingSummonDebug.unloadX=(uint32_t)fwfield_summonFrom.x;FollowingSummonDebug.unloadZ=(uint32_t)fwfield_summonFrom.z;
+  int arm=pl&&(menu||battle)&&(owned()||followers_off(PTR(field,8)));
+  if(FollowingCoreAPI.abi==FWC_ABI&&FollowingCoreAPI.size==sizeof(FwcApi)){
+   FwreSummon request={menu?FWRE_SUMMON_MENU:FWRE_SUMMON_BATTLE,fw_field_zone(field),pl?pl->world.x:0,pl?pl->world.z:0};
+   /* A map change consumes any older request, so it cannot carry over. */
+   if(arm)FollowingCoreAPI.store(FWRE_SUMMON_TOKEN,&request,sizeof(request));
+   else FollowingCoreAPI.consume(FWRE_SUMMON_TOKEN,&request,sizeof(request));
+   FollowingSummonDebug.unloadZone=arm?request.zone:0;FollowingSummonDebug.unloadX=(uint32_t)request.x;FollowingSummonDebug.unloadZ=(uint32_t)request.z;
+  }
+  fwfield_summon=0;
  }
  fws_detach();fwfield_eventsReady=0;cleanup();fwt_unload();fwfx_destroy();fwfx_set_resource_count(0);FollowingCoreAPI.clear();
 #ifdef FW_MOUNT

@@ -8,11 +8,14 @@ static FwrEvents active;
  * tokens are the only follower state retained by the battle-resident core. */
 static struct {
  uint8_t restore[FWRE_RESTORE_BYTES],mount[FWRE_MOUNT_BYTES];
+ FwreSummon summon;
  unsigned valid;
-} tokens;
+} tokens={.summon={FWRE_SUMMON_BOOT,0,0,0},.valid=4u};
+_Static_assert(sizeof(FwreSummon)==FWRE_SUMMON_BYTES,"summon token size");
 static uint8_t *token(unsigned kind,unsigned size,unsigned *flag){
  if(kind==FWRE_RESTORE_TOKEN&&size==FWRE_RESTORE_BYTES){*flag=1;return tokens.restore;}
  if(kind==FWRE_MOUNT_TOKEN&&size==FWRE_MOUNT_BYTES){*flag=2;return tokens.mount;}
+ if(kind==FWRE_SUMMON_TOKEN&&size==FWRE_SUMMON_BYTES){*flag=4;return (uint8_t*)&tokens.summon;}
  return 0;
 }
 API int FollowingResidentTokenStore(unsigned kind,const void *source,unsigned size){
@@ -32,6 +35,7 @@ API int FollowingResidentTokenConsume(unsigned kind,void *destination,unsigned s
 API void FollowingResidentTokenDiscard(unsigned kind){
  if(kind==FWRE_RESTORE_TOKEN)tokens.valid&=~1u;
  else if(kind==FWRE_MOUNT_TOKEN)tokens.valid&=~2u;
+ else if(kind==FWRE_SUMMON_TOKEN)tokens.valid&=~4u;
 }
 API int FollowingResidentEventBind(const FwrEvents *hooks){
  FollowingResidentEventClear();
