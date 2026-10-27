@@ -271,6 +271,21 @@ describe("walking alpha ownership",()=>{
       [FOLLOWER_EFFECTS_PATH]:new Uint8Array(readFileSync(new URL('../assets/following/hgss-effects.narc',import.meta.url))),
     });
     expect((await readFollowerAlphaInstall(project))?.enabled).toBe(true);
+    // A previous version's receipt with every module replaced by the bundled
+    // current build (installed outside Pokeweb) is adopted as current. One
+    // module that is neither the receipt's nor the current build still refuses.
+    const previous=runtimeManifest.previousVersions.find(version=>(version.variant??"full")==="full"&&"coreSha256" in version&&version.optionsModuleSha256&&version.battleModuleSha256)!;
+    const currentReceipt=project.fileSystem!.additions![FOLLOWER_INSTALL_PATH];
+    project.fileSystem!.additions![FOLLOWER_INSTALL_PATH]=new TextEncoder().encode(JSON.stringify({...state,version:previous.version,moduleSha256:previous.fieldSha256,
+      eventsSha256:previous.eventsSha256,eventsAbi:previous.eventsAbi,coreSha256:previous.coreSha256,coreAbi:previous.coreAbi,
+      optionsModuleSha256:previous.optionsModuleSha256,battleModuleSha256:previous.battleModuleSha256}));
+    const adopted=await readFollowerAlphaInstall(project);
+    expect([adopted?.version,adopted?.moduleSha256,adopted?.coreAbi]).toEqual([runtimeManifest.version,runtimeManifest.fieldSha256,runtimeManifest.coreAbi]);
+    const currentBattle=project.fileSystem!.additions!["patches/PokewebFollowingBattleW2.dll"];
+    project.fileSystem!.additions!["patches/PokewebFollowingBattleW2.dll"]=new Uint8Array([1,2,3]);
+    await expect(readFollowerAlphaInstall(project)).rejects.toThrow(/have changed/);
+    project.fileSystem!.additions!["patches/PokewebFollowingBattleW2.dll"]=currentBattle;
+    project.fileSystem!.additions![FOLLOWER_INSTALL_PATH]=currentReceipt;
     const authored = readFollowerWorkspace(project,rom)!;
     authored.registry.entries[0].key.shiny = false;
     project.fileSystem!.additions![FOLLOWER_MANIFEST_PATH] = new TextEncoder().encode(JSON.stringify(authored));

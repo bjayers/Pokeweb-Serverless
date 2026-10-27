@@ -694,6 +694,29 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
   return { registry, registryBytes, descriptors: descriptors.save(), resources: resources.save(),
     config: encodeFollowerNativeConfig(registryBytes, registry.descriptorCount, registry.resourceCount) };
 }
+/* Core bridge ABI each profile's bundled package was built against. ABI 4
+ * adds the resident summon token; the other profiles' packages predate it. */
+function followerCoreAbi(profile: FollowerProfile): number { return profile === "stock" ? 4 : 3; }
+/* A receipt from a previous version whose field, events, core, Options and
+ * battle modules were replaced by hand with exactly the bundled current build
+ * (a local build installed outside Pokeweb). Every other owned file is still
+ * checked against the receipt. */
+async function adoptsCurrentModules(project: ProjectState, rom: FollowerRom, state: FollowerAlphaInstall, profile: FollowerProfile,
+    variant: FollowerVariant, fingerprint: { fieldSha256: string; eventsSha256: string; eventsAbi: number } | undefined): Promise<boolean> {
+  const runtimeManifest = runtimeFor(profile), modulePaths = modulePathsFor(profile);
+  // A previous build can share the current version string, so the receipt's
+  // field hash, not its version, says whether it is already current.
+  if (!fingerprint || state.externalRuntime || state.removed || state.moduleSha256 === fingerprint.fieldSha256 ||
+      !runtimeManifest.previousVersions.some(version => (version.variant ?? "full") === variant && version.version === state.version && version.fieldSha256 === state.moduleSha256))
+    return false;
+  const expected: Array<[string, string]> = [[modulePaths.field, fingerprint.fieldSha256], [modulePaths.events, fingerprint.eventsSha256],
+    [modulePaths.core, runtimeManifest.coreSha256], [modulePaths.options, runtimeManifest.optionsModuleSha256], [modulePaths.battle, runtimeManifest.battleModuleSha256]];
+  for (const [path, sha256] of expected) {
+    const module = readFollowingFile(project, rom, path);
+    if (!module || await followerRomSha256(module) !== sha256) return false;
+  }
+  return true;
+}
 export async function readFollowerAlphaInstall(project: ProjectState, rom?: FollowerRom): Promise<FollowerAlphaInstall | undefined> {
   rom ??= await followerRom(project);
   const bytes = readFollowingFile(project, rom, FOLLOWER_INSTALL_PATH);
@@ -705,6 +728,10 @@ export async function readFollowerAlphaInstall(project: ProjectState, rom?: Foll
   const modulePaths = modulePathsFor(profile);
   const dll = readFollowingFile(project, rom, modulePaths.field), config = readFollowingFile(project, rom, FOLLOWER_NATIVE_PATH);
   if ((state.profile ?? "stock") !== profile) throw new Error("Follower installation belongs to a different ROM profile.");
+  if (await adoptsCurrentModules(project, rom, state, profile, variant, fingerprint))
+    Object.assign(state, { version: runtimeManifest.version, moduleSha256: fingerprint!.fieldSha256, eventsSha256: fingerprint!.eventsSha256,
+      eventsAbi: fingerprint!.eventsAbi, coreSha256: runtimeManifest.coreSha256, coreAbi: runtimeManifest.coreAbi,
+      optionsModuleSha256: runtimeManifest.optionsModuleSha256, battleModuleSha256: runtimeManifest.battleModuleSha256 });
   const external = state.externalRuntime;
   if (external && (external.schemaVersion !== 1 || external.compatibleVersion !== runtimeManifest.version ||
       typeof external.label !== "string" || !external.label.trim() || external.label.length > 128 ||
@@ -963,7 +990,7 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
   const eventsDll = new Uint8Array(await eventsResponse.arrayBuffer());
   if (await followerRomSha256(eventsDll) !== fingerprint.eventsSha256 || (variant === "full" && fingerprint.eventsAbi !== binaryContractFor(profile).eventsAbi) || (variant === "base" && fingerprint.eventsAbi !== 4)) throw new Error("Follower event module fingerprint mismatch.");
   const coreDll = new Uint8Array(await coreResponse.arrayBuffer());
-  if (await followerRomSha256(coreDll) !== runtimeManifest.coreSha256 || runtimeManifest.coreAbi !== 3) throw new Error("Follower core module fingerprint mismatch.");
+  if (await followerRomSha256(coreDll) !== runtimeManifest.coreSha256 || runtimeManifest.coreAbi !== followerCoreAbi(profile)) throw new Error("Follower core module fingerprint mismatch.");
   const optionsDll = new Uint8Array(await optionsResponse.arrayBuffer());
   const battleDll = new Uint8Array(await battleResponse.arrayBuffer());
   if (await followerRomSha256(battleDll) !== runtimeManifest.battleModuleSha256) throw new Error("Follower battle module fingerprint mismatch.");
