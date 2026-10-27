@@ -65,6 +65,28 @@ back to the follower and ends on the sample it stands on, so the leg it came
 down, at a right angle behind it, does not refuse the talk. It turns to face
 the player for the talk and back afterwards, and stays on the corner.
 
+### SELECT and placing on return
+
+SELECT on a free field (no event, talk, fade, effect, ride or player step)
+flips the saved Followers setting, CONFIG bit 11, the bit the options row
+writes. Off plays the recall on a visible follower, takes a resting ball
+with the ball sound, or plays that sound alone, then removes the follower.
+On brings the follower out at once.
+
+The same placement runs at boot, and after any field unloaded with the
+follower out or with Followers off: menus that leave the field, battles,
+the options screen. A door recalls the follower before its unload, so a door
+keeps the walk-in. The player moving first cancels it.
+
+Placement prefers behind the player at the follow distance, facing the
+player's way: the tile behind, and the next tile when the pose reaches it,
+must pass the native NPC step check (`ActorRouteCollCheckOneTileInDir`
+`0x0215e4f1`, `ActorRouteCollCheckCore` `0x0215e3fd`: terrain, height,
+actors, bounds). Otherwise either side tile, facing the player, held there
+like the side-by-side stand until the trail comes through. Neither: the
+ordinary walk-in. On rails it is the walk-in. A large follower kept in its
+ball there comes out as the resting ball, with no send-out.
+
 ## Storage and compatibility
 
 Stock White 2 0.6.89 widens the dialogue corridor sideways from one-third to

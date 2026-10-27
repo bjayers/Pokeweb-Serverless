@@ -79,6 +79,13 @@ static FweRestore fwfield_restore;
  * entrance fade. That fade must not delete the actor the covered render
  * already submitted. A later door fade still recalls. */
 static uint8_t fwfield_population;
+/* 1 while the next follower should be placed at once, with its send-out,
+ * instead of waiting for the player to walk: boot, a field unloaded with the
+ * follower out (menus, battles), and SELECT turning it on. A door recalls
+ * before its unload, so it keeps the walk-in. The player moving first, or a
+ * placement with no open tile, clears it. */
+static uint8_t fwfield_summon=1,fwfield_summonSeen;
+static Vec fwfield_summonAt;
 /* 1 after something stepped onto the resting ball: the trail restarts and
  * the ball stays away until the hold places it again. */
 static uint8_t fwfield_ballOff;
@@ -551,6 +558,66 @@ static void beside_hold(const Actor *a,FwSample *target){
  }
  beside.active=0;
 }
+/* Summon placement. Behind the player at the follow distance when the tile
+ * behind, and the next one if the pose reaches it, pass the native NPC step
+ * check (ActorRouteCollCheck: terrain, height, actors, bounds). Otherwise
+ * the tile to either side, facing the player, held there like the side
+ * stand until the trail comes through. Neither: the ordinary walk-in. A
+ * large follower kept in its ball here comes out as the resting ball. */
+static int dir_dx(unsigned d){return d==2?-1:d==3?1:0;}
+static int dir_dz(unsigned d){return d==0?-1:d==1?1:0;}
+static int tile_open(Actor *p,int steps,unsigned d,int32_t *height){
+ int16_t x=(int16_t)(p->grid[0]+dir_dx(d)*steps),z=(int16_t)(p->grid[2]+dir_dz(d)*steps);
+ if(steps==1){if(CALL(0x0215e4f1,unsigned(*)(Actor*,unsigned))(p,d))return 0;}
+ else{
+  Vec from={(p->grid[0]+dir_dx(d)*(steps-1))*(int32_t)FW_TILE+(int32_t)FW_TILE/2,p->world.y,
+   (p->grid[2]+dir_dz(d)*(steps-1))*(int32_t)FW_TILE+(int32_t)FW_TILE/2};
+  if(CALL(0x0215e3fd,unsigned(*)(Actor*,const Vec*,int,int,int,unsigned))(p,&from,x,p->grid[1],z,d))return 0;
+ }
+ Vec at={x*(int32_t)FW_TILE+(int32_t)FW_TILE/2,p->world.y,z*(int32_t)FW_TILE+(int32_t)FW_TILE/2};
+ return CALL(0x0215e909,int(*)(Actor*,const Vec*,int32_t*))(p,&at,height);
+}
+static void summon_out(Actor *a,const FwSample *pose){
+ if(large_actor(a)&&(large_barred()||under_floor(a,pose))){
+  fwfield_held=1;fwfield_heldClear=0;fwfield_ballOff=0;fwfield_follower.state=FW_WAITING;
+ }else{
+  if(!fwfx_available())fwfx_prepare(a);
+  fwfx_out(a);fwfield_follower.state=FW_FOLLOWING;
+ }
+ note_settled();
+}
+static int summon_place(Actor *a){
+ Actor *p=fwfield_player;
+ if(fwfield_follower.state!=FW_WAITING||!(a->flags&HIDDEN)||swapOn.active||on_rail()||
+    !centered(&p->world)||p->face>3)return 0;
+ /* Wait for the body sheet and any running effect; stay pending. */
+ if(!body_sheet_ready(a)||fwfx_busy())return 0;
+ fwfield_summon=0;
+ FwSample ps,pose;player_sample(&ps);
+ unsigned back=p->face^1u;
+ int32_t h,h2;
+ if(fw_trail_reseed(&fwfield_follower.trail,&ps,&ps,walk_gaps(),&pose)&&tile_open(p,1,back,&h)){
+  int far=fw_tile(pose.x)!=p->grid[0]+dir_dx(back)||fw_tile(pose.z)!=p->grid[2]+dir_dz(back);
+  if(!far||tile_open(p,2,back,&h2)){
+   if(far)h=h2;
+   clear_ease();bind_pose(a,pose.x,h,pose.z,p->face);pose.y=h;
+   summon_out(a,&pose);return 1;
+  }
+ }
+ fw_trail_clear(&fwfield_follower.trail);
+ for(unsigned i=0;i<2;++i){
+  unsigned d=p->face<2?2u+i:i;
+  if(!tile_open(p,1,d,&h))continue;
+  FwSample side=ps;
+  side.x=p->world.x+dir_dx(d)*(int32_t)FW_TILE;side.z=p->world.z+dir_dz(d)*(int32_t)FW_TILE;side.y=h;
+  if(!fw_trail_reseed_along(&fwfield_follower.trail,&side,&ps,walk_gaps(),&pose))continue;
+  clear_ease();bind_pose(a,side.x,h,side.z,d^1u);
+  beside.active=1;beside.at=(FwPoint){side.x,h,side.z};beside.last=FW_TILE+FW_TILE/2;
+  summon_out(a,&side);return 1;
+ }
+ fw_trail_clear(&fwfield_follower.trail);
+ return 0;
+}
 static void move(Actor *a) {
  if ((uintptr_t)a!=fwfield_follower.actor || !fwfield_player || a->system!=fwfield_owner) return;
 #ifdef FW_MOUNT
@@ -574,6 +641,7 @@ static void move(Actor *a) {
   * steps or a short pause while running exceeds one tile and the trail drops.
   * Pause and a full stop do not advance the ease, so a held gap stays put. */
  if(paused)return;
+ if(fwfield_summon&&summon_place(a)){animation_gate(a);return;}
  if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
  if(result!=1){beside_step(a);note_settled();animation_gate(a);return;}
  if(ease.active){
@@ -985,6 +1053,41 @@ API uint32_t FollowingSurfPartyAppearance(void *game){
  return preferred?preferred:first;
 }
 #endif
+/* The Followers setting is CONFIG bit 11 in the save, the same bit the
+ * options row writes. */
+static void set_followers_off(void *game,int off){
+ void *save=game?PTR(game,0):0;
+ uint16_t *options=save?CALL(0x02008ddd,uint16_t*(*)(void*))(save):0;
+ if(options)*options=(uint16_t)((*options&~(1u<<11))|(off?(1u<<11):0u));
+}
+/* SELECT toggles that setting on the spot, from a free field only: no event,
+ * talk, fade, effect, ride or player step. Off recalls a visible follower,
+ * or takes the resting ball, then removes it. On places the new follower
+ * beside the player with its send-out (summon_place in move()). */
+static void select_toggle(void *field,int ownTalk,int paused,uint32_t *reason){
+ if(!(CALL(0x0203df29,unsigned(*)(void))()&4u))return;
+ void *game=PTR(field,8),*fp=PTR(field,0x94);
+ if(!game||!fp||ownTalk||paused||fwt_active()||fwfx_busy()||PTR(game,0x18)||U32(field,0x148)||
+    CALL(0x0218130d,int(*)(void*))(field)||CALL(0x0216a2b5,int(*)(void*))(game))return;
+#ifdef FW_MOUNT
+ if(fwland_active()){CALL(0x02006255,void(*)(unsigned))(1367u);return;}
+#endif
+ Actor *p=CALL(0x0219a6e1,Actor*(*)(void*))(fp);
+ if(!p||!(p->flags&USE)||(p->flags&HIDDEN)||(p->moveflags&8)||
+    CALL(0x0219a6f9,unsigned(*)(void*))(fp)!=0||CALL(0x0219a705,unsigned(*)(void*))(fp)!=0)return;
+ if(!followers_off(game)){
+  if(owned()){
+   Actor *a=(Actor*)fwfield_follower.actor;
+   if(!(a->flags&HIDDEN)){fwfx_snapshot(a);fwfx_recall(a);}
+   else if(fwfx_resting())fwfx_rest_recall();
+   else CALL(0x02006255,void(*)(unsigned))(1383u);
+  }else CALL(0x02006255,void(*)(unsigned))(1383u);
+  cleanup();set_followers_off(game,1);fwfield_summon=0;*reason|=4096u;
+ }else{
+  set_followers_off(game,0);*reason&=~4096u;
+  fwfield_summon=1;fwfield_summonSeen=1;fwfield_summonAt=p->world;
+ }
+}
 static void before(ActorSystem *sys) {
  fwt_poll_input();
  ++fwfield_tick; FollowingDebug.ticks=fwfield_tick;
@@ -999,6 +1102,7 @@ static void before(ActorSystem *sys) {
   int manualSlot=fwfield_follower.slot;
   int keepManual=fwfield_owner&&fwfield_follower.has_selection&&manualSlot>=0;
   fws_detach();cleanup();fwt_unload();if(sys!=fwfield_warmed)fwfx_destroy();fwfield_warmed=0;fwfield_owner=sys;
+  fwfield_summonSeen=0;
   fw_init(&fwfield_follower,++fwfield_generation);
   if(keepManual){fwfield_follower.selected=manual;fwfield_follower.slot=(int8_t)manualSlot;fwfield_follower.has_selection=1;}
   fwfield_eventsReady=fws_attach(sys,&fwfield_follower,fwfield_generation,scene_recall);
@@ -1031,10 +1135,16 @@ static void before(ActorSystem *sys) {
  if(!fwfield_eventsReady)reason|=1024;
  if(eventState==FWS_RECALLED)reason|=2048;
  if(!field || (sys->flags&17)!=17 || (sys->flags&6))reason|=2;
+ if(!(reason&~4096u))select_toggle(field,ownTalk,paused,&reason);
  if(!reason) {
   void *fp=PTR(field,0x94),*game=PTR(field,8);
   fwfield_player=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
   fws_set_player(fwfield_player);
+  if(fwfield_summon&&fwfield_player){
+   Vec at=fwfield_player->world;
+   if(!fwfield_summonSeen){fwfield_summonSeen=1;fwfield_summonAt=at;}
+   else if(at.x!=fwfield_summonAt.x||at.y!=fwfield_summonAt.y||at.z!=fwfield_summonAt.z)fwfield_summon=0;
+  }
   if(!fwfield_player || !(fwfield_player->flags&USE) || (fwfield_player->flags&HIDDEN) || ((fwfield_player->moveflags&8)&&!ownTalk&&!paused))reason|=4;
   if(fp && CALL(0x0219a705,unsigned(*)(void*))(fp)!=0)reason|=8;
   if((CALL(0x0218130d,int(*)(void*))(field)&&!ownTalk&&!paused) || (U32(field,0x148)&&!fws_pc_fade()&&!fws_battle_entry()))reason|=16;
@@ -1330,6 +1440,8 @@ API int FollowingUnload(void *game,void *field) {
   FollowingEventsAPI.preserveMount(field,fwfield_generation,&mount);
  else FollowingEventsAPI.discardMount();
 #endif
+ /* Leaving with the follower out (a menu or battle) places it on return. */
+ fwfield_summon=(uint8_t)(owned()||(field&&followers_off(PTR(field,8))));
  fws_detach();fwfield_eventsReady=0;cleanup();fwt_unload();fwfx_destroy();fwfx_set_resource_count(0);FollowingCoreAPI.clear();
 #ifdef FW_MOUNT
  fwfield_landCarry=0;
