@@ -1,0 +1,160 @@
+# Fragile parts of the Following runtime
+
+These work today and were left alone on purpose. Each one rests on an
+assumption about the game, the hardware or map data that could stop holding.
+If something breaks later, start here. Each entry says where the code is,
+what it assumes, what failure would look like, and a cleaner direction if it
+needs revisiting.
+
+## Hardware and engine assumptions
+
+### Texture uploads wait for VBlank by spinning
+
+- **Where:** `fw_vram_window()` in `native.h`, called before every
+  `GFL_G3DResUploadTexData` (`0x020494d9`) and `BlActMaterial_BindTexture`
+  (`0x0204e55d`) in `effects.c`, `land.c` and `surf.c`.
+- **Assumes:** an upload started between lines 193 and 204 finishes before
+  the 3D engine starts reading texture VRAM again at line 214.
+- **Failure looks like:** a one-frame horizontal line on real hardware,
+  never in emulators. Most likely with a large sheet or several uploads in
+  one update. Each upload can also stall the field update for up to one
+  frame.
+- **Cleaner direction:** queue uploads to a VBlank task, the way retail binds
+  mid-map NPC sheets (`FldActSys_AsyncMatLoadTCBFunc`).
+
+### The 64-pixel strip renderer copies engine internals
+
+- **Where:** `fwr_private_scene()` in `render_math.c`, used by the strips in
+  `render.c` and the recall silhouette in `effects.c`.
+- **Assumes:** the layout of the engine's billboard scene, including the
+  `rest[4..19]` tail (polygon ID, origin, custom normal, texcoord offsets),
+  scene scale 7.0, and that a private submit through `0x0204ebdd` draws like
+  the native one.
+- **Failure looks like:** strips with the wrong colour, lighting or depth;
+  missing or offset strips; seams between them.
+- **Cleaner direction:** none simple. Keep the layout pinned; recheck it
+  against the decomp before changing anything here.
+
+## Map-data heuristics
+
+### Bridge and upper-walkway detection
+
+- **Where:** `floor_over()` and `under_floor()` in `field.c`, with
+  `FW_FLOOR_LOW` (1.5 tiles), `FW_LARGE_TALL` (3.5 tiles) and
+  `FW_COVER_CLEAR` (20 updates).
+- **Assumes:** a walkable layer 1.5–3.5 tiles above the follower's feet is
+  something a 64-pixel sprite would poke through. Ahead/behind probes also
+  need walkable ground at the feet, so a raised hedge beside a corner does
+  not count.
+- **Failure looks like:** a large follower recalled for no reason near tall
+  scenery, or not recalled under an unusual bridge.
+- **Fix without code:** a zone override row in `positioning.narc` member 1.
+
+### Wall detection behind a 64-pixel follower
+
+- **Where:** `wall_at()` and `wall_tiles()` in `render.c`, with the
+  `FWR_WALL_*` constants.
+- **Assumes:** an unwalkable tile behind the follower, or a raised layer 1–4
+  tiles up, is a vertical wall with up to a tile of jutting geometry. The
+  scan is 3 tiles wide and skips a side column whose own tile is unwalkable.
+- **Failure looks like:** top rows clipping into a wall the scan missed, or
+  being pulled forward where there is no wall. A tall building beside the
+  follower can still clip a wing because its column is skipped.
+- **Known gaps:** walls marked walkable, and overhangs over walkable ground,
+  are invisible to it.
+
+### Indoors versus outdoors
+
+- **Where:** `large_barred_at()` and `large_barred()` in `field.c`.
+- **Assumes:** `FieldEffects_GetAreaIsExterior` is right for the area, and the
+  player's zone is the follower's zone. The flag covers the whole loaded
+  area, and the follower's own actor zone is frozen when it spawns.
+- **Fix without code:** a zone override row (`FWP_ZONE_LARGE_SWAP`).
+
+### Rail step length in the side-by-side stand
+
+- **Where:** `fw_trail_side_corner()` in `following.c`.
+- **Assumes:** −side (facing 1) is "down" on every rail, and one rail step
+  is between half a tile and a tile and a half.
+- **Failure looks like:** the stand not triggering, or triggering after two
+  steps, on a rail laid out differently. Curves are untested.
+
+## Hard-coded event recognition
+
+### Menu detection at field unload
+
+- **Where:** `menu_chain()` in `field.c`.
+- **Assumes:** opening an application from the field menu runs a chain
+  containing `EventFieldMenu_Callback` (`0x0215a8b5`),
+  `EventFieldAppCall_Callback` (`0x0215b54d`) or
+  `EventFieldMenuReturn_Callback` (`0x0218b1a9`). All three are pinned in
+  `contract.json`.
+- **Failure looks like:** no straight-away placement after closing some menu.
+  Another patch that changes how the menu launches applications would cause
+  it.
+- **Intended side effect:** Fly, Escape Rope, Dig and Teleport start from the
+  menu, so they arm the placement too. The zone-and-tile match cancels it
+  because the player lands elsewhere. Keep that match if this code changes.
+
+### Scene policy callbacks and commands
+
+- **Where:** `safe_callback()` and the command tables in `scene.c` /
+  `scene-policy.h` (generated from `event-policy.json`).
+- **Assumes:** fixed callback addresses and script command numbers mean the
+  same events. The port scripts translate the addresses for other versions.
+- **Failure looks like:** a follower recalled during a harmless event, or
+  left out during one it should leave.
+
+## Placement checks
+
+### Second tile behind on a summon
+
+- **Where:** `tile_open()` in `field.c`, steps 2+, through
+  `ActorRouteCollCheckCore` (`0x0215e3fd`).
+- **Assumes:** the player actor can stand in for the follower in the native
+  step check. The check's "can you leave this tile" test reads the player's
+  own tile, not the first tile behind.
+- **Failure looks like:** a wrong open/blocked call next to a one-way ledge.
+
+### The summon request lives in the core
+
+- **Where:** `FwreSummon` / `FWRE_SUMMON_TOKEN` in `resident_events.h` and
+  `.c`, reached through `FollowingCoreAPI` ABI 4. Used by `before()` and
+  `FollowingUnload` in `field.c`.
+- **Why:** the field DLL is reloaded with its overlays on every field, so its
+  own statics reset each time. The request must outlive that reload.
+- **Assumes:** the core DLL is resident from boot, and the core and field
+  DLLs are always replaced together.
+- **Failure looks like:** if only the field DLL is updated, its config check
+  fails and followers quietly stay off.
+
+## Structure
+
+- **field.c is large:** about 2,300 lines, with a long `before()` and
+  `move()` and many file-level statics. These would split cleanly into their
+  own files: SELECT and summon placement, the large-follower and ball logic,
+  and the side-by-side stand.
+- **Scene reads effects state:** `follower_span()` and `valid_follower()` in
+  `scene.c` read `fwfx_resting()`, so NPC collision depends on the effects
+  module knowing the ball is out.
+- **Debug records still written every frame:** the ones the build's emulator
+  checks read (`FollowingDebug`, `FollowingRenderDebug`, `FollowingSceneDebug`,
+  `FollowingLandDebug`, `FollowingEffectsDebug`, `FollowingTalkDebug`,
+  `FollowingGiftDebug`). `FollowingDebug.reason` and
+  `FollowingSceneDebug.script` are read by the runtime itself, so they are
+  state as well as debug.
+
+## What this runtime claims
+
+Any other patch that uses these will conflict:
+
+- the SELECT button on the field (`select_toggle()` in `field.c`);
+- CONFIG bit 11 in the save options (the Followers setting);
+- follower actor IDs `0xF0`–`0xF8` and actor flag `0x20`;
+- the hook sites in `contract.json`, including the field unload prologue,
+  the MapSpawnFinish `FieldG3D_Update` call at `0x0217fe88`, the player move
+  veneer, and the grid and rail event providers;
+- resident token kinds 1–3 and core API version 4;
+- `positioning.narc` member 1 (`FWZO`) and the checksum pin on
+  `effects.narc`;
+- the RAM signatures of the remaining debug records.
