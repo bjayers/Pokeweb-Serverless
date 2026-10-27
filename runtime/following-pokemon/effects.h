@@ -17,6 +17,9 @@ int fwfx_hides_actor(void);
 void fwfx_cue(const Vec *at);
 /* Closed ball resting at `at` while no effect plays; 0 removes it. */
 void fwfx_rest_at(const Vec *at);
+int fwfx_resting(void);
+/* The resting ball leaves with the ball sound. */
+void fwfx_rest_recall(void);
 int fwfx_busy(void);
 int fwfx_recalling(void);
 int fwfx_available(void);

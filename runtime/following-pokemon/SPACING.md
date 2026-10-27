@@ -143,7 +143,12 @@ cave that keeps it in.
   While it is held there, the closed ball stays out on the follower's hidden
   pose and follows the trail, hopping a pixel or two per step and landing
   when the player stops (`fwfx_rest_at`; not an effect mode, so it blocks
-  nothing). Release sends out from the ball. Indoors there is no ball.
+  nothing). The recall into it does not stop the player, and its shrink
+  travels with the ball. The ball keeps a 32-pixel gap: the 8-unit bonus
+  walks to 0 and back out after the send-out, one unit per update the player
+  moves. L/R is locked with the refusal cue. A talk leaves it in place; an
+  NPC stepping onto it takes it with the ball sound, and it comes back when
+  the trail does. Release sends out from the ball. Indoors there is no ball.
 
 32-pixel followers are not affected.
 

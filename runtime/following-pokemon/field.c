@@ -223,13 +223,17 @@ static void recall_blocked(Actor *a){
  * trail. The follower turns in place on that pose, or on the start floor when
  * the mirrored end is closer than that. The next walk eases from there. */
 static int owned(void);
-/* Stored gaps plus the 64-pixel size bonus. directional_gap keeps the
- * selected positioning row, 0..12, so a later edit of that row still tunes a
- * large follower. Before the actor exists the bonus is 0; the trail simply
- * waits for the extra distance once it does. */
+/* The 64-pixel size bonus in use, 0..FW_LARGE_GAP_BONUS. gap_ramp() walks
+ * it to 0 while the follower waits in its ball on the trail, which keeps a
+ * 32-pixel distance, and back out once it is sent out. */
+static uint8_t fwfield_bonus=FW_LARGE_GAP_BONUS;
+/* Stored gaps plus that bonus. directional_gap keeps the selected
+ * positioning row, 0..12, so a later edit of that row still tunes a large
+ * follower. Before the actor exists the bonus is 0; the trail simply waits
+ * for the extra distance once it does. */
 static const uint8_t *walk_gaps(void){
  static uint8_t gaps[4];
- unsigned bonus=owned()&&((Actor*)fwfield_follower.actor)->descriptor[7]==2?FW_LARGE_GAP_BONUS:0u;
+ unsigned bonus=owned()&&((Actor*)fwfield_follower.actor)->descriptor[7]==2?fwfield_bonus:0u;
  for(unsigned i=0;i<4;++i){
   unsigned gap=fwfield_follower.directional_gap[i]+bonus;
   gaps[i]=(uint8_t)(gap>FW_MAX_DIRECTIONAL_GAP?FW_MAX_DIRECTIONAL_GAP:gap);
@@ -270,6 +274,9 @@ static int large_barred(void){
 #define FW_COVER_CLEAR 20u
 static struct { int32_t x,z,y,sx,sz; uint8_t valid,covered; } fwfield_cover;
 static uint8_t fwfield_held,fwfield_heldClear;
+/* 1 after something stepped onto the resting ball: the trail restarts and
+ * the ball stays away until the hold places it again. */
+static uint8_t fwfield_ballOff;
 /* The actor system whose effect banks the map-load hook already uploaded.
  * The field update's owner change keeps them instead of dropping them. */
 static void *fwfield_warmed;
@@ -320,9 +327,20 @@ static const Vec *rest_ball(void){
 #ifdef FW_MOUNT
  if(fwland_active())return 0;
 #endif
- if(!fwfield_held||!(a->flags&HIDDEN)||!large_actor(a)||
+ if(!fwfield_held||fwfield_ballOff||!(a->flags&HIDDEN)||!large_actor(a)||
     (fwfield_follower.state!=FW_WAITING&&fwfield_follower.state!=FW_EVENT_PAUSED)||large_barred())return 0;
  return &a->world;
+}
+/* One unit per update the player moves: half the walking pace, so the gap
+ * closes or opens over about a tile without a jump, and never while still. */
+static void gap_ramp(void){
+ static int32_t lastX,lastZ;
+ if(!owned()||!fwfield_player)return;
+ int moved=fwfield_player->world.x!=lastX||fwfield_player->world.z!=lastZ;
+ lastX=fwfield_player->world.x;lastZ=fwfield_player->world.z;
+ unsigned target=rest_ball()?0u:FW_LARGE_GAP_BONUS;
+ if(moved&&fwfield_bonus<target)++fwfield_bonus;
+ else if(moved&&fwfield_bonus>target)--fwfield_bonus;
 }
 /* 1 while a 64-pixel follower stays in its ball: barred here, or under a
  * floor. Leaving cover waits FW_COVER_CLEAR updates, so a trail along a
@@ -517,6 +535,15 @@ static void move(Actor *a) {
    * keeps its pose, so a release or an L/R switch sends out from there. */
   if(!(a->flags&HIDDEN)&&fwfield_follower.state==FW_FOLLOWING)fwfx_recall(a);
   a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
+  /* The ball is on the trail, so an NPC stepping onto it takes it back as
+   * it would the follower. The trail restarts and the ball returns with it. */
+  Vec ball={target.x,target.y,target.z};
+  if(!fws_step_clear(a,&ball)){
+   if(!fwfield_ballOff&&fwfx_resting())fwfx_rest_recall();
+   fwfield_ballOff=1;fw_trail_clear(&fwfield_follower.trail);clear_ease();++FollowingDebug.resets;
+   animation_gate(a);return;
+  }
+  fwfield_ballOff=0;
   a->world=(Vec){target.x,target.y,target.z};
   for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
   a->grid[0]=(int16_t)(target.x/FW_TILE);a->grid[1]=(int16_t)(target.y/FW_TILE);a->grid[2]=(int16_t)(target.z/FW_TILE);
@@ -570,7 +597,7 @@ static void cleanup_impl(int keepTrail) {
  fwfield_shownNow=fwfield_reveal=0;
  if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
- fwfield_cyclePending=0;
+ fwfield_cyclePending=0;fwfield_ballOff=0;
  clear_swap();clear_ease();drop_settled();settled=(Vec){0,0,0};
  FollowingDebug.actor=FollowingDebug.visible=0;
 }
@@ -578,7 +605,8 @@ static void cleanup(void) {cleanup_impl(0);}
 /* The retail key-direction veneer is used by ordinary field movement. A
  * recall owns the player's next step until the ball effect has finished. */
 API unsigned FollowingPlayerMoveDir(void *player,unsigned key){
- if(fwfx_recalling())return 9;
+ /* Not a recall into the resting ball: that one rolls on with the player. */
+ if(fwfx_recalling()&&!rest_ball())return 9;
  return CALL(0x0219b161,unsigned(*)(void*,unsigned))(PTR(player,4),key);
 }
 static void scene_recall(void){
@@ -785,6 +813,8 @@ static void cycle_follower(void *game,void *field){
  if(keys!=0x100u && keys!=0x200u)return; /* Both shoulders together have no direction. */
  if(!owned() || !fwfield_player || fwt_active() || fwfx_busy())return;
  Actor *actor=(Actor*)fwfield_follower.actor;
+ /* L/R is locked while the ball waits on the trail. */
+ if(rest_ball()){fwfx_cue(&actor->world);return;}
  /* Where a large follower is barred, L/R only brings out a small one, and a
   * large one held in its ball can still be switched out. */
  int barred=large_barred();
@@ -1187,6 +1217,7 @@ API void FollowingUpdate(ActorSystem *sys) {
   if(shown && !firstBody){fwfx_prepare(a);fwfx_snapshot(a);}
  }
  fwfx_rest_at(rest_ball());
+ gap_ramp();
 }
 int fwfield_first_body(void){return fwfield_reveal;}
 int fwfield_follower_shaded(void){return fwfield_shaded;}

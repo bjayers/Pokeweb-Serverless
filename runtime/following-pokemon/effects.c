@@ -276,14 +276,23 @@ void fwfx_cue(const Vec *at){
 }
 /* The closed ball resting where a recalled follower waits. It is not an
  * effect mode, so it never blocks one; any mode draws instead of it. It hops
- * one step per update while the pose moves, and lands before stopping. */
+ * one step per update while the pose moves, and lands before stopping. A
+ * recall or a cue that starts on it moves with it, hop included, so the
+ * shrink into the ball and the refusal shake travel along the trail. */
 static struct {Vec at;uint8_t on,step;} fwfx_rest;
 void fwfx_rest_at(const Vec *at){
  if(!at){fwfx_rest.on=0;fwfx_rest.step=0;return;}
  int moved=fwfx_rest.on&&(fwfx_rest.at.x!=at->x||fwfx_rest.at.z!=at->z);
+ if(fwfx_rest.on&&(fwfx.mode==2||fwfx.mode==3)){
+  int32_t dx=at->x-fwfx_rest.at.x,dy=at->y-fwfx_rest.at.y,dz=at->z-fwfx_rest.at.z;
+  fwfx.transform.pos.x+=dx;fwfx.transform.pos.y+=dy;fwfx.transform.pos.z+=dz;
+  if(fwfx.mode==2){fwfx.billboard.pos.x+=dx;fwfx.billboard.pos.y+=dy;fwfx.billboard.pos.z+=dz;}
+ }
  if(moved||(fwfx_rest.step&7u))fwfx_rest.step=(uint8_t)((fwfx_rest.step+1u)&7u);
  fwfx_rest.at=*at;fwfx_rest.on=1;
 }
+int fwfx_resting(void){return fwfx_rest.on;}
+void fwfx_rest_recall(void){if(fwfx_rest.on)CALL(0x02006255,void(*)(unsigned))(FWFX_BALL_SE);fwfx_rest.on=0;fwfx_rest.step=0;}
 int fwfx_busy(void){return fwfx.mode!=0;}
 int fwfx_recalling(void){return fwfx.mode==2;}
 int fwfx_available(void){return fwfx.ready==1;}
@@ -296,22 +305,26 @@ void fwfx_tick(void){
  FollowingEffectsDebug[2]=fwfx.mode;FollowingEffectsDebug[5]=fwfx.age;
 }
 static void draw_emote(void *camera,void *light);
+/* The closed ball at the effect transform, nudged by dx and raised by the
+ * resting hop. */
+static void draw_ball(int32_t dx){
+ static const uint8_t hop[8]={0,1,2,2,1,0,0,0};
+ Vec at=fwfx.transform.pos;
+ fwfx.transform.pos.x+=dx;
+ if(fwfx_rest.on)fwfx.transform.pos.y+=hop[fwfx_rest.step&7u]*4096;
+ CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
+ fwfx.transform.pos=at;
+}
 void fwfx_draw(void *camera,void *light){
  draw_emote(camera,light);
  if(fwfx.ready!=1)return;
  if(!fwfx.mode){
-  static const uint8_t hop[8]={0,1,2,2,1,0,0,0};
   if(!fwfx_rest.on)return;
-  Vec at=fwfx.transform.pos;
-  fwfx.transform.pos=fwfx_rest.at;fwfx.transform.pos.z+=6*4096;fwfx.transform.pos.y+=hop[fwfx_rest.step&7u]*4096;
-  CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
-  fwfx.transform.pos=at;return;
+  fwfx.transform.pos=fwfx_rest.at;fwfx.transform.pos.z+=6*4096;
+  draw_ball(0);return;
  }
  if(fwfx.mode==3){
-  Vec at=fwfx.transform.pos;
-  if(fwfx.age<FWFX_CUE_SHAKE)fwfx.transform.pos.x+=(fwfx.age&2)?4096:-4096;
-  CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
-  fwfx.transform.pos=at;
+  draw_ball(fwfx.age<FWFX_CUE_SHAKE?((fwfx.age&2)?4096:-4096):0);
  }else if(fwfx.mode==2 && fwfx.age<FWFX_RECALL_SPRITE_TICKS && fwfx.snapshot){
    /* Three recolored frames establish the silhouette, then five quick steps
     * pull it into the ball. The remaining four frames retain the ball art. */
@@ -321,7 +334,7 @@ void fwfx_draw(void *camera,void *light){
    fwfx.billboard.sy=(fwfx.billboard.sy*scale[fwfx.age])>>12;
    CALL(0x0204ebdd,void(*)(void*,void*,void*))(&fwfx.scene,camera,light);fwfx.billboard=original;
  }else if((fwfx.mode==1 && fwfx.age<2) || fwfx.mode==2){
-  CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
+  draw_ball(0);
  }else{
   /* The body's first raster is the retail billboard alone. The flash model
    * starts on the next frame, so the two submits do not share that scan. */
