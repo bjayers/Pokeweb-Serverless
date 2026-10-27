@@ -5,6 +5,7 @@ __attribute__((visibility("hidden"))) void *memset(void *to, int value, unsigned
 }
 #include "effects.h"
 #include "effects_assets.h"
+#include "ball_assets.h"
 #include "render.h"
 #include "render_math.h"
 /* Field sets this on the update that first shows the body. Same DLL. */
@@ -287,6 +288,62 @@ void fwfx_warm(uint32_t heap) {
     if (heap && CALL(0x0203a2d5, uint32_t(*)(uint32_t))(heap) < 65536u) return;
     init();
 }
+/* Per-ball art. The HGSS ball model is 768 bytes: one 16x16 four-bit texture
+ * at TEX0 + 0x90 and an 8-colour palette, the file's last 16 bytes. The art
+ * uses up to 15 colours, so the loaded copy is moved to a block 16 bytes
+ * longer with a 16-colour palette before its first upload. GFL_G3DResFree
+ * frees that block like the original. A swap rewrites both in place and
+ * resends them to the same VRAM keys (GFL_G3DResUploadTexDataCore).
+ * fwfx_ballShown is the ball ID in the texture, 0 while the HGSS art is still
+ * there and no swap is possible; fwfx_ballWant is the follower's. */
+#define FWFX_BALL_FILE   768u
+#define FWFX_BALL_TEX0   480u
+#define FWFX_BALL_PIXELS 0x90u
+#define FWFX_BALL_PLTT   0x110u
+/* g_G3DSystem.sys; its heap ID is at +24 (White 2 US). */
+#define FWFX_G3D_SYSTEM 0x02141964u
+static uint8_t fwfx_ballShown, fwfx_ballWant = 4;
+static int grow_ball(void) {
+    void *res = fwfx.resources[0];
+    uint8_t *old = PTR(res, 4), *tex0 = old + FWFX_BALL_TEX0;
+    if (U32(old, 8) != FWFX_BALL_FILE || U32(old, 0x14) != FWFX_BALL_TEX0 || U32(tex0, 0) != 0x30584554u ||
+        U32(tex0, 4) != FWFX_BALL_FILE - FWFX_BALL_TEX0 || *(uint16_t *)(tex0 + 0x0c) != 16 ||
+        U32(tex0, 0x14) != FWFX_BALL_PIXELS || *(uint16_t *)(tex0 + 0x30) != 2 ||
+        U32(tex0, 0x38) != FWFX_BALL_PLTT)
+        return 0;
+    void *sys = *(void **)FWFX_G3D_SYSTEM;
+    if (!sys) return 0;
+    unsigned heap = *(uint16_t *)((uint8_t *)sys + 24);
+    /* GFL_HeapAllocateCore returns 0 when full; GFL_HeapAllocate would halt. */
+    if (CALL(0x0203a2d5, uint32_t(*)(uint32_t))(heap) < 4096u) return 0;
+    uint8_t *grown = CALL(0x02039dc9, void *(*)(unsigned, uint32_t))(heap, FWFX_BALL_FILE + 16);
+    if (!grown) return 0;
+    memcpy(grown, old, FWFX_BALL_FILE);
+    memset(grown + FWFX_BALL_FILE, 0, 16);
+    U32(grown, 8) = FWFX_BALL_FILE + 16;
+    U32(grown + FWFX_BALL_TEX0, 4) += 16;
+    *(uint16_t *)(grown + FWFX_BALL_TEX0 + 0x30) = 4;
+    PTR(res, 4) = grown;
+    CALL(0x0203a279, void (*)(void *))(old);
+    return 1;
+}
+static void put_ball(unsigned ball) {
+    uint8_t *tex0 = (uint8_t *)PTR(fwfx.resources[0], 4) + FWFX_BALL_TEX0;
+    memcpy(tex0 + FWFX_BALL_PIXELS, fw_ball_tex[ball - 1], sizeof fw_ball_tex[0]);
+    memcpy(tex0 + FWFX_BALL_PLTT, fw_ball_pltt[ball - 1], sizeof fw_ball_pltt[0]);
+    fwfx_ballShown = (uint8_t)ball;
+}
+/* Update time only, never mid-effect: a recall keeps the ball it began with. */
+static void ball_apply(void) {
+    if (fwfx.ready != 1 || !fwfx_ballShown || fwfx_ballShown == fwfx_ballWant) return;
+    put_ball(fwfx_ballWant);
+    fw_vram_window();
+    CALL(0x0204961d, int (*)(void *))(fwfx.resources[0]);
+}
+void fwfx_set_ball(unsigned ball) {
+    fwfx_ballWant = (uint8_t)(ball && ball <= FW_BALL_COUNT ? ball : 4u);
+    if (!fwfx.mode) ball_apply();
+}
 static int init_stop(void) {
     /* A deferred free can still own the previous map's heap. Drop this partial
      * load into that queue and try again once the tick releases it. A failed
@@ -304,6 +361,9 @@ static int init(void) {
             CALL(0x020493f1, void *(*)(const char *, unsigned))("rom:/following/effects.narc", i);
         if (!fwfx.resources[i]) return init_stop();
     }
+    /* Without room for the larger palette the HGSS ball stays, unswapped. */
+    fwfx_ballShown = 0;
+    if (grow_ball()) put_ball(fwfx_ballWant);
     for (unsigned i = 0; i < 2; ++i) {
         fw_vram_window();
         if (!CALL(0x020494d9, int (*)(void *))(fwfx.resources[i])) return init_stop();
@@ -413,6 +473,7 @@ static void position(Actor *a) {
 }
 void fwfx_out(Actor *a) {
     if (fwfx.ready != 1) return;
+    ball_apply();
     position(a);
     fwfx.mode = 1;
     fwfx.age = 0;
@@ -505,7 +566,10 @@ int fwfx_hides_actor(void) {
 void fwfx_tick(void) {
     ++fwfx_clock;
     held_pump();
-    if (!fwfx.mode) return;
+    if (!fwfx.mode) {
+        ball_apply();
+        return;
+    }
     if (++fwfx.age >= (fwfx.mode == 1 ? 10 : fwfx.mode == 3 ? FWFX_CUE_TICKS : FWFX_RECALL_TICKS)) {
         fwfx_cancel();
         return;

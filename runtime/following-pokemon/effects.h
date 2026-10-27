@@ -7,6 +7,8 @@ void fwfx_snapshot(Actor *actor);
 void fwfx_out(Actor *actor);
 void fwfx_recall(Actor *actor);
 void fwfx_tick(void);
+/* The follower's ball ID (1-25); anything else shows the Poke Ball. */
+void fwfx_set_ball(unsigned ball);
 void fwfx_cancel(void);
 void fwfx_destroy(void);
 /* Effect-bank upload while a door or return fade is up. Not a billboard submit,

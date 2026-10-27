@@ -1630,6 +1630,32 @@ static void select_toggle(void *field, int ownTalk, int paused, uint32_t *reason
         fwfield_summonAt = p->world;
     }
 }
+/* The follower's ball (White 2 ball ID) for the effects. The party is read
+ * only when the pick changes: by personality and trainer, since the slot is -1
+ * for an automatic lead. A recall that is still running keeps its old ball. */
+static uint32_t fwfield_ballWho, fwfield_ballTrainer;
+static uint8_t fwfield_ballKnown;
+static void sync_ball(void *game) {
+    const FwPokemon *who = &fwfield_follower.selected;
+    if (!game || !fwfield_follower.has_selection) return;
+    if (fwfield_ballKnown && fwfield_ballWho == who->personality && fwfield_ballTrainer == who->trainer)
+        return;
+    void *party = CALL(0x0201735d, void *(*)(void *))(game);
+    if (!party) return;
+    unsigned count = CALL(0x0201fe25, unsigned (*)(void *))(party), ball = 0;
+    uint32_t (*param)(void *, unsigned, void *) = CALL(0x0201cd25, uint32_t(*)(void *, unsigned, void *));
+    for (unsigned i = 0; i < count && i < 6; ++i) {
+        void *mon = CALL(0x0201ff35, void *(*)(void *, unsigned))(party, i);
+        if (mon && param(mon, 0, 0) == who->personality && param(mon, 7, 0) == who->trainer) {
+            ball = param(mon, 0x98, 0);
+            break;
+        }
+    }
+    fwfield_ballWho = who->personality;
+    fwfield_ballTrainer = who->trainer;
+    fwfield_ballKnown = 1;
+    fwfx_set_ball(ball);
+}
 static void before(ActorSystem *sys) {
     fwt_poll_input();
     ++fwfield_tick;
@@ -1686,6 +1712,7 @@ static void before(ActorSystem *sys) {
 #endif
     }
     void *field = sys->field;
+    if (field) sync_ball(PTR(field, 8));
     if (fwt_active() && !fwt_owns(field)) fwt_cancel();
     int ownTalk = fwt_field_owns(field);
     unsigned eventState = fws_poll();
