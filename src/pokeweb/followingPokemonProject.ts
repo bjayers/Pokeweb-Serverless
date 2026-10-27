@@ -687,9 +687,7 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
     entry.offsets = [13, 14, 15].map(offset => (expanded[at + offset] << 24) >> 24) as [number, number, number];
   }
   // Follower rows carry no native world Y offset (descriptor byte 14), as an
-  // installed and migrated ROM does: the retail Pokemon rows set 50, which the
-  // engine applies to the actor and lifted every fresh follower above its
-  // shadow. Registry Y takes the value first and comes out at 0.
+  // installed and migrated ROM does. Registry Y takes any value first.
   clearFollowerDescriptorY(registry, expanded);
   deriveFollowerGrounding(registry, resources.files, personal);
   descriptors.files[0] = expanded; deriveFollowerSpacing(registry, resources.files); validateFollowerRegistry(registry);
@@ -700,8 +698,7 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
 /* The runtime draws the follower at registry Y minus descriptor byte 14 (plus
  * two pixels). Byte 14 is cleared on follower rows, so the native shadow stays
  * on the ground; move its value into registry Y first so the sprite does not
- * move. A fresh install copies the retail byte into both, and clearing only
- * the descriptor lifted every sprite by that much. */
+ * move. */
 function clearFollowerDescriptorY(registry: FollowerRegistry, descriptor: Uint8Array): void {
   for (const entry of registry.entries) {
     const at = 4 + entry.descriptorRow * 28 + 14, native = (descriptor[at] << 24) >> 24;
