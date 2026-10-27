@@ -86,6 +86,10 @@ static uint8_t fwfield_population;
  * tile, and the return must be on them. The player moving first, or no open
  * tile, clears it. */
 static uint8_t fwfield_summon=1,fwfield_summonSeen,fwfield_summonMatch;
+/* 1 from a new field until the player first presses the D-pad. A door's
+ * step off the mat, or out of the doorway, is the game's own movement; the
+ * trail drops it, so the walk-in starts from the player's first steps. */
+static uint8_t fwfield_entryHold;
 static uint16_t fwfield_summonZone;
 static Vec fwfield_summonAt,fwfield_summonFrom;
 /* 1 after something stepped onto the resting ball: the trail restarts and
@@ -572,7 +576,7 @@ static void beside_hold(const Actor *a,FwSample *target){
  *  3. Either side at the follow distance, facing the player.
  * Neither: the ordinary walk-in. A large follower kept in its ball here
  * comes out as the resting ball, one tile away like the ball's walk. */
-API volatile struct { uint32_t magic,version,source,decision,placed,placements,unloadZone,unloadX,unloadZ,sightZone,sightX,sightZ; } FollowingSummonDebug={.magic=0x4d535746,.version=1,.source=1};
+API volatile struct { uint32_t magic,version,source,decision,placed,placements,unloadZone,unloadX,unloadZ,sightZone,sightX,sightZ,entryDrops,walkIns; } FollowingSummonDebug={.magic=0x4d535746,.version=2,.source=1};
 static int dir_dx(unsigned d){return d==2?-1:d==3?1:0;}
 static int dir_dz(unsigned d){return d==0?-1:d==1?1:0;}
 static int tile_open(Actor *p,int steps,unsigned d,int32_t *height){
@@ -683,6 +687,13 @@ static void move(Actor *a) {
  if(paused){clear_swap();drop_settled();}
  else if(swapOn.active){if(drive_swap(a,&sample,&player))return;}
  else if(begin_swap(a,&sample,&player))return;
+ if(fwfield_entryHold){
+  if(!paused&&(CALL(0x0203df4d,unsigned(*)(void))()&0xf0u))fwfield_entryHold=0;
+  else if(fwfield_follower.state==FW_WAITING&&(a->flags&HIDDEN)&&!fwfield_summon){
+   if(fwfield_follower.trail.count>1)++FollowingSummonDebug.entryDrops;
+   fw_trail_clear(&fwfield_follower.trail);
+  }
+ }
  int result=fw_trail_push_directional(&fwfield_follower.trail,&sample,&target,walk_gaps());
  if(result<0) { a->flags|=HIDDEN; fwfield_follower.state=FW_WAITING; FollowingDebug.visible=0; ++FollowingDebug.resets;clear_swap();clear_ease();drop_settled();animation_gate(a); return; }
  /* An event may own the sprite, but the route has to keep the player's
@@ -755,7 +766,7 @@ static void move(Actor *a) {
 #endif
   /* A send-out must have its ball. Load the banks now if nothing has. */
   if(!fwfx_available())fwfx_prepare(a);
-  fwfx_out(a);
+  fwfx_out(a);++FollowingSummonDebug.walkIns;
  }
  reveal_follower(a);
  fwfield_follower.state=FW_FOLLOWING; FollowingDebug.visible=!(a->flags&HIDDEN);
@@ -1151,7 +1162,7 @@ static void before(ActorSystem *sys) {
   int manualSlot=fwfield_follower.slot;
   int keepManual=fwfield_owner&&fwfield_follower.has_selection&&manualSlot>=0;
   fws_detach();cleanup();fwt_unload();if(sys!=fwfield_warmed)fwfx_destroy();fwfield_warmed=0;fwfield_owner=sys;
-  fwfield_summonSeen=0;
+  fwfield_summonSeen=0;fwfield_entryHold=1;
   fw_init(&fwfield_follower,++fwfield_generation);
   if(keepManual){fwfield_follower.selected=manual;fwfield_follower.slot=(int8_t)manualSlot;fwfield_follower.has_selection=1;}
   fwfield_eventsReady=fws_attach(sys,&fwfield_follower,fwfield_generation,scene_recall);
