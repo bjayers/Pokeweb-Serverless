@@ -44,18 +44,32 @@ def publish_outputs(field_dll,events_dll,output,options_dll,battle_dll):
         elif BLACK2: assets=assets/'black2'
         elif ITALY: assets=assets/'white2italy'
         assets.mkdir(parents=True,exist_ok=True)
-        shutil.copyfile(field_dll,assets/field_dll.name)
-        shutil.copyfile(events_dll,assets/events_dll.name)
-        shutil.copyfile(output,assets/output.name)
-        shutil.copyfile(options_dll,assets/options_dll.name)
-        shutil.copyfile(battle_dll,assets/battle_dll.name)
-        base_build=ROOT_BUILD/'base'
-        base_suffix=('B2' if BLACK2 else 'W2I' if ITALY else 'W2')+'Base'
-        base_field=base_build/f'PokewebFollowingField{base_suffix}.dll'
-        base_events=base_build/f'PokewebFollowingEvents{base_suffix}.dll'
-        if not base_field.exists() or not base_events.exists():raise ValueError('Base follower package is missing')
-        shutil.copyfile(base_field,assets/base_field.name)
-        shutil.copyfile(base_events,assets/base_events.name)
+        shared=lambda path:assets/path.name.replace('Base.dll','.dll')
+        if VARIANT=='base':
+            # A grounded-only build. Its field/events pair keeps the Base names;
+            # core, Options and battle are shared by both packages and keep the
+            # plain names the site loads. The riding pair already in assets is
+            # left as it is, and its fingerprint is read from those files.
+            shutil.copyfile(field_dll,assets/field_dll.name)
+            shutil.copyfile(events_dll,assets/events_dll.name)
+            for path in (output,options_dll,battle_dll):shutil.copyfile(path,shared(path))
+            base_field,base_events=field_dll,events_dll
+            full_field,full_events=shared(field_dll),shared(events_dll)
+            if not full_field.exists() or not full_events.exists():raise ValueError('Bundled riding follower package is missing')
+        else:
+            shutil.copyfile(field_dll,assets/field_dll.name)
+            shutil.copyfile(events_dll,assets/events_dll.name)
+            shutil.copyfile(output,assets/output.name)
+            shutil.copyfile(options_dll,assets/options_dll.name)
+            shutil.copyfile(battle_dll,assets/battle_dll.name)
+            base_build=ROOT_BUILD/'base'
+            base_suffix=('B2' if BLACK2 else 'W2I' if ITALY else 'W2')+'Base'
+            base_field=base_build/f'PokewebFollowingField{base_suffix}.dll'
+            base_events=base_build/f'PokewebFollowingEvents{base_suffix}.dll'
+            if not base_field.exists() or not base_events.exists():raise ValueError('Base follower package is missing')
+            shutil.copyfile(base_field,assets/base_field.name)
+            shutil.copyfile(base_events,assets/base_events.name)
+            full_field,full_events=field_dll,events_dll
         old_runtime=json.loads((assets/'runtime.json').read_text()) if (assets/'runtime.json').exists() else None
         old_current=({key:old_runtime[key] for key in ('version','fieldSha256','eventsSha256','eventsAbi','coreSha256','coreAbi','optionsModuleSha256','battleModuleSha256') if key in old_runtime} if old_runtime else None)
         if ITALY and old_current:
@@ -85,7 +99,7 @@ def publish_outputs(field_dll,events_dll,output,options_dll,battle_dll):
             previous_versions=[first_053]+[entry for entry in previous_versions if entry.get('fieldSha256')!=first_053['fieldSha256']]
         if old_current and old_runtime.get('variants',{}).get('base'):
             previous_versions=dedupe_versions([{**old_current,**old_runtime['variants']['base'],'variant':'base'}]+previous_versions)
-        full_fingerprint={'fieldSha256':hashlib.sha256(field_dll.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(events_dll.read_bytes()).hexdigest(),'eventsAbi':6}
+        full_fingerprint={'fieldSha256':hashlib.sha256(full_field.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(full_events.read_bytes()).hexdigest(),'eventsAbi':6}
         base_fingerprint={'fieldSha256':hashlib.sha256(base_field.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(base_events.read_bytes()).hexdigest(),'eventsAbi':4}
         (assets/'runtime.json').write_text(json.dumps({'version':VERSION,'dialogueAnimations':True,'tileBounds':True,**full_fingerprint,'variants':{'base':base_fingerprint,'full':full_fingerprint},'coreSha256':hashlib.sha256(output.read_bytes()).hexdigest(),'coreAbi':4,'battleModuleSha256':hashlib.sha256(battle_dll.read_bytes()).hexdigest(),'optionsModuleSha256':hashlib.sha256(options_dll.read_bytes()).hexdigest(),'previousVersions':previous_versions},indent=2)+'\n')
     if publish and UPGRADE:
