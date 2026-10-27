@@ -15,6 +15,8 @@ void fwfx_warm(uint32_t heap);
 int fwfx_hides_actor(void);
 /* Closed ball at `at` with a one-pixel shake and the refusal beep. */
 void fwfx_cue(const Vec *at);
+/* Closed ball resting at `at` while no effect plays; 0 removes it. */
+void fwfx_rest_at(const Vec *at);
 int fwfx_busy(void);
 int fwfx_recalling(void);
 int fwfx_available(void);

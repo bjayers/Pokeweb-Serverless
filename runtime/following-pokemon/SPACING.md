@@ -126,9 +126,8 @@ the same flag seasons use). A zone row in `positioning.narc` member 1 swaps the
 rule for that zone: a large interior that lets it out, or a cramped exterior or
 cave that keeps it in.
 
-- Doors keep the existing recall before the fade. Inside, the MapSpawnFinish
-  covered spawn is skipped (`FollowingConfigDebug.covered` 6) and the field
-  update builds the actor hidden; `move()` keeps it hidden.
+- Doors keep the existing recall before the fade. Inside, the
+  field update builds the actor hidden; `move()` keeps it hidden.
 - L/R where a large follower is barred skips large party members, and works
   while the large one is in its ball. With no small one to bring out, the
   closed ball shows where the follower stands, shakes a pixel either way, and
@@ -141,6 +140,10 @@ cave that keeps it in.
   probed and so is a tile either way along the line toward the player, so it
   goes in a tile before it walks under and comes out a tile after. Three
   terrain queries per trail tile and height (`FieldG3DMapper_GetTerrainAll`).
+  While it is held there, the closed ball stays out on the follower's hidden
+  pose and follows the trail, hopping a pixel or two per step and landing
+  when the player stops (`fwfx_rest_at`; not an effect mode, so it blocks
+  nothing). Release sends out from the ball. Indoors there is no ball.
 
 32-pixel followers are not affected.
 

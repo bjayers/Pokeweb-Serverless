@@ -270,6 +270,9 @@ static int large_barred(void){
 #define FW_COVER_CLEAR 20u
 static struct { int32_t x,z,y,sx,sz; uint8_t valid,covered; } fwfield_cover;
 static uint8_t fwfield_held,fwfield_heldClear;
+/* The actor system whose effect banks the map-load hook already uploaded.
+ * The field update's owner change keeps them instead of dropping them. */
+static void *fwfield_warmed;
 static int floor_over(void *mapper,int32_t x,int32_t y,int32_t z,int ground){
  /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height, then
   * the u16 layer count. */
@@ -308,6 +311,19 @@ static int under_floor(Actor *a,const FwSample *t){
 }
 /* A 64-pixel follower barred here, or held under a floor by move(). */
 static int large_kept(const Actor *a){return large_actor(a)&&(fwfield_held||large_barred());}
+/* Under a floor the recalled ball stays out on the follower's hidden pose,
+ * so the player sees where it went; release sends out from there. Indoors
+ * it stays recalled with no ball. */
+static const Vec *rest_ball(void){
+ if(!owned())return 0;
+ const Actor *a=(const Actor*)fwfield_follower.actor;
+#ifdef FW_MOUNT
+ if(fwland_active())return 0;
+#endif
+ if(!fwfield_held||!(a->flags&HIDDEN)||!large_actor(a)||
+    (fwfield_follower.state!=FW_WAITING&&fwfield_follower.state!=FW_EVENT_PAUSED)||large_barred())return 0;
+ return &a->world;
+}
 /* 1 while a 64-pixel follower stays in its ball: barred here, or under a
  * floor. Leaving cover waits FW_COVER_CLEAR updates, so a trail along a
  * floor's edge does not flash it in and out. */
@@ -525,6 +541,8 @@ static void move(Actor *a) {
   /* Dismount returns through this ordinary trail-spawn path and keeps its
    * ball send-out effect. */
 #endif
+  /* A send-out must have its ball. Load the banks now if nothing has. */
+  if(!fwfx_available())fwfx_prepare(a);
   fwfx_out(a);
  }
  reveal_follower(a);
@@ -738,8 +756,12 @@ API void FollowingPreloadFollower(void *field, void *actorSystem) {
  if(!config()){if(fresh)fwfield_configState=0;FollowingConfigDebug.insert=4;return;}
  /* Effect-bank upload (0x020494d9 inside fwfx_warm). The entrance fade is a
   * live 3D scan, and this hook is the last field work before that picture is
-  * swapped. Doing it here keeps the write off the frames the fade reveals. */
+  * swapped. Doing it here keeps the write off the frames the fade reveals.
+  * The first field update on this system then sees a new owner; it keeps
+  * these banks. It used to drop them, so the entry send-out had no ball. */
+ if(fwfield_owner!=actorSystem)fwfx_destroy();
  fwfx_warm(((ActorSystem*)actorSystem)->resourceHeap);
+ fwfield_warmed=fwfx_available()?actorSystem:0;
  FwPokemon selected;int slot=-1;
  if(!select(game,field,&selected,0,0,&slot)){FollowingConfigDebug.insert=5;return;}
  uint16_t code=model(&selected);
@@ -875,7 +897,7 @@ static void before(ActorSystem *sys) {
   FwPokemon manual=fwfield_follower.selected;
   int manualSlot=fwfield_follower.slot;
   int keepManual=fwfield_owner&&fwfield_follower.has_selection&&manualSlot>=0;
-  fws_detach();cleanup();fwt_unload();fwfx_destroy();fwfield_owner=sys;
+  fws_detach();cleanup();fwt_unload();if(sys!=fwfield_warmed)fwfx_destroy();fwfield_warmed=0;fwfield_owner=sys;
   fw_init(&fwfield_follower,++fwfield_generation);
   if(keepManual){fwfield_follower.selected=manual;fwfield_follower.slot=(int8_t)manualSlot;fwfield_follower.has_selection=1;}
   fwfield_eventsReady=fws_attach(sys,&fwfield_follower,fwfield_generation,scene_recall);
@@ -1164,6 +1186,7 @@ API void FollowingUpdate(ActorSystem *sys) {
    * the world reappears, or on the body's first raster, is the scanline. */
   if(shown && !firstBody){fwfx_prepare(a);fwfx_snapshot(a);}
  }
+ fwfx_rest_at(rest_ball());
 }
 int fwfield_first_body(void){return fwfield_reveal;}
 int fwfield_follower_shaded(void){return fwfield_shaded;}

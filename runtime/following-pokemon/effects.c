@@ -157,7 +157,7 @@ void fwfx_destroy(void){
  /* Unload, battle, and a new actor system all come through here. The clock
   * does not advance while this overlay is gone, so a deferred 0x02049561
   * would run on the first frames the overworld is visible again. */
- fwfx_player=0;fwfx_drop=1;fwfx_emote_end();
+ fwfx_player=0;fwfx_drop=1;fwfx_emote_end();fwfx_rest_at(0);
  fwfx_cancel();hold_effects();held_pump();fwfx_drop=0;
  fwfx.ready=0;FollowingEffectsDebug[6]=0;
 }
@@ -274,6 +274,16 @@ void fwfx_cue(const Vec *at){
  if(fwfx.ready!=1||fwfx.mode||!at)return;
  fwfx.transform.pos=*at;fwfx.transform.pos.z+=6*4096;fwfx.mode=3;fwfx.age=0;FollowingEffectsDebug[2]=3;FollowingEffectsDebug[5]=0;
 }
+/* The closed ball resting where a recalled follower waits. It is not an
+ * effect mode, so it never blocks one; any mode draws instead of it. It hops
+ * one step per update while the pose moves, and lands before stopping. */
+static struct {Vec at;uint8_t on,step;} fwfx_rest;
+void fwfx_rest_at(const Vec *at){
+ if(!at){fwfx_rest.on=0;fwfx_rest.step=0;return;}
+ int moved=fwfx_rest.on&&(fwfx_rest.at.x!=at->x||fwfx_rest.at.z!=at->z);
+ if(moved||(fwfx_rest.step&7u))fwfx_rest.step=(uint8_t)((fwfx_rest.step+1u)&7u);
+ fwfx_rest.at=*at;fwfx_rest.on=1;
+}
 int fwfx_busy(void){return fwfx.mode!=0;}
 int fwfx_recalling(void){return fwfx.mode==2;}
 int fwfx_available(void){return fwfx.ready==1;}
@@ -288,7 +298,15 @@ void fwfx_tick(void){
 static void draw_emote(void *camera,void *light);
 void fwfx_draw(void *camera,void *light){
  draw_emote(camera,light);
- if(!fwfx.mode || fwfx.ready!=1)return;
+ if(fwfx.ready!=1)return;
+ if(!fwfx.mode){
+  static const uint8_t hop[8]={0,1,2,2,1,0,0,0};
+  if(!fwfx_rest.on)return;
+  Vec at=fwfx.transform.pos;
+  fwfx.transform.pos=fwfx_rest.at;fwfx.transform.pos.z+=6*4096;fwfx.transform.pos.y+=hop[fwfx_rest.step&7u]*4096;
+  CALL(0x02049b89,void(*)(void*,void*))(fwfx.actors[0],&fwfx.transform);
+  fwfx.transform.pos=at;return;
+ }
  if(fwfx.mode==3){
   Vec at=fwfx.transform.pos;
   if(fwfx.age<FWFX_CUE_SHAKE)fwfx.transform.pos.x+=(fwfx.age&2)?4096:-4096;
