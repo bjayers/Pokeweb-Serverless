@@ -3921,6 +3921,15 @@
       "expectedHex": "08b51430fff75eff08bd0000",
       "abi": "Thumb FieldBlAct_FindCachedObjMat; r0=FieldBlAct*, r1=object code, r2=u16* material, r3=u16* flags. Returns nonzero when the code is cached. No patch is written at this site.",
       "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "menu-app-call-callback",
+      "module": "field",
+      "segment": "12",
+      "address": 34977100,
+      "expectedHex": "f0b583b00f1c051c3868141c0d285ed8",
+      "abi": "Thumb EventFieldAppCall_Callback; compared, never called. The field menu chains this event to leave the field for an application (bag, party, options); the field unload finds it in the running event chain and arms the return placement. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
     }
   ],
   "eventsAbi": 6,

@@ -1503,6 +1503,20 @@ API void FollowingTerrainDraw(void *system,void *camera,void *light){
  fwr_effects_draw(system,camera,light,owned()?(Actor*)fwfield_follower.actor:0);
 }
 extern int FollowingOriginalUnload(void*,void*);
+/* 1 when the running event chain is the field menu leaving the field for an
+ * application: EventFieldMenu_Callback, the EventFieldAppCall_Callback it
+ * chains, or EventFieldMenuReturn_Callback. The event policy recalls the
+ * follower for that application before this unload, so the menu marker and
+ * the actor are both gone by then; the chain is not. */
+static int menu_chain(void *field){
+ void *gsys=field?PTR(field,4):0,*event=gsys?PTR(gsys,0x18):0;
+ for(unsigned depth=0;event&&depth<16;++depth,event=PTR(event,0)){
+  if(PTR(event,16)!=gsys)return 0;
+  uint32_t callback=U32(event,4);
+  if(callback==0x0215a8b5u||callback==0x0215b54du||callback==0x0218b1a9u)return 1;
+ }
+ return 0;
+}
 API int FollowingUnload(void *game,void *field) {
 #ifdef FW_MOUNT
  FweMount mount;
@@ -1516,8 +1530,8 @@ API int FollowingUnload(void *game,void *field) {
  {
   void *fp=field?PTR(field,0x94):0;
   Actor *pl=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
-  int menu=fws_menu_active(),battle=fws_battle_entry();
-  int arm=pl&&(menu||battle)&&(owned()||followers_off(PTR(field,8)));
+  int menu=fws_menu_active()||menu_chain(field),battle=!menu&&fws_battle_entry();
+  int arm=pl&&(menu||(battle&&(owned()||followers_off(PTR(field,8)))));
   if(FollowingCoreAPI.abi==FWC_ABI&&FollowingCoreAPI.size==sizeof(FwcApi)){
    FwreSummon request={menu?FWRE_SUMMON_MENU:FWRE_SUMMON_BATTLE,fw_field_zone(field),pl?pl->world.x:0,pl?pl->world.z:0};
    /* A map change consumes any older request, so it cannot carry over. */

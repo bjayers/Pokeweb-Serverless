@@ -76,9 +76,15 @@ On brings the follower out at once.
 The same placement runs at boot, and when a menu or a battle closed the
 field with the follower out or with Followers off (the options screen is a
 menu). Every map change goes through the same unload
-(`FieldRoutine_MapUnload`), so the unload only arms the placement while the
-X-menu event (`fws_menu_active`) or a battle chain (`fws_battle_entry`) owns
-the field. Doors, Fly, Escape Rope and other warps keep the walk-in. As a
+(`FieldRoutine_MapUnload`), so the unload only arms the placement for a
+menu or a battle. A menu is found in the running event chain:
+`EventFieldMenu_Callback`, the `EventFieldAppCall_Callback` it chains to
+open the bag, party or options, or `EventFieldMenuReturn_Callback`. The event
+policy recalls the follower for that application before the unload, so the
+menu marker and the actor are already gone there, and a menu arms either way.
+A battle chain (`fws_battle_entry`) arms with the follower out or Followers
+off. Fly, Escape Rope, Dig and Teleport start from the menu too; the zone and
+tile match below cancels them. Doors, Fly, Escape Rope and other warps keep the walk-in. As a
 second guard the unload records the field's zone and the player's tile, and
 the next field, once no event holds it, places only when the player is back
 on that tile in that zone. The player moving first cancels it.
