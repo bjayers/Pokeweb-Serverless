@@ -43,20 +43,7 @@
   padding: 12px 0;
 }
 
-.following-riding-option {
-  align-items: center;
-  background: transparent;
-  color: #eef0f8;
-  display: flex;
-  font-weight: 500;
-  gap: 9px;
-  margin: 12px 0 0;
-  padding: 8px 0 4px;
-}
-
-.following-riding-option input { accent-color: #bd93f9; margin: 0; }
-
-.following-riding-option + [data-fw-riding-status] {
+.following-package-status {
   background: transparent;
   color: #d6d7e2;
   font-size: 13px;

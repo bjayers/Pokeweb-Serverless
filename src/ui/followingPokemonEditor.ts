@@ -122,7 +122,7 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
   const aggregateSpeciesOptions = aggregateSpeciesIds.map(id => `<option value="${escapeHtml(speciesDisplayValue(project, id))}"></option>`).join("");
   const panel = document.createElement("section"); panel.className = "code-injection-card following-pokemon-editor";
   panel.innerHTML = `<header class="following-editor-hero"><div><h2>Following Pokémon</h2></div></header>
-    <label class="following-riding-option"><input type="checkbox" data-fw-riding> Riding and custom Surf</label><p data-fw-riding-status>Grounded followers only. Choose before installing.</p>
+    <p class="following-package-status" data-fw-riding-status>Grounded followers only.</p>
     <div class="following-editor-runtime-actions code-injection-actions"><button class="btn -primary" data-fw-prepare disabled>Edit Follower Graphics</button>
     <button class="btn" data-fw-install disabled>Install Followers System</button><button class="btn" data-fw-toggle hidden>Disable following</button><button class="btn" data-fw-remove hidden>Remove runtime</button></div>
     <section class="following-interaction-workspace"><div class="following-aggregate-toolbar"><label><span>View rules for Pokémon</span><input type="text" list="follower-overview-species" placeholder="Choose a Pokémon" autocomplete="off" data-fw-aggregate-species disabled></label>
@@ -144,7 +144,9 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
   const error = panel.querySelector<HTMLElement>("[data-fw-error]")!;
   const prepare = panel.querySelector<HTMLButtonElement>("[data-fw-prepare]")!;
   const install = panel.querySelector<HTMLButtonElement>("[data-fw-install]")!;
-  const riding = panel.querySelector<HTMLInputElement>("[data-fw-riding]")!;
+  // The riding and custom Surf package is no longer offered. An installed one
+  // is still recognized, edited and removable.
+  let ridingInstalled = false;
   const ridingStatus = panel.querySelector<HTMLElement>("[data-fw-riding-status]")!;
   const toggle = panel.querySelector<HTMLButtonElement>("[data-fw-toggle]")!;
   const remove = panel.querySelector<HTMLButtonElement>("[data-fw-remove]")!;
@@ -453,7 +455,7 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
     select.addEventListener("change", changeSelected); options();
     if (rom && positionEnabled) positionEditor = createFollowerPositionEditor({
       root: assets.querySelector<HTMLElement>("[data-fw-position-editor]")!, project, rom,
-      allowRiding: riding.checked,
+      allowRiding: ridingInstalled,
       workspace: () => workspace!, entry: current, followerResource: getAsset,
       navigateFollower: step => {
         const count = select.options.length;
@@ -532,9 +534,8 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
     enabled = state.enabled;
     animationsNeedUpdate = !state.removed && !state.dialogueAnimations;
     tileBoundsNeedUpdate = !state.removed && !state.tileBounds;
-    riding.checked = (state.variant ?? "full") === "full";
-    riding.disabled = !state.removed;
-    ridingStatus.textContent = state.removed ? "Choose the package to reinstall." : riding.checked ? "Riding and custom Surf installed. Remove and reinstall to change." : "Grounded followers installed. Remove and reinstall to change.";
+    ridingInstalled = !state.removed && (state.variant ?? "full") === "full";
+    ridingStatus.textContent = state.removed ? "Grounded followers only." : ridingInstalled ? "Riding and custom Surf installed. Remove the runtime to reinstall grounded followers only." : "Grounded followers installed.";
     if (state.externalRuntime) ridingStatus.textContent = "External runtime. Dialogue, gifts and positioning are editable; installation is managed outside Pokeweb.";
     artworkReplacementAvailable = await followerArtworkReplacementAvailable(project, rom);
     if (rom) workspace = readFollowerWorkspace(project, rom);
@@ -550,7 +551,7 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
   }
   install.addEventListener("click", async () => {
     install.disabled = true;
-    try { const state = await installFollowerAlpha(project, rom, { riding: riding.checked }); onDirty(); stock = undefined; await refreshRuntime(state); if (workspace) renderAssets(); }
+    try { const state = await installFollowerAlpha(project, rom, { riding: false }); onDirty(); stock = undefined; await refreshRuntime(state); if (workspace) renderAssets(); }
     catch (reason) { fail(reason); install.disabled = false; }
   });
   remove.addEventListener("click", async () => {
@@ -564,12 +565,6 @@ export function renderFollowingPokemonEditor(project: ProjectState, root: HTMLEl
     try { const state = await setFollowerAlphaEnabled(project, !enabled, rom); onDirty(); await refreshRuntime(state); }
     catch (reason) { fail(reason); }
     finally { toggle.disabled = false; }
-  });
-  riding.addEventListener("change", async () => {
-    ridingStatus.textContent = riding.checked ? "Riding and custom Surf will be installed." : "Only grounded followers will be installed.";
-    if (workspace) renderAssets();
-    try { const report = await checkFollowerCompatibility(project, rom, riding.checked ? "full" : "base"); install.disabled = !report.compatible; if (!report.compatible) error.textContent = report.message; else error.textContent = ""; }
-    catch (reason) { fail(reason); install.disabled = true; }
   });
   prepare.addEventListener("click", async () => {
     prepare.disabled = true;
