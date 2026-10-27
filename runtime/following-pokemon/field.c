@@ -79,6 +79,12 @@ static FweRestore fwfield_restore;
  * entrance fade. That fade must not delete the actor the covered render
  * already submitted. A later door fade still recalls. */
 static uint8_t fwfield_population;
+/* 1 after something stepped onto the resting ball: the trail restarts and
+ * the ball stays away until the hold places it again. */
+static uint8_t fwfield_ballOff;
+/* The party slot a fresh map would bring out. Indoors, L/R still offers it
+ * when it is large, as its ball. */
+static int fwfield_leadSlot=-1;
 #define REGISTRY_MAX (32u+FW_MAX_ROWS*24u)
 static uint8_t fwfield_page[FW_REGISTRY_PAGE];
 static uint16_t fwfield_index[FW_MAX_SPECIES+2];
@@ -215,6 +221,7 @@ static void bind_pose(Actor *a,int32_t x,int32_t y,int32_t z,unsigned face){
 }
 static void recall_blocked(Actor *a){
  if(!(a->flags&HIDDEN))fwfx_recall(a);
+ else if(fwfx_resting()){fwfx_rest_recall();fwfield_ballOff=1;}
  a->flags|=HIDDEN;fwfield_follower.state=FW_WAITING;FollowingDebug.visible=0;
  fw_trail_clear(&fwfield_follower.trail);++FollowingDebug.resets;
  clear_swap();clear_ease();drop_settled();FollowingSwapDebug.blocked=1;
@@ -223,19 +230,20 @@ static void recall_blocked(Actor *a){
  * trail. The follower turns in place on that pose, or on the start floor when
  * the mirrored end is closer than that. The next walk eases from there. */
 static int owned(void);
-/* The 64-pixel size bonus in use, 0..FW_LARGE_GAP_BONUS. gap_ramp() walks
- * it to 0 while the follower waits in its ball on the trail, which keeps a
- * 32-pixel distance, and back out once it is sent out. */
-static uint8_t fwfield_bonus=FW_LARGE_GAP_BONUS;
-/* Stored gaps plus that bonus. directional_gap keeps the selected
- * positioning row, 0..12, so a later edit of that row still tunes a large
- * follower. Before the actor exists the bonus is 0; the trail simply waits
- * for the extra distance once it does. */
+/* Units taken off every gap, 0..FW_MAX_DIRECTIONAL_GAP. gap_ramp() walks it
+ * up while the follower waits in its ball on the trail, so the ball keeps
+ * the tile right behind the player, and back down once it is sent out. */
+static uint8_t fwfield_shrink;
+/* Stored gaps plus the 64-pixel size bonus, less that shrink.
+ * directional_gap keeps the selected positioning row, 0..12, so a later edit
+ * of that row still tunes a large follower. Before the actor exists the bonus
+ * is 0; the trail simply waits for the extra distance once it does. */
 static const uint8_t *walk_gaps(void){
  static uint8_t gaps[4];
- unsigned bonus=owned()&&((Actor*)fwfield_follower.actor)->descriptor[7]==2?fwfield_bonus:0u;
+ unsigned bonus=owned()&&((Actor*)fwfield_follower.actor)->descriptor[7]==2?FW_LARGE_GAP_BONUS:0u;
  for(unsigned i=0;i<4;++i){
   unsigned gap=fwfield_follower.directional_gap[i]+bonus;
+  gap=gap>fwfield_shrink?gap-fwfield_shrink:0u;
   gaps[i]=(uint8_t)(gap>FW_MAX_DIRECTIONAL_GAP?FW_MAX_DIRECTIONAL_GAP:gap);
  }
  return gaps;
@@ -274,9 +282,6 @@ static int large_barred(void){
 #define FW_COVER_CLEAR 20u
 static struct { int32_t x,z,y,sx,sz; uint8_t valid,covered; } fwfield_cover;
 static uint8_t fwfield_held,fwfield_heldClear;
-/* 1 after something stepped onto the resting ball: the trail restarts and
- * the ball stays away until the hold places it again. */
-static uint8_t fwfield_ballOff;
 /* The actor system whose effect banks the map-load hook already uploaded.
  * The field update's owner change keeps them instead of dropping them. */
 static void *fwfield_warmed;
@@ -318,9 +323,9 @@ static int under_floor(Actor *a,const FwSample *t){
 }
 /* A 64-pixel follower barred here, or held under a floor by move(). */
 static int large_kept(const Actor *a){return large_actor(a)&&(fwfield_held||large_barred());}
-/* Under a floor the recalled ball stays out on the follower's hidden pose,
- * so the player sees where it went; release sends out from there. Indoors
- * it stays recalled with no ball. */
+/* A large follower kept in its ball, under a floor or indoors, leaves the
+ * closed ball out on its hidden pose, so the player sees where it went.
+ * Release sends out from there; indoors it stays until an exterior. */
 static const Vec *rest_ball(void){
  if(!owned())return 0;
  const Actor *a=(const Actor*)fwfield_follower.actor;
@@ -328,19 +333,23 @@ static const Vec *rest_ball(void){
  if(fwland_active())return 0;
 #endif
  if(!fwfield_held||fwfield_ballOff||!(a->flags&HIDDEN)||!large_actor(a)||
-    (fwfield_follower.state!=FW_WAITING&&fwfield_follower.state!=FW_EVENT_PAUSED)||large_barred())return 0;
+    (fwfield_follower.state!=FW_WAITING&&fwfield_follower.state!=FW_EVENT_PAUSED))return 0;
  return &a->world;
 }
-/* One unit per update the player moves: half the walking pace, so the gap
- * closes or opens over about a tile without a jump, and never while still. */
+/* Only while the player moves, so nothing drifts while still: the ball
+ * closes in two units an update, and the sent-out follower eases back one,
+ * half the walking pace. The trail is re-summed under each new gap. */
 static void gap_ramp(void){
  static int32_t lastX,lastZ;
  if(!owned()||!fwfield_player)return;
  int moved=fwfield_player->world.x!=lastX||fwfield_player->world.z!=lastZ;
  lastX=fwfield_player->world.x;lastZ=fwfield_player->world.z;
- unsigned target=rest_ball()?0u:FW_LARGE_GAP_BONUS;
- if(moved&&fwfield_bonus<target)++fwfield_bonus;
- else if(moved&&fwfield_bonus>target)--fwfield_bonus;
+ unsigned target=rest_ball()?FW_MAX_DIRECTIONAL_GAP:0u,shrink=fwfield_shrink;
+ if(moved&&shrink<target)shrink=shrink+2u>target?target:shrink+2u;
+ else if(moved&&shrink>target)--shrink;
+ if(shrink==fwfield_shrink)return;
+ fwfield_shrink=(uint8_t)shrink;
+ fw_trail_remeasure(&fwfield_follower.trail,walk_gaps());
 }
 /* 1 while a 64-pixel follower stays in its ball: barred here, or under a
  * floor. Leaving cover waits FW_COVER_CLEAR updates, so a trail along a
@@ -388,7 +397,9 @@ static void finish_swap(Actor *a,const FwSample *sample,const FwPoint *player,co
  clear_swap();FollowingSwapDebug.face=face;
  settled=fwfield_player->world;haveSettled=centered(&settled)?1:0;
  reveal_follower(a);
- fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);
+ /* A ball that swapped stays the ball. */
+ if(!(a->flags&HIDDEN))fwfield_follower.state=FW_FOLLOWING;
+ FollowingDebug.visible=!(a->flags&HIDDEN);
  animation_gate(a);
 }
 static int near_origin(const FwPoint *p){
@@ -466,7 +477,9 @@ static int begin_rail_swap(Actor *a,const FwSample *sample,const FwPoint *player
  return drive_swap(a,sample,player);
 }
 static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
- if(swapOn.active||!haveSettled||fwfield_follower.state!=FW_FOLLOWING||fwfx_hides_actor())return 0;
+ if(swapOn.active||!haveSettled||fwfx_hides_actor())return 0;
+ /* The resting ball swaps with the player like the follower. */
+ if(fwfield_follower.state!=FW_FOLLOWING&&!rest_ball())return 0;
  if(on_rail())return begin_rail_swap(a,sample,player);
  FwPoint follower={a->world.x,a->world.y,a->world.z},origin={settled.x,settled.y,settled.z};
  if(!fw_swap_match(&fwfield_follower.trail,&follower,&origin,fwfield_player->face))return 0;
@@ -614,6 +627,7 @@ static void scene_recall(void){
  if(fwland_active()&&owned()){((Actor*)fwfield_follower.actor)->flags|=HIDDEN;fwland_end();}
 #endif
  if(owned()&&!(((Actor*)fwfield_follower.actor)->flags&HIDDEN))fwfx_recall((Actor*)fwfield_follower.actor);
+ else if(fwfx_resting())fwfx_rest_recall();
  cleanup();
 }
 static uint16_t read16(const uint8_t *p){return p[0]|(uint16_t)p[1]<<8;}
@@ -726,6 +740,7 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
   mons[i]=(FwPokemon){.species=param(mon,5,0),.form=param(mon,0x6f,0),.gender=param(mon,0x6e,0),.egg=param(mon,0x4c,0),.hp=param(mon,0xa0,0),.max_hp=param(mon,0xa1,0),.personality=param(mon,0,0),.trainer=param(mon,7,0),.shiny=CALL(0x0201cdd9,int(*)(void*))(mon)};
  }
  int slot=fw_select(mons,count); if(slot<0)return 0;
+ fwfield_leadSlot=slot;
  if(direction){
   int current=-1;
   if(fwfield_follower.has_selection){
@@ -813,11 +828,11 @@ static void cycle_follower(void *game,void *field){
  if(keys!=0x100u && keys!=0x200u)return; /* Both shoulders together have no direction. */
  if(!owned() || !fwfield_player || fwt_active() || fwfx_busy())return;
  Actor *actor=(Actor*)fwfield_follower.actor;
- /* L/R is locked while the ball waits on the trail. */
- if(rest_ball()){fwfx_cue(&actor->world);return;}
- /* Where a large follower is barred, L/R only brings out a small one, and a
-  * large one held in its ball can still be switched out. */
+ /* Where a large follower is barred, L/R brings out a small one, or the
+  * lead as its ball, and a large one in its ball can still be switched out.
+  * Under a floor, L/R is locked while the ball waits on the trail. */
  int barred=large_barred();
+ if(!barred&&rest_ball()){fwfx_cue(&actor->world);return;}
  int held=barred&&fwfield_held&&large_actor(actor)&&(actor->flags&HIDDEN)&&fwfield_follower.state==FW_WAITING;
  if(!held&&(fwfield_follower.state!=FW_FOLLOWING||(actor->flags&HIDDEN)))return;
  fwfx_prepare(actor);
@@ -834,7 +849,7 @@ static void cycle_follower(void *game,void *field){
  for(unsigned tries=0;tries<6;++tries){
   if(!select(game,field,&next,0,keys==0x100u?1:-1,&slot)){code=0;break;}
   code=model(&next);
-  if(!code||!barred||!code_large(fwfield_owner,code))break;
+  if(!code||!barred||slot==fwfield_leadSlot||!code_large(fwfield_owner,code))break;
   code=0;refused=1;
   if(startHas&&fw_same_identity(&next,&start))break;
   fwfield_follower.selected=next;fwfield_follower.slot=(int8_t)slot;fwfield_follower.has_selection=1;
@@ -1085,9 +1100,17 @@ static void before(ActorSystem *sys) {
     for(unsigned i=0;i<3;++i)a->grid[i]=a->previous[i]=fwfield_cycleGrid[i];
     CALL(0x02167099,void(*)(Actor*,uint32_t))(a,fwfield_cycleFace);
     fwr_anchor(a,fwfield_cycleFace);
-    fwfx_out(a);
-    reveal_follower(a);
-    fwfield_follower.state=FW_FOLLOWING;FollowingDebug.visible=!(a->flags&HIDDEN);
+    if(large_kept(a)){
+     /* The lead switched to indoors comes out as its closed ball, with one
+      * bounce; move() keeps it on the trail. */
+     fwfield_held=1;fwfield_heldClear=FW_COVER_CLEAR;fwfield_ballOff=0;
+     fwfield_follower.state=FW_WAITING;fwfx_rest_bounce();
+    }else{
+     fwfx_out(a);
+     reveal_follower(a);
+     fwfield_follower.state=FW_FOLLOWING;
+    }
+    FollowingDebug.visible=!(a->flags&HIDDEN);
    }
   }else if(fwfield_restore.magic==FWE_RESTORE_MAGIC&&fwfield_restore.zone==fwfield_player->zone
      &&fwfield_restore.player.x==fwfield_player->world.x&&fwfield_restore.player.y==fwfield_player->world.y&&fwfield_restore.player.z==fwfield_player->world.z){

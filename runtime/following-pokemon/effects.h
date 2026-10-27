@@ -20,6 +20,8 @@ void fwfx_rest_at(const Vec *at);
 int fwfx_resting(void);
 /* The resting ball leaves with the ball sound. */
 void fwfx_rest_recall(void);
+/* One bounce of the resting ball, once it is up: a switch to it. */
+void fwfx_rest_bounce(void);
 int fwfx_busy(void);
 int fwfx_recalling(void);
 int fwfx_available(void);

@@ -439,6 +439,30 @@ static void large_gap(void) {
     pulled = (FwPoint){player0 + 2 * (int32_t)FW_TILE + 4096, 0, 0};
     assert(fw_clamp_dialogue_pose(&pulled, &player, 0, 3, FW_MAX_AUTHORED_GAP) == 0);
 }
+/* The resting ball walks the gap down to the tile behind the player and back
+ * out, re-summing the trail on each change, while the player walks. */
+static void ball_gap(void) {
+    FwTrail trail; FwSample pose; uint8_t gaps[4];
+    unsigned gap = FW_MAX_DIRECTIONAL_GAP;
+    fw_trail_clear(&trail);
+    int32_t x = 0;
+    for (unsigned phase = 0; phase < 4; ++phase) {
+        for (unsigned step = 0; step < 96; ++step) {
+            if (phase == 1 && gap) gap = gap > 2 ? gap - 2 : 0;
+            if (phase == 3 && gap < FW_MAX_DIRECTIONAL_GAP) ++gap;
+            for (unsigned i = 0; i < 4; ++i) gaps[i] = (uint8_t)gap;
+            fw_trail_remeasure(&trail, gaps);
+            x += 2 * 4096;
+            FwSample s = sample(x, 0, 0, 1, FW_WORLD); s.direction = 3;
+            assert(fw_trail_push_directional(&trail, &s, &pose, gaps) >= 0);
+            assert(trail.distance <= 2 * FW_TILE + 2 * 4096);
+            if (phase && trail.count > 1) assert(pose.x <= x && x - pose.x <= 3 * (int32_t)FW_TILE);
+        }
+        if (phase == 2) assert(x - pose.x >= (int32_t)FW_TILE - 4096 && x - pose.x <= (int32_t)FW_TILE + 2 * 4096);
+    }
+    int32_t rest = (int32_t)FW_TILE + (int32_t)FW_MAX_DIRECTIONAL_GAP * 4096;
+    assert(x - pose.x >= rest - 4096 && x - pose.x <= rest + 2 * 4096);
+}
 int main(void) {
     FwPokemon party[6] = {{0}};
     assert(fw_select(0, 0) == -1 && fw_select(party, 0) == -1 && fw_select(party, 7) == -1);
@@ -871,5 +895,6 @@ int main(void) {
     check_ease();
     corner_spacing();
     large_gap();
+    ball_gap();
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

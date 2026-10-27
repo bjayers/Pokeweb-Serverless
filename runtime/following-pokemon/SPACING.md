@@ -128,8 +128,8 @@ cave that keeps it in.
 
 - Doors keep the existing recall before the fade. Inside, the
   field update builds the actor hidden; `move()` keeps it hidden.
-- L/R where a large follower is barred skips large party members, and works
-  while the large one is in its ball. With no small one to bring out, the
+- L/R where a large follower is barred skips large party members other than
+  the lead, and works while the large one is in its ball. With no small one to bring out, the
   closed ball shows where the follower stands, shakes a pixel either way, and
   plays `SEQ_SE_BEEP` (1367); `fwfx_cue`, about a second.
 - The selection is the player's: a large follower left in its ball comes back
@@ -144,11 +144,20 @@ cave that keeps it in.
   pose and follows the trail, hopping a pixel or two per step and landing
   when the player stops (`fwfx_rest_at`; not an effect mode, so it blocks
   nothing). The recall into it does not stop the player, and its shrink
-  travels with the ball. The ball keeps a 32-pixel gap: the 8-unit bonus
-  walks to 0 and back out after the send-out, one unit per update the player
-  moves. L/R is locked with the refusal cue. A talk leaves it in place; an
-  NPC stepping onto it takes it with the ball sound, and it comes back when
-  the trail does. Release sends out from the ball. Indoors there is no ball.
+  travels with the ball. Release sends out from the ball.
+- The ball keeps the tile right behind the player: every gap is walked down
+  to 0, two units per update the player moves, and back out one unit per
+  update after the send-out (`fw_trail_remeasure` re-sums the trail on each
+  change). It swaps places with the player like the follower.
+- Wandering NPCs treat the ball as a one-tile object, as they do the
+  follower. A forced move through it, or the failsafe for an NPC already on
+  its tile, takes it away with the ball sound, and it returns with the trail.
+  A talk leaves it in place.
+- Indoors the ball shows too, appearing once the trail is ready, with no
+  send-out. Under a floor L/R is locked with the refusal cue. Indoors L/R
+  still switches: small party members come out, other large ones are
+  skipped, and the lead (the member a fresh map brings out) comes back as
+  its ball with one bounce.
 
 32-pixel followers are not affected.
 

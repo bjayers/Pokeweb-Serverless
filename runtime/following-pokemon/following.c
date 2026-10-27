@@ -156,6 +156,16 @@ int fw_trail_translate(FwTrail *t, int32_t dx, int32_t dy, int32_t dz) {
     }
     return 1;
 }
+/* The pushed distance is summed under the gaps of each push, and trimming
+ * subtracts under the current ones. After a gap change, sum it again so the
+ * two agree; a stale sum could underflow on the next trim. */
+void fw_trail_remeasure(FwTrail *t, const uint8_t gaps[4]) {
+    if (!t || !gaps || !t->count) return;
+    uint32_t total = 0;
+    for (unsigned i = 1; i < t->count; ++i)
+        total += trail_distance(&t->samples[index_at(t, i - 1)], &t->samples[index_at(t, i)], gaps);
+    t->distance = total;
+}
 int fw_trail_push_directional(FwTrail *t, const FwSample *s, FwSample *out, const uint8_t gaps[4]) {
     if (!gaps || gaps[0]>FW_MAX_DIRECTIONAL_GAP||gaps[1]>FW_MAX_DIRECTIONAL_GAP||gaps[2]>FW_MAX_DIRECTIONAL_GAP||gaps[3]>FW_MAX_DIRECTIONAL_GAP||
         !s || !out || s->kind > FW_WORLD || s->direction > 3 || !s->generation) { fw_trail_clear(t); return -1; }

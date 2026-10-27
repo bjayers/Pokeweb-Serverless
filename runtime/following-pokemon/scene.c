@@ -231,6 +231,11 @@ static int overlaps(int fx,int fz,int fy,int span_w,int span_d,const Vec *from,c
  return min(x0,x1)<=fx+span_w-1&&max(x0,x1)+(int)width-1>=fx
   &&min(z0,z1)-(int)depth+1<=fz&&max(z0,z1)>=fz-span_d+1;
 }
+/* The follower's footprint, one tile while it waits as its closed ball. */
+static int follower_span(const Actor *f,unsigned axis){
+ if(fwfx_resting()&&(f->flags&4))return 1;
+ return max(f->dimensions[axis],1);
+}
 static int intersects(const Vec *from,const Vec *to,unsigned width,unsigned depth){
 #ifdef FW_MOUNT
  /* A mounted follower shares the player's tile; native player collision
@@ -238,7 +243,7 @@ static int intersects(const Vec *from,const Vec *to,unsigned width,unsigned dept
  if(fwland_active())return 0;
 #endif
  Actor *f=(Actor*)scene.f->actor;if(!f)return 0;
- int span_w=max(f->dimensions[0],1),span_d=max(f->dimensions[1],1);
+ int span_w=follower_span(f,0),span_d=follower_span(f,1);
  if(overlaps(f->grid[0],f->grid[2],f->grid[1],span_w,span_d,from,to,width,depth))return 1;
  /* Same volume on the pose tile. Identical while grid matches the pose, so a
   * standing follower still occupies only its real tile. */
@@ -327,7 +332,7 @@ static void action(Actor *actor,unsigned code){
 /* Native grid volumes extend +X/-Z and reserve both ends of a step. */
 static int grid_overlap(const Actor *a,const Vec *p,const Actor *b,const int16_t *q){
  int aw=max(a->dimensions[0],1),ad=max(a->dimensions[1],1);
- int bw=max(b->dimensions[0],1),bd=max(b->dimensions[1],1);
+ int bw=follower_span(b,0),bd=follower_span(b,1);
  return p->y==q[1]&&p->x<=q[0]+bw-1&&p->x+aw-1>=q[0]
   &&p->z-ad+1<=q[2]&&p->z>=q[2]-bd+1;
 }
@@ -345,8 +350,9 @@ static int sphere_overlap(const Vec *a,const Vec *b,int radius){
 }
 static int valid_follower(void){
  Actor *f=scene.f?(Actor*)scene.f->actor:0;
+ /* The resting ball is hidden but still an object NPCs walk around. */
  return f&&scene.sys&&scene.sys->field==scene.field&&scene.f->generation==scene.generation
-  &&f->system==scene.sys&&(f->flags&5)==1;
+  &&f->system==scene.sys&&(f->flags&1)&&(!(f->flags&4)||fwfx_resting());
 }
 static void ambient_collision(unsigned kind,Actor *actor,FweCollision *q){
  if(!valid_follower()||scene.recalled||scene.active||!actor||actor==scene.player||actor->id==0xff

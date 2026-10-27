@@ -81,6 +81,8 @@ void fw_trail_clear(FwTrail *trail);
  * farther back than a walk. It is never a shortcut off the recorded route. */
 int fw_trail_push(FwTrail *trail, const FwSample *sample, FwSample *follower, unsigned side_gap);
 int fw_trail_push_directional(FwTrail *trail, const FwSample *sample, FwSample *follower, const uint8_t gaps[4]);
+/* Re-sum the trail distance under new gaps. */
+void fw_trail_remeasure(FwTrail *trail, const uint8_t gaps[4]);
 /* Add a connection delta to every live sample. Distances stay valid.
  * Returns 0 and clears the trail if any coordinate would overflow. */
 int fw_trail_translate(FwTrail *trail, int32_t dx, int32_t dy, int32_t dz);
