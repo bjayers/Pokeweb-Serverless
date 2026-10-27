@@ -535,8 +535,12 @@ static void finish_swap(Actor *a, const FwSample *sample, const FwPoint *player,
     start.y = swapOn.origin.y;
     start.z = swapOn.origin.z;
     start.direction = (uint8_t)face;
+    /* Heights as the trail records them (with the player's draw offsets),
+     * so the reseeded slope matches ordinary following on an incline. */
+    int32_t walked;
+    if (fw_trail_height_at(&fwfield_follower.trail, start.x, start.z, &walked)) start.y = walked;
     end.x = player->x;
-    end.y = player->y;
+    end.y = sample->y;
     end.z = player->z;
     end.direction = (uint8_t)face;
     int seeded = rail ? fw_trail_reseed_along(&fwfield_follower.trail, &start, &end, walk_gaps(), &pose)

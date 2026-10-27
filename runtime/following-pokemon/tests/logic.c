@@ -481,6 +481,22 @@ static void walk(FwTrail *t, int32_t *x, int32_t *z, int dx, int dz, unsigned ti
         if (fw_trail_push_directional(t, &s, &pose, gaps) == 1) walked = pose;
     }
 }
+/* A swap on an incline reseeds the trail between the follower's tile and
+ * the player. The follower's pose keeps its own height, above or below. */
+static void incline_reseed(void) {
+    const uint8_t gaps[4] = {0, 0, 0, 0};
+    for (int up = -1; up <= 1; up += 2) {
+        FwSample player = sample(0, 0, 0, 1, FW_WORLD), follower = player, pose;
+        player.direction = follower.direction = 1;
+        follower.z = -(int32_t)FW_TILE;
+        follower.y = up * 8 * 4096;
+        FwTrail t;
+        assert(fw_trail_reseed(&t, &follower, &player, gaps, &pose) == 1);
+        assert(pose.z == follower.z && pose.y >= follower.y - 4096 && pose.y <= follower.y + 4096);
+        assert(fw_trail_reseed_along(&t, &follower, &player, gaps, &pose) == 1);
+        assert(pose.y >= follower.y - 4096 && pose.y <= follower.y + 4096);
+    }
+}
 static void side_corner(void) {
     const int32_t start = 8 * 4096;
     FwTrail t;
@@ -1202,5 +1218,6 @@ int main(void) {
     large_gap();
     ball_gap();
     side_corner();
+    incline_reseed();
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

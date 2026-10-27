@@ -399,6 +399,15 @@ static uint32_t segment_span(int64_t dx, int64_t dz) {
     int64_t ax = dx < 0 ? -dx : dx, az = dz < 0 ? -dz : dz;
     return isqrt((uint64_t)ax * (uint64_t)ax + (uint64_t)az * (uint64_t)az);
 }
+/* Height of reseed step `i` of `units`, which stands (units - i) units
+ * behind the player: the slope `dy` over `span` (player minus follower)
+ * carried back from the player. A follower on the player's point has no
+ * slope; that keeps the old blend from `from_y`. */
+static int32_t slope_y(int32_t player_y, int32_t dy, uint32_t span, int32_t from_y, int i, int units) {
+    if (span < 4096u || span > (uint32_t)INT32_MAX) return from_y + mul_div(dy, i, units);
+    int64_t y = (int64_t)player_y - mul_div(dy, (units - i) * 4096, (int32_t)span);
+    return y > INT32_MAX ? INT32_MAX : y < INT32_MIN ? INT32_MIN : (int32_t)y;
+}
 static int near_sample(const FwSample *s, const FwPoint *p, int32_t tol) {
     int32_t dx = s->x - p->x, dz = s->z - p->z;
     if (dx < 0) dx = -dx;
@@ -607,13 +616,16 @@ int fw_trail_reseed(FwTrail *trail, const FwSample *follower, const FwSample *pl
         x -= (int32_t)back;
         dx = 4096;
     }
+    /* Heights keep the slope between the follower and the player, so the
+     * follower's own point stands at its own height on an incline. */
+    uint32_t span = segment_span((int64_t)player->x - follower->x, (int64_t)player->z - follower->z);
     fw_trail_clear(trail);
     int ready = 0;
     for (int i = 0; i <= units; ++i) {
         FwSample step = *player;
         step.x = x + dx * i;
         step.z = z + dz * i;
-        step.y = follower->y + mul_div(dy, i, units);
+        step.y = slope_y(player->y, dy, span, follower->y, i, units);
         step.direction = player->direction;
         ready = fw_trail_push_directional(trail, &step, out, gaps);
         if (ready < 0) return 0;
@@ -645,7 +657,7 @@ int fw_trail_reseed_along(FwTrail *trail, const FwSample *from, const FwSample *
         FwSample step = *player;
         step.x = (int32_t)fx + mul_div(ox, i, units);
         step.z = (int32_t)fz + mul_div(oz, i, units);
-        step.y = from->y + mul_div(dy, i, units);
+        step.y = slope_y(player->y, dy, span, from->y, i, units);
         step.direction = player->direction;
         ready = fw_trail_push_directional(trail, &step, out, gaps);
         if (ready < 0) return 0;
