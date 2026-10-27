@@ -8,7 +8,7 @@ _, _, _, _, funcs, _ = audit(field, elf)
 base, actor, stop, stack = 0x02300000, 0x02220000, 0x02008000, 0x023f0000
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(base, bytes(relocate(field, base, load_dependencies(uc))))
 target = (base + funcs['fwr_anchor'][0]) | 1
 
@@ -32,7 +32,7 @@ def call(face, descriptor_z=3):
     assert after[:128] == original[:128] and after[129:] == original[129:]
     return struct.unpack('b', after[128:129])[0]
 
-for face, expected in ((0, -4), (1, 9), (2, 3), (3, 3), (4, 3)):
+for face, expected in ((0, 3), (1, 3), (2, 3), (3, 3), (4, 3)):
     assert call(face) == expected, (MODULE_SUFFIX, face)
 assert call(0, -128) == -128  # Out-of-range adjustment leaves the byte intact.
 assert call(1, 127) == 127
@@ -64,12 +64,12 @@ def depth(face_flags, xyz, height=0):
     return uc.reg_read(UC_ARM_REG_R0), struct.unpack('<6i', uc.mem_read(result, 24))
 
 _, old = depth(0, (0, -6 * 4096, 65536 - 2 * 4096))
-applied, north = depth(2, (0, -8 * 4096, 65536 - 9 * 4096))
+applied, north = depth(2, (0, -8 * 4096, 65536 - 2 * 4096))
 assert applied == 1 and north[5] == 1
 assert old[3] <= north[4] < old[3] + 128, (MODULE_SUFFIX, old, north)
-_, lateral = depth(0, (0, -8 * 4096, 65536 - 9 * 4096))
+_, lateral = depth(0, (0, -8 * 4096, 65536 - 2 * 4096))
 assert lateral[4] < north[4]
-_, stair = depth(3, (0, -8 * 4096, 65536 - 9 * 4096), 65536)
-_, prior_stair = depth(1, (0, -8 * 4096, 65536 - 9 * 4096), 65536)
+_, stair = depth(3, (0, -8 * 4096, 65536 - 2 * 4096), 65536)
+_, prior_stair = depth(1, (0, -8 * 4096, 65536 - 2 * 4096), 65536)
 assert (stair[4], stair[5]) == (prior_stair[4], prior_stair[5])
-print(f'{MODULE_SUFFIX}: packaged directional anchors, north foreground depth and unchanged stair policy passed; no game emulator run.')
+print(f'{MODULE_SUFFIX}: packaged anchors leave control Z on the descriptor, north foreground depth is unchanged, and stair flags still agree; no game emulator run.')

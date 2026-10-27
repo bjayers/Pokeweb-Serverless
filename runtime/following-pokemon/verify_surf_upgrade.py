@@ -72,7 +72,7 @@ for symbol in ("FollowingSurfPartyAppearance", "FollowingSurfMountDraw", "Follow
     assert symbol in functions, f"Missing packaged Surf export: {symbol}"
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 base, stop, stack = 0x02300000, 0x02008000, 0x023f0000
 uc.mem_write(base, bytes(relocate(dll, base, load_dependencies(uc))))
 game, party_base, mon_base = 0x0221e000, 0x0221c000, 0x0221d000

@@ -66,6 +66,11 @@ def native(u,address,size,user):
  u.reg_write(UC_ARM_REG_R0,result);u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
 uc.hook_add(UC_HOOK_CODE,native)
 def invoke(name,args=()):return call(symbols[name],args)
+def settle():
+ """Same-session texture frees wait two field ticks so a queued draw can finish first."""
+ for _ in range(2):invoke('fwfx_tick')
+def vram_frees():
+ return sum(c[0]==0x2049560 for c in calls)
 def debug():return struct.unpack('<8I',uc.mem_read(symbols['FollowingEffectsDebug'],32))
 # Read real I4 nibbles, including a frame whose only visible pixel has index
 # one in the upper nibble. Reject malformed lengths before scanning any data.
@@ -142,16 +147,18 @@ assert sounds==[1383,1383,1383],'Ball-only fallback lost its return cue'
 for _ in range(12):invoke('fwfx_draw',[0x2221000,0x2222000]);invoke('fwfx_tick')
 assert len([x for x in renders if x[0]=='model'])==12
 assert not [x for x in renders if x[0]=='white']
-invoke('fwfx_destroy');invoke('fwfx_destroy')
-assert collections.Counter(allocations)==collections.Counter(frees),(allocations,frees)
+parked,vram=len(frees),vram_frees()
+invoke('fwfx_destroy');invoke('fwfx_destroy');settle()
+assert len(frees)==parked and vram_frees()==vram,'unload freed texture keys into the next field'
 assert debug()[6:]==(0,0) and not invoke('fwfx_busy')
 uc.mem_write(actor,bytes(256));put(actor+136,system)
 uc.mem_write(actor+228+16,struct.pack('<H',981))
 previous_loads=sum(x[0]==0x20493f0 and cstr(x[1])=='rom:/a/0/4/8' for x in calls)
 invoke('fwfx_prepare',[actor])
 assert sum(x[0]==0x20493f0 and cstr(x[1])=='rom:/a/0/4/8' for x in calls)==previous_loads+1,'field-owner change lost validated resource bound'
-invoke('fwfx_destroy');invoke('fwfx_set_resource_count',[0])
-assert collections.Counter(allocations)==collections.Counter(frees),(allocations,frees)
+parked,vram=len(frees),vram_frees()
+invoke('fwfx_destroy');invoke('fwfx_set_resource_count',[0]);settle()
+assert len(frees)==parked and vram_frees()==vram,'resource clear after unload freed texture keys'
 assert sounds==[1383,1383,1383],'Teardown replayed sound'
 # Drive the actual prepared texture -> cached bounds -> emote draw path with
 # shipped 32/64px art. Read opaque pixels independently from the source atlas.
@@ -174,6 +181,8 @@ for size,member in ((32,6),(64,314)):
  uc.mem_write(actor+235,bytes([2 if size==64 else 0]))
  uc.mem_write(bill,struct.pack('<HHiiiHhhHHH',0,0,0,0,0,0,size*256,size*256,0,0x121f,0))
  invoke('fwfx_prepare',[actor]);assert invoke('fwfx_emote_begin',[actor,0])
+ held_poses=len(emote_poses);invoke('fwfx_draw',[camera,0x02222000])
+ assert len(emote_poses)==held_poses,'bind frame does not submit the bubble'
  allocated=len(allocations);loads=len(calls)
  for frame in range(len(art)//(size*size//2)):
   pose=art[frame*size*size//2:(frame+1)*size*size//2]
@@ -181,11 +190,21 @@ for size,member in ((32,6),(64,314)):
   for flipped in (False,True):
    uc.mem_write(bill+16,struct.pack('<H',frame));uc.mem_write(bill+24,struct.pack('<H',0x121f|(0x0800 if flipped else 0)))
    invoke('fwfx_emote_frame',[actor,frame&1]);invoke('fwfx_draw',[camera,0x02222000])
-   height=sum(emote_poses[-1][i]*up[i] for i in range(3))/4096
+   # The bubble is pushed toward the camera after the lift. Undo that scale
+   # so the head clearance is still measured in the follower's plane.
+   view=(0,200*4096,140*4096);pos=emote_poses[-1]
+   along=sum(pos[i]*view[i] for i in range(3));span=sum(v*v for v in view)
+   scale=1-along/span
+   height=sum(pos[i]*up[i] for i in range(3))/4096/(scale if scale>0.05 else 0.05)
    visible_top=size-1-max(rows) if flipped else min(rows)
    gap=height+(31-bubble_bottom)-(size-visible_top)
-   assert abs(gap-1)<0.02,(size,frame,flipped,gap)
+   assert abs(gap-8)<0.02,(size,frame,flipped,gap)
  assert len(allocations)==allocated and not any(c[0] in (0x20493f0,0x204964c,0x204e55c) for c in calls[loads:]),'Per-draw texture work'
- invoke('fwfx_emote_end');invoke('fwfx_destroy')
-assert collections.Counter(allocations)==collections.Counter(frees)
-print('Effect checks passed: I4 row bounds, one-pixel opaque-edge emote placement for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')
+ invoke('fwfx_emote_end')
+ parked,vram=len(frees),vram_frees()
+ settle()
+ assert len(frees)==parked+2 and vram_frees()==vram+2,'same-session emote end still frees both sheets after two ticks'
+ parked,vram=len(frees),vram_frees()
+ invoke('fwfx_destroy');settle()
+ assert len(frees)==parked and vram_frees()==vram,'destroy drops effect banks without a resume free'
+print('Effect checks passed: I4 row bounds, eight-pixel opaque-edge emote clearance for shipped 32/64px poses and vertical flips, no per-frame scan/load/upload, member 981 bounds, private palette/material, lighting, one-shot ball cues, send-out/recall frames, ABI and teardown. Native services mocked; visual/audio acceptance pending.')

@@ -43,6 +43,76 @@ adjacent-tile, elevation, obstruction and trail-corridor checks. North/south rea
 does not increase. Existing render corrections, menu/PC retention and seamless
 zone handling are retained. A changed appearance uses normal trail reseeding.
 
+### Side-by-side stand
+
+An HGSS Easter egg, 32-pixel followers only. Walk down any number of tiles,
+step one tile left or right, then turn to face down without moving. The
+follower is still above the corner tile by its gap; it takes the rest of the
+step onto the corner, two units an update, and stands beside the player
+facing down. `fw_trail_side_corner` reads that sequence from the facings
+the trail recorded, so a rail works the same way in its line frame: down is
+-side (1), assumed for every rail so far, and the sideways step is one knot
+along +/-front (2/3), half a tile to a tile and a half. A grid step must be
+exactly one tile. When
+the player moves again the follower holds while the trail pose is still
+closing on the corner, and follows from the first update the pose comes as
+close or turns away, so it never steps back and never lags. Any other facing or path, a
+swap or ease in progress, the ball, a 64-pixel follower, an effect, or
+an NPC on the corner leave the ordinary pose.
+
+Turn toward it to talk as usual. The talk corridor is read from the player
+back to the follower and ends on the sample it stands on, so the leg it came
+down, at a right angle behind it, does not refuse the talk. It turns to face
+the player for the talk and back afterwards, and stays on the corner.
+
+### SELECT and placing on return
+
+SELECT on a free field (no event, talk, fade, effect, ride or player step)
+flips the saved Followers setting, CONFIG bit 11, the bit the options row
+writes. Off plays the recall on a visible follower, takes a resting ball
+with the ball sound, or plays that sound alone, then removes the follower.
+On brings the follower out at once.
+
+The same placement runs at boot, and when a menu or a battle closed the
+field with the follower out or with Followers off (the options screen is a
+menu). Every map change goes through the same unload
+(`FieldRoutine_MapUnload`), so the unload only arms the placement for a
+menu or a battle. A menu is found in the running event chain:
+`EventFieldMenu_Callback`, the `EventFieldAppCall_Callback` it chains to
+open the bag, party or options, or `EventFieldMenuReturn_Callback`. The event
+policy recalls the follower for that application before the unload, so the
+menu marker and the actor are already gone there, and a menu arms either way.
+A battle chain (`fws_battle_entry`) arms with the follower out or Followers
+off. Fly, Escape Rope, Dig and Teleport start from the menu too; the zone and
+tile match below cancels them. Doors, Fly, Escape Rope and other warps keep the walk-in. As a
+second guard the unload records the field's zone and the player's tile, and
+the next field, once no event holds it, places only when the player is back
+on that tile in that zone. The player moving first cancels it.
+
+Placement runs on grids and rails. Each step is probed from the player with
+the native checks: on a grid `ActorRouteCollCheckOneTileInDir` (`0x0215e4f1`)
+and, for a second tile, `ActorRouteCollCheckCore` (`0x0215e3fd`); on a rail
+`RailActor_GetHitBitsDirNoAttr` (`0x02195729`). The step's world point is
+`FieldPlayer_GetWPosInDir` (`0x0219a9d1`) on a rail. The trail is reseeded
+along that step toward the player, recorded facing the player.
+
+1. A 32-pixel follower with the player facing down (-side on a rail): the
+   tile beside, facing down, held there like the side-by-side stand.
+2. Behind at the follow distance, facing the player's way. On a grid the
+   next tile must be open too when the pose reaches it.
+3. Either side at the follow distance, facing the player.
+
+Neither: the ordinary walk-in. A large follower kept in its ball there (in
+a barred zone, or under a floor) comes out as the resting ball one tile
+away, its gap already walked to 0, with no send-out.
+
+The field module is loaded with its overlays and starts fresh on every
+field, so the request cannot live in it: a default there armed every map
+change. It is the resident summon token in the core module (`FwreSummon`,
+`FWRE_SUMMON_TOKEN`, reached through `FollowingCoreAPI` ABI 4): valid from
+boot as a game load, stored only by a menu or battle unload, consumed by any
+other unload and read once by the next field.
+
 ## Storage and compatibility
 
 Stock White 2 0.6.89 widens the dialogue corridor sideways from one-third to
@@ -97,3 +167,86 @@ on both profiles, including large sprites on stairs and near buildings, and
 U16 for later generations. Cold boot with the matching ordinary save; older
 emulator states contain older code and data. No game emulator or hardware testing
 is performed by the build scripts.
+
+## 64-pixel followers
+
+A 64-pixel body (descriptor byte 7 = 2) is about twice an NPC's width, so at
+an authored or automatic gap its edge sits on the player. The runtime adds
+`FW_LARGE_GAP_BONUS` (8 world units) to every side for those actors, on top
+of the selected positioning row: `walk_gaps()` in `field.c` for the trail,
+swap ease and reseed, and `fwt_reach` in `interaction.c` for talking.
+
+The stored gap stays in 0–12 (`FW_MAX_AUTHORED_GAP`), which is what the
+registry, `positioning.narc` and the Pokeweb editor validate, so editing a
+row still tunes a large follower without a runtime reinstall. The effective
+gap reaches 20 (`FW_MAX_DIRECTIONAL_GAP`), 36 units from the player at rest.
+
+Dialogue reach already scales with the gap. The two-tile corridors in
+`fw_clamp_dialogue_pose` and the talk trail check widen only by the gap past
+12 (`FW_GAP_BEYOND`), so 32-pixel followers keep exactly the bounds they had
+and a large one keeps the same three units of partial-step room past reach.
+The native grid check admits the tile in front of the player and the next
+one, which covers 40 units. Reseeds lay 48 units of history.
+
+## Where 64-pixel followers come out
+
+A 64-pixel follower stays in its ball in an interior and comes out in an
+exterior. The area's exterior flag decides (`FieldEffects_GetAreaIsExterior`,
+the same flag seasons use). A zone row in `positioning.narc` member 1 swaps the
+rule for that zone: a large interior that lets it out, or a cramped exterior or
+cave that keeps it in.
+
+- Doors keep the existing recall before the fade. Inside, the
+  field update builds the actor hidden; `move()` keeps it hidden.
+- L/R where a large follower is barred skips large party members other than
+  the lead, and works while the large one is in its ball. With no small one to bring out, the
+  closed ball shows where the follower stands, shakes a pixel either way, and
+  plays `SEQ_SE_BEEP` (1367); `fwfx_cue`, about a second.
+- The selection is the player's: a large follower left in its ball comes back
+  out at the next exterior; a small one chosen inside stays until switched.
+- Outdoors, a walkable layer 1.5–3.5 tiles above the follower's feet (a bridge
+  or upper walkway its 56-unit sprite would come through) also keeps it in its
+  ball, until the trail has been clear for 20 updates. The trail point is
+  probed and so is a tile either way along the line toward the player, so it
+  goes in a tile before it walks under and comes out a tile after. Three
+  terrain queries per trail tile and height (`FieldG3DMapper_GetTerrainAll`).
+  While it is held there, the closed ball stays out on the follower's hidden
+  pose and follows the trail, hopping a pixel or two per step and landing
+  when the player stops (`fwfx_rest_at`; not an effect mode, so it blocks
+  nothing). The recall into it does not stop the player, and its shrink
+  travels with the ball. Release sends out from the ball.
+- The ball keeps the tile right behind the player: every gap is walked down
+  to 0, two units per update the player moves, and back out one unit per
+  update after the send-out (`fw_trail_remeasure` re-sums the trail on each
+  change). It swaps places with the player like the follower.
+- Wandering NPCs treat the ball as a one-tile object, as they do the
+  follower. A forced move through it, or the failsafe for an NPC already on
+  its tile, takes it away with the ball sound, and it returns with the trail.
+  A talk leaves it in place.
+- Indoors the ball shows too, appearing once the trail is ready, with no
+  send-out. Under a floor L/R is locked with the refusal cue. Indoors L/R
+  still switches: small party members come out, other large ones are
+  skipped, and the lead (the member a fresh map brings out) comes back as
+  its ball with one bounce.
+
+32-pixel followers are not affected.
+
+### Zone override member
+
+`positioning.narc` as installed has one member, the positioning table, and
+reads exactly as before. An editor may append member 1 (at most four members
+in all). The reader walks the NARC's FAT, so FNTB may be any 4-byte multiple
+from 8 to 256 bytes.
+
+| Offset | Size | Value |
+|---|---:|---|
+| 0 | 4 | `FWZO` (`46 57 5A 4F`) |
+| 4 | 2 | version, 1 |
+| 6 | 2 | row count, at most 256 |
+| 8 + 4n | 2 | zone ID |
+| 10 + 4n | 1 | flags; bit 0 swaps the large-follower rule. Other bits are reserved and ignored. |
+| 11 + 4n | 1 | 0 |
+
+The member may be longer than `8 + 4 × count` (alignment padding). A bad
+magic, version, count or reserved byte leaves no overrides; positioning still
+reads. Rows load once per field load (`fwp_zones_load`).

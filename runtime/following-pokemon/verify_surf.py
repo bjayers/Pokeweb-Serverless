@@ -87,7 +87,7 @@ _, _, _, _, functions, _ = audit(dll, elf)
 base, stop, stack = 0x02300000, 0x02008000, 0x023f0000
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(base, bytes(relocate(dll, base, load_dependencies(uc))))
 def addr(name): return base + functions[name][0]
 def put(where, value): uc.mem_write(where, struct.pack("<I", value & 0xffffffff))
@@ -344,7 +344,8 @@ for move_slot in range(4):
     moves = [0] * 4; moves[move_slot] = 57
     party[:] = [mon(493, tuple(moves), form=9, gender=2, shiny=1)]
     call("FollowingSurfPartyAppearance", [game])
-    assert uc.reg_read(UC_ARM_REG_R0) == 493 | (9 << 10) | (2 << 18) | (1 << 26)
+    # The follower sprite ignores the held plate and always uses Normal Arceus.
+    assert uc.reg_read(UC_ARM_REG_R0) == 493 | (0 << 10) | (2 << 18) | (1 << 26)
 party[:] = [mon(493, (0, 0, 0, 0)), mon(650, (57, 0, 0, 0))]
 call("FollowingSurfPartyAppearance", [game])
 assert uc.reg_read(UC_ARM_REG_R0) == 0

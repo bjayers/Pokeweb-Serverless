@@ -1,4 +1,6 @@
 """Final packaged draw-stage checks. Native GPU submission is a spy, not an emulator."""
+# fwr_draw adds this many world pixels to every submitted follower billboard.
+BODY_LIFT = 2 * 4096
 from verify_packaged import *
 from unicorn import UC_HOOK_CODE
 import ndspy.rom,hashlib,sys,math
@@ -6,7 +8,7 @@ import json
 DLL=PACKAGE_BUILD/'PokewebFollowingFieldW2.dll';ELF=PACKAGE_BUILD/'PokewebFollowingFieldW2.elf'
 code,bss,syms,rels,funcs,_=audit(DLL,ELF)
 BASE=0x02300000;STOP=0x02008000;STACK=0x023f0000
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x1000000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x1000000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(BASE,bytes(relocate(DLL,BASE,load_dependencies(uc))))
 raw=DLL.read_bytes();get=lambda o:struct.unpack_from('<I',raw,o)[0]
 h=get(8);info=h+get(h+8);sym=h+get(info+4);first,count=struct.unpack_from('<HH',raw,sym+8);hashat=h+get(sym+16)
@@ -24,17 +26,21 @@ def call(name,args):
  assert uc.reg_read(UC_ARM_REG_PC)==STOP and uc.reg_read(UC_ARM_REG_SP)==STACK
  for i,r in enumerate(range(UC_ARM_REG_R4,UC_ARM_REG_R11+1)):assert uc.reg_read(r)==0x12340000+i
 P=0x02220000;A=P+256;SYS=P+0x1000;FBL=SYS+0x100;BL=SYS+0x200;SCENE=SYS+0x300;SLOTS=SYS+0x400;BILL=SYS+0x500;CAM=SYS+0x600;LIGHT=SYS+0x700
-seen=[];player_seen=[];npc_seen=[];light_seen=[];expected_args=[BL,CAM,LIGHT]
+EFF=0x02226000;EQUAD=0
+seen=[];player_seen=[];npc_seen=[];light_seen=[];expected_args=[BL,CAM,LIGHT];pending=[];shadow_live=[]
 EFFBL=0x02223800;GQUAD=0x02223a00;grass_seen=[]
 def spy(u,pc,size,user):
  if pc!=0x0204f684:return
  assert u.reg_read(UC_ARM_REG_SP)%8==0
- assert [u.reg_read(r) for r in [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2]]==expected_args
+ args=[u.reg_read(r) for r in [UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2]]
+ assert args==pending.pop(0) if pending else args==expected_args,args
  seen.append((read(BILL+28+4,'3i'),read(BILL+28+18,'2h'),read(addr('FollowingRenderDebug')+24,'3i')))
  player_seen.append((read(BILL+4,'3i'),read(BILL+18,'2h')))
  npc_seen.append(read(BILL+56+4,'3i'))
  light_seen.append((read(BILL+24,'H')[0],read(BILL+28+24,'H')[0]))
  if expected_args[0]==EFFBL:grass_seen.append((read(GQUAD+4,'3i'),read(GQUAD+18,'2h')))
+ if EQUAD and args[0]==EFF:
+  shadow_live.append((read(EQUAD+4,'3i'),read(EQUAD+18,'2h'),read(EQUAD+32,'3i'),read(EQUAD+28+18,'2h')))
  u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
 uc.hook_add(UC_HOOK_CODE,spy,begin=0x0204f684,end=0x0204f684)
 F=addr('fwfield_follower')
@@ -60,37 +66,48 @@ def draw():
  assert bytes(uc.mem_read(P,0x2000))==before
  assert bytes(uc.mem_read(F,7300))==trail
  return seen[-1]
-# The native control-Z byte shifts the model and its native shadow together,
-# while logical movement coordinates, other dimensions, and descriptor stay put.
+# Control Z stays on the descriptor. South bias is draw-only, so the shadow
+# and the other actor bytes do not change when the follower turns.
 setup();uc.mem_write(A+243,b'\x03')
 before=bytes(uc.mem_read(A,256))
-for face,expected in ((0,-4),(1,9),(2,3),(3,3)):
+for face,expected in ((0,3),(1,3),(2,3),(3,3)):
  call('fwr_anchor',[A,face]);assert read(A+128,'b')[0]==expected
  after=bytes(uc.mem_read(A,256))
  assert after[:128]==before[:128] and after[129:]==before[129:]
 call('fwr_anchor',[0,0])
-# The follower uses the player's scene light selection for the synchronous
-# actor pass, while retaining its own alpha and restoring the native mask for
-# the later shadow/effect pass.
+# Sun (light 0) or shade (light 3) comes from the follower's own tile when
+# the player has one of those two; any other player mask is still shared.
+# The follower keeps its alpha, and the native mask is restored for the later
+# shadow/effect pass.
 for player_mask in (0x0000,0x1000,0x4000,0x8000):
- setup();half(BILL+24,player_mask|0x021f);half(BILL+28+24,0x121f)
- draw()
- assert light_seen[-1]==(player_mask|0x021f,player_mask|0x021f),light_seen[-1]
- assert read(BILL+28+24,'H')[0]==0x121f
- n=len(light_seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
- assert len(light_seen)==n+1 and light_seen[-1][1]==0x121f
+ for shaded in (0,1):
+  setup();half(BILL+24,player_mask|0x021f);half(BILL+28+24,0x121f)
+  uc.mem_write(addr('fwfield_shaded'),bytes([shaded]))
+  draw()
+  want=(0x8000 if shaded else 0x1000) if player_mask in (0x1000,0x8000) else player_mask
+  assert light_seen[-1]==(player_mask|0x021f,want|0x021f),(player_mask,shaded,light_seen[-1])
+  assert read(BILL+28+24,'H')[0]==0x121f
+  n=len(light_seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
+  assert len(light_seen)==n+1 and light_seen[-1][1]==0x121f
+uc.mem_write(addr('fwfield_shaded'),b'\0')
 frames=0
 for size in (32,64):
  for projection in (0,1,2):
   setup(size,projection)
   for cycle in range(100):
+   anchored=None
    for phase in range(20):
     bob=6144 if phase%10<5 else 0
     # Native animation has already produced this frame's final translation.
     vec(BILL+32,(65536-8192,bob,-8192))
     submitted,scales,depth=draw();frames+=1
-    assert depth[0]==-1 and depth[2]<=-508,(size,projection,phase,depth)
-    assert scales[0]>0 and scales[1]>0
+    assert scales==(size*256,size*256),(size,scales)
+    assert submitted[1]==bob+BODY_LIFT
+    assert player_seen[-1]==((0,0,0),(8192,8192))
+    assert depth[0]==0
+    xz=(submitted[0],submitted[2])
+    if anchored is None:anchored=xz
+    else:assert xz==anchored,(size,phase,xz,anchored)
   # Repeated draws without an actor update cannot accumulate any correction.
   one=draw()
   assert all(draw()==one for _ in range(10))
@@ -100,55 +117,86 @@ for eye in [(200*4096,120*4096,0),(-120*4096,210*4096,80*4096),(80*4096,200*4096
  # A screen-horizontal baseline perpendicular to the horizontal camera axis.
  length=math.hypot(eye[0],eye[2]);base=(int(65536*eye[2]/length),0,int(-65536*eye[0]/length))
  vec(A+68,base);vec(BILL+32,(base[0],6144,base[2]));vec(BILL+4,(0,1024,0))
- assert draw()[2][2]<=-508
-# Stair policies: upper native; lower lateral clamp; foreground stair preserved.
-for base,expected in [((65536,65536,0),0),((65536,-32740,0),-2),((0,-65536,65536),1)]:
+ submitted,scales,depth=draw()
+ assert submitted[1]==6144+BODY_LIFT and scales==(8192,8192) and depth[0]==0
+ assert player_seen[-1][0]==(0,1024,0)
+# Height stays on the actor. A stair does not take an eye-ray branch, and the
+# player billboard is not rewritten to sort the follower.
+for base in ((65536,65536,0),(65536,-32740,0),(0,-65536,65536)):
  setup(64);vec(A+68,base);vec(BILL+32,(base[0],base[1]+6144,base[2]-8192))
- submitted,scales,depth=draw();assert depth[0]==expected,(base,depth)
- if expected==0:assert submitted==(base[0],base[1]+6144,base[2]-8192)
+ submitted,scales,depth=draw()
+ assert submitted[1]==base[1]+6144+BODY_LIFT and scales==(64*256,64*256),(base,submitted,scales)
+ assert player_seen[-1][0]==(0,0,0)
+ assert depth[0]==0
 # The registry Y offset must affect the follower quad only. Disable the player
 # billboard for this fixture so the depth correction cannot obscure the exact
 # five-pixel delta, then verify the native effects pass sees the original pose.
 setup();uc.mem_write(F+51,b'\xfb');half(BILL,0x400d)
 vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
-assert draw()[0]==(original[0],original[1]-5*4096,original[2])
+assert draw()[0]==(original[0],original[1]-5*4096+BODY_LIFT,original[2])
 n=len(seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0]==original
 assert read(BILL+32,'3i')==original
-# A lowered grounded follower can sit behind its own native shadow plane.
-# The main pass must submit its pixels ahead of that plane while restoring the
-# original billboard for the later native shadow/effect pass.
+# The registry offset is the submitted quad. It is not pushed along the eye
+# ray to clear the shadow, and the native billboard is restored afterwards.
 setup();put(A+4,0x4000);uc.mem_write(F+51,b'\xfb');half(BILL,0x400d)
 vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
-submitted,scales,_=draw();axis=(200/math.hypot(200,140),140/math.hypot(200,140))
-assert (submitted[1]*axis[0]+submitted[2]*axis[1])>=6*4096-64,submitted
+submitted,scales,_=draw()
+assert submitted==(original[0],original[1]-5*4096+BODY_LIFT,original[2]),submitted
+assert scales==(8192,8192)
 assert read(BILL+32,'3i')==original
 effect=SYS+0x800
 call('fwr_effect_pose',[A,BILL+32,effect])
 assert uc.reg_read(UC_ARM_REG_R0)==1
 assert read(effect,'3i2h')==(*submitted,*scales),'Recall must retain the visible corrected pose'
+# The restored quad can bob after the submit. The bubble keeps the draw-only
+# lift on that live foot. A quad that is already the submitted pose is not
+# lifted a second time.
+vec(BILL+32,(original[0],original[1]+4096,original[2]))
+call('fwr_effect_pose',[A,BILL+32,effect])
+assert uc.reg_read(UC_ARM_REG_R0)==1
+drift=read(effect,'3i2h')
+assert drift==(original[0],original[1]+4096-5*4096+BODY_LIFT,original[2],*scales),drift
+vec(BILL+32,submitted)
+call('fwr_effect_pose',[A,BILL+32,effect])
+assert uc.reg_read(UC_ARM_REG_R0)==1
+assert read(effect,'3i2h')==(*submitted,*scales),'submitted quad was lifted twice'
+vec(BILL+32,original)
 vec(A+68,(65536,0,4096));call('fwr_effect_pose',[A,BILL+32,effect])
 assert uc.reg_read(UC_ARM_REG_R0)==0,'Moved actor reused a stale recall pose'
 vec(A+68,(65536,0,0))
 n=len(seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0]==original
-# The upward artwork receives a two-pixel correction relative to the shadow;
-# downward and lateral artwork retain their existing registry Y offset.
-for face,extra in ((0,-2),(1,0),(2,0),(3,0)):
+# Registry Y is the same on every facing. No north tuck and no world Z shove.
+for face in range(4):
  setup();uc.mem_write(F+51,b'\xfb');half(BILL,0x400d);half(A+24,face)
  vec(BILL+32,(65536,6144,0));original=read(BILL+32,'3i')
- assert draw()[0]==(original[0],original[1]+(-5+extra)*4096,original[2])
+ assert draw()[0]==(original[0],original[1]-5*4096+BODY_LIFT,original[2]),face
  assert read(BILL+32,'3i')==original
-# North-facing movement changed the billboard's ground-plane anchor. The
-# packaged main-pass correction must recover its former foreground depth while
-# preserving the new on-screen pose and leaving native effect/shadow data alone.
-setup();uc.mem_write(F+51,b'\xfa');half(A+24,2)
+ assert read(addr('FollowingRenderDebug')+24,'i')[0]==0
+ assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
+# A stair and a yawed rail camera keep the native billboard. Facing does not
+# add a pixel tuck, and nothing consults flat-versus-slope to move the quad.
+for face,world in ((1,(0,65536,-65536)),(0,(0,65536,-65536))):
+ setup();half(A+24,face);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
+ vec(A+68,world);vec(P+68,(0,0,0));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+ vec(BILL+32,(world[0],world[1],world[2]))
+ assert draw()[0]==(world[0],world[1]+BODY_LIFT,world[2]),face
+ assert read(addr('FollowingRenderDebug')+24,'i')[0]==0
+ assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
+setup();half(A+24,1);half(BILL,0x400d);uc.mem_write(F+51,b'\x00')
+vec(A+68,(0,0,-65536));vec(P+68,(0,0,0));vec(CAM+32,(581835,760739,0));vec(CAM+56,(0,0,0))
+vec(BILL+32,(0,0,-65536))
+assert draw()[0]==(0,BODY_LIFT,-65536)
+assert read(addr('FollowingRenderDebug')+128,'i')[0]==0
+# Facing does not change the registry offset. The player quad is not involved.
+setup();uc.mem_write(F+51,b'\xfa');half(A+24,2);half(BILL,0x400d)
 vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-2*4096))
-old_depth=draw()[2][1]
-setup();uc.mem_write(F+51,b'\xfa');half(A+24,0)
-vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-9*4096))
-new_pose=read(BILL+32,'3i');north=draw();assert north[2][0]==1
-assert old_depth<=north[2][2]<old_depth+128,(old_depth,north[2])
+west=draw()[0]
+setup();uc.mem_write(F+51,b'\xfa');half(A+24,0);half(BILL,0x400d)
+vec(A+68,(0,0,65536));vec(BILL+32,(0,0,65536-2*4096))
+new_pose=read(BILL+32,'3i');north=draw()[0]
+assert north==west,(west,north)
 assert read(BILL+32,'3i')==new_pose
 n=len(seen);call('FollowingEffectsDraw',[BL,CAM,LIGHT])
 assert len(seen)==n+1 and seen[-1][0]==new_pose
@@ -159,19 +207,16 @@ for base in ((65536,0,0),(65536,65536,0),(65536,-32740,0),(0,-65536,65536)):
  vec(BILL+32,(base[0],base[1]+6144,base[2]-8192))
  first=draw()
  assert all(draw()==first for _ in range(5))
-# walkdown.mln: the follower is a tile north of the south-facing player, but
-# its subsequent shadow clearance moved the large submitted quad ahead of the
-# player. Recreate the observed local coordinates and enforce final priority.
+# walkdown.mln: native billboard plus registry Y. The dip is not planted
+# back to the foot line, and XZ is not slid off the native pose.
 setup(64);half(P+24,1);half(A+24,1);put(A+4,0x4000)
 uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\xfb')
 vec(CAM+32,(0,760739,581835));vec(A+68,(0,0,-65536))
-vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152))
+vec(BILL+4,(0,-6484,0));vec(BILL+32,(0,-340,-49152-6*4096))
 submitted,scales,depth=draw()
-assert depth[0]==-1 and depth[1]<0 and depth[2]<=-12*4096,(submitted,depth)
-axis=(3253,2488)
-player_submitted=player_seen[-1][0]
-assert (submitted[1]-player_submitted[1])*axis[0]+(submitted[2]-player_submitted[2])*axis[1]<=(-12*4096+128)*4096,(submitted,player_submitted)
-assert submitted[1]*axis[0]+(submitted[2]+40960)*axis[1]>=(6*4096-128)*4096,submitted
+assert submitted==(0,-340-5*4096+BODY_LIFT,-49152-6*4096),submitted
+assert scales==(64*256,64*256) and depth[0]==0
+assert player_seen[-1][0]==(0,-6484,0)==read(BILL+4,'3i')
 assert all(draw()==(submitted,scales,depth) for _ in range(5))
 # drawprio.mln: a south-facing Serperior occupies the tile north of a player
 # facing up. The player's own facing does not change the required depth order.
@@ -181,10 +226,11 @@ for player_face in range(4):
  uc.mem_write(A+128,b'\x06');uc.mem_write(F+51,b'\x00')
  vec(P+68,(5406720,0,884736));vec(A+68,(5406720,0,819200))
  vec(CAM+32,(5406720,777123,1466571));vec(CAM+56,(5406720,16384,884736))
- vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584))
+ vec(BILL+4,(5406720,-6484,884736));vec(BILL+32,(5406720,-340,835584-6*4096))
  initial=bytes(uc.mem_read(BILL,56));submitted,scales,depth=draw()
- assert depth[0]==-1 and depth[2]<=-12*4096,(player_face,depth)
- assert player_seen[-1][0]!=read(BILL+4,'3i'),player_face
+ assert submitted==(5406720,-340+BODY_LIFT,835584-6*4096),(player_face,submitted)
+ assert scales==(64*256,64*256) and depth[0]==0
+ assert player_seen[-1][0]==(5406720,-6484,884736)==read(BILL+4,'3i'),player_face
  assert bytes(uc.mem_read(BILL,56))==initial,player_face
  assert all(draw()==(submitted,scales,depth) for _ in range(3)),player_face
 # badprio.mln: the follower is 28 world units west of the player while an
@@ -229,6 +275,130 @@ for bob in (0,6144):
  player_depth=sum((npc_seen[-1][i]-player_seen[-1][0][i])*axis[i-1] for i in (1,2))//4096
  assert player_depth>=4*4096-32,(bob,player_seen[-1],npc_seen[-1],player_depth)
  assert bytes(uc.mem_read(BILL,84))==native
+# A follower one tile up and one tile north keeps the native billboard.
+# The shadow hook submits after the body. Only the follower oval is biased
+# for that submit; the far oval and both quads are restored afterwards.
+def plant_ovals(follower,other):
+ uc.mem_write(EFF,bytes(0x400))
+ put(EFF+4,ESCENE);put(EFF+0x18,ESLOTS);half(EFF+0x1c,2)
+ put(ESLOTS,0);put(ESLOTS+40,1)
+ put(ESCENE+8,EQUAD);half(ESCENE+14,2)
+ half(EQUAD,13);half(EQUAD+18,4096);half(EQUAD+20,4096);half(EQUAD+24,0x021f)
+ vec(EQUAD+4,follower)
+ half(EQUAD+28,13);half(EQUAD+28+18,4096);half(EQUAD+28+20,4096);half(EQUAD+28+24,0x021f)
+ vec(EQUAD+28+4,other)
+def assert_near_biased(origin):
+ assert shadow_live,'shadow scene was not submitted'
+ live,live_s,far_live,far_s=shadow_live[-1]
+ eye=read(CAM+32,'3i');target=read(CAM+56,'3i')
+ view=[eye[i]-target[i] for i in range(3)]
+ move=[live[i]-origin[i] for i in range(3)]
+ depth=sum(m*v for m,v in zip(move,view))
+ assert depth<0,(live,origin,depth)
+ assert live_s[0]>4096 and live_s[1]>4096,(live_s)
+ assert live[1]<=origin[1],(live,origin)
+ return live,live_s,far_live,far_s
+setup(64);half(A+24,1);put(A+4,0x4000)
+vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+vec(BILL+4,(0,0,0));vec(BILL+32,(0,65536,-65536))
+submitted,scales,depth=draw()
+assert submitted==(0,65536+BODY_LIFT,-65536) and scales==(64*256,64*256),(submitted,scales)
+assert depth[0]==0 and player_seen[-1][0]==(0,0,0)
+ESCENE=EFF+0x100;ESLOTS=EFF+0x180;EQUAD=EFF+0x300
+plant_ovals((0,65536,-65536),(0,65536,65536))
+near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
+body_before=bytes(uc.mem_read(BILL,56))
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+count=read(addr('FollowingRenderDebug')+84,'i')[0]
+change=read(addr('FollowingRenderDebug')+80,'i')[0]
+shadow=read(addr('FollowingRenderDebug')+88,'3i')
+native_y,ground_y,gap,snap=read(addr('FollowingRenderDebug')+100,'4i')
+hold=read(addr('FollowingRenderDebug')+128,'i')[0]
+live,live_s,far_live,far_s=assert_near_biased((0,65536,-65536))
+assert count==1 and change<0 and snap==1 and hold==0 and ground_y==65536 and gap==0,(count,change,shadow,native_y,ground_y,gap,snap,hold)
+assert native_y==65536 and shadow==live
+assert far_live==(0,65536,65536) and far_s==(4096,4096)
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+assert bytes(uc.mem_read(BILL,56))==body_before
+shadow_live.clear();call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert read(addr('FollowingRenderDebug')+84,'i')[0]==0
+assert read(addr('FollowingRenderDebug')+112,'i')[0]==0
+assert shadow_live[-1][0]==(0,65536,-65536) and shadow_live[-1][2]==(0,65536,65536)
+# Same camera and oval at rest and on the bob. The bias does not follow the body.
+rest=live
+expected_args=[BL,CAM,LIGHT]
+vec(BILL+32,(0,65536+6144,-65536));draw();shadow_live.clear()
+expected_args=[EFF,CAM,LIGHT];call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+bob_live=assert_near_biased((0,65536,-65536))[0]
+assert bob_live==rest,(rest,bob_live)
+assert seen[-1][0][1]==65536+6144+BODY_LIFT
+# Every facing. The oval stays the ground sample; the body keeps the lift.
+for face in range(4):
+ setup(64);half(A+24,face);put(A+4,0x4000)
+ vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+ vec(BILL+32,(0,65536,-65536));expected_args=[BL,CAM,LIGHT];draw()
+ plant_ovals((0,65536,-65536),(0,65536,65536))
+ expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+ call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+ assert_near_biased((0,65536,-65536))
+ assert read(addr('FollowingRenderDebug')+112,'i')[0]==1
+ assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(BILL+4,12))==bytes(12)
+# The player's oval is the nearer one to the player. It is not biased.
+setup(64);put(A+4,0x4000)
+vec(P+68,(0,0,0));vec(A+68,(0,0,8000));vec(BILL+32,(0,BODY_LIFT,8000))
+vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+expected_args=[BL,CAM,LIGHT];draw()
+plant_ovals((0,0,8000),(0,0,0))
+player_oval=bytes(uc.mem_read(EQUAD+28,28))
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert_near_biased((0,0,8000))
+assert shadow_live[-1][2]==(0,0,0) and shadow_live[-1][3]==(4096,4096)
+assert bytes(uc.mem_read(EQUAD+28,28))==player_oval
+# An orthographic camera is not a field camera. The engine oval submits as built.
+setup(64);put(A+4,0x4000);put(CAM,2)
+vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(BILL+32,(0,65536,-65536))
+expected_args=[BL,CAM,LIGHT];draw()
+plant_ovals((0,65536,-65536),(0,65536,65536))
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert shadow_live[-1][0]==(0,65536,-65536) and shadow_live[-1][1]==(4096,4096)
+assert read(addr('FollowingRenderDebug')+112,'i')[0]==0
+assert bytes(uc.mem_read(EQUAD,56))==near+far
+# The actor draw never submits the oval scene, even when field+0xc0 is this
+# actor system and field+0xc4 is the shadow system. The shadow hook submits
+# it once. A mismatched field pointer does not change that.
+setup(64);half(A+24,1);put(A+4,0x4000)
+vec(A+68,(0,65536,-65536));vec(BILL+32,(0,65536,-65536))
+vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+FIELDW=0x02225000
+uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL);put(FIELDW+0xc4,EFF)
+plant_ovals((0,65536,-65536),(0,65536,65536))
+near=bytes(uc.mem_read(EQUAD,28));far=bytes(uc.mem_read(EQUAD+28,28))
+body_before=bytes(uc.mem_read(BILL,56))
+expected_args=[BL,CAM,LIGHT]
+n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
+assert len(seen)==n+1 and seen[-1][0]==(0,65536+BODY_LIFT,-65536),seen[-1]
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+assert bytes(uc.mem_read(BILL,56))==body_before
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+n=len(seen);call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert len(seen)==n+1
+assert_near_biased((0,65536,-65536))
+assert bytes(uc.mem_read(EQUAD,28))==near and bytes(uc.mem_read(EQUAD+28,28))==far
+setup(64);put(A+4,0x4000);vec(BILL+32,(0,65536,-65536))
+vec(A+68,(0,65536,-65536));vec(CAM+32,(0,760739,581835));vec(CAM+56,(0,0,0))
+uc.mem_write(FIELDW,bytes(0x100));put(SYS+64,FIELDW);put(FIELDW+0xc0,BL+4);put(FIELDW+0xc4,EFF)
+plant_ovals((0,65536,-65536),(0,65536,65536))
+expected_args=[BL,CAM,LIGHT]
+n=len(seen);call('FollowingDraw',[BL,CAM,LIGHT])
+assert len(seen)==n+1 and seen[-1][0][1]==65536+BODY_LIFT
+expected_args=[EFF,CAM,LIGHT];shadow_live.clear()
+n=len(seen);call('FollowingEffectsDraw',[EFF,CAM,LIGHT])
+assert len(seen)==n+1
+assert_near_biased((0,65536,-65536))
+expected_args=[BL,CAM,LIGHT]
 # Invalid/stale/unsupported objects forward once without mutating the scene.
 for invalid in ('hidden','unused','lost','foreign','slot','index','mode','camera','zero-camera','scale'):
  setup();vec(BILL+32,(65536,6144,0))
@@ -242,7 +412,12 @@ for invalid in ('hidden','unused','lost','foreign','slot','index','mode','camera
  if invalid=='camera':put(CAM,3)
  if invalid=='zero-camera':vec(CAM+32,(0,0,0))
  if invalid=='scale':half(BILL+46,0)
- expected=read(BILL+32,'3i');assert draw()[0]==expected
+ expected=read(BILL+32,'3i')
+ submitted=draw()[0]
+ if invalid in ('camera','zero-camera','scale'):
+  assert submitted==(expected[0],expected[1]+BODY_LIFT,expected[2]),invalid
+ else:
+  assert submitted==expected,invalid
 # Execute the retail argument-loading blocks with distinct saved scene handles.
 # The previous fixture called FollowingDraw directly and missed wrong-pass hooks.
 assert 'THUMB_BRANCH_LINK_36_0x0218119a' in funcs,'Missing main actor draw hook (0.6.9 regression)'
@@ -272,7 +447,9 @@ for binding in json.loads((HERE/'tests/render-bindings.json').read_text()):
   assert uc.reg_read(UC_ARM_REG_PC)==stop and uc.reg_read(UC_ARM_REG_SP)==STACK
   assert uc.reg_read(UC_ARM_REG_R5)==FIELD and len(seen)==n+1
   assert bytes(uc.mem_read(BILL,56))==before
-  if handle==BL:assert seen[-1][2][0]==-1 and seen[-1][2][2]<=-508
+  if handle==BL:
+   assert seen[-1][0][1]==6144+BODY_LIFT and seen[-1][1]==(64*256,64*256) and seen[-1][2][0]==0
+   assert player_seen[-1][0]==(0,0,0)
   else:assert seen[-1][0]==(65536,6144,0),'Secondary pass must not alter actor scene'
 print('Retail pass routing passed: separate packaged actor, terrain (field+0xc8), and secondary/shadow hooks for three saved scene bindings.')
 # A grass task exists at nograss.mln, but its quad is behind the corrected

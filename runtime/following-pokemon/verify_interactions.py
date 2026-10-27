@@ -8,7 +8,7 @@ CYCLES=int(os.environ.get("FOLLOWING_TEST_CYCLES","100"))
 DLL=PACKAGE_BUILD/f'PokewebFollowingField{MODULE_SUFFIX}.dll';ELF=PACKAGE_BUILD/f'PokewebFollowingField{MODULE_SUFFIX}.elf'
 code,bss,syms,rels,funcs,_=audit(DLL,ELF)
 BASE=0x02300000;STOP=0x02008000;STACK=0x023f0000
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 loaded=relocate(DLL,BASE,load_dependencies(uc))
 uc.mem_write(BASE,bytes(loaded))
 # Resolve exported state by the exact RPM hash table; functions retain text offsets.
@@ -64,7 +64,7 @@ def context_archive(before=0,after=0,abi=2,bounds=None):
  struct.pack_into('<I',member,12,zlib.crc32(member[16:])&0xffffffff)
  narc=ndspy.narc.NARC();narc.files=[bytes(member)];return narc.save()
 assets={"rom:/following/interactions.bin":(HERE.parents[1]/'src/assets/following/interactions.bin').read_bytes(),"rom:/following/emotes.narc":(HERE.parents[1]/'src/assets/following/interaction-emotes.narc').read_bytes(),"rom:/following/contextual-items.narc":gift_archive()}
-files={};calls=[];alloc=[];frees=[];held=pressed=0;free_bytes=131072;provider=0;controller=0;blocked=0;fail='';resource_counter=0;emote_draws=0;print_done=1;close_done=1
+files={};calls=[];alloc=[];frees=[];held=pressed=0;free_bytes=131072;provider=0;controller=0;blocked=0;fail='';resource_counter=0;emote_draws=0;print_done=1;close_done=1;rail_span=65536
 native_addresses={0x02006254,0x02070ca8,0x02070ecc,0x02070dec,0x02070e6c,0x02070de0,0x0203a2d4,0x02180578,0x02195728,0x0219a9d0,0x0219aacc,0x0215e4f0,0x02016cb4,0x02016d08,0x02167098,0x02194b88,0x02194f18,0x0215e8e4,0x02194d8c,0x0215e150,0x021676fc,0x0219a5d8,0x0203df4c,0x0203df28,0x02005cbc,0x020069f4,0x02006b5c,0x021804d0,0x02180500,0x0204855c,0x02048590,0x02048640,0x021887d8,0x02188814,0x02188834,0x02188858,0x021888c4,0x02188a08,0x020493f0,0x02049430,0x02049560,0x0204e598,0x0204e55c,0x0204ebdc,0x0218151c,0x02181aa0,0x02017354,0x0201735c,0x0201fe24,0x0201ff34,0x0201cd24,0x0201ccc4,0x0201ccec,0x0201eef0,0x02008238,0x02008268}
 bag_adds=[]
 native_addresses.add(0x02008ddc) # SaveData_GetConfig for the Options Off bit.
@@ -123,7 +123,7 @@ def native(u,pc,size,user):
   half(r1,x);half(r2,0);half(r3,z)
  if pc in (0x0215e4f0,0x02195728):result=blocked
  if pc==0x0219a9d0:
-  x,y,z=struct.unpack('<iii',u.mem_read(P+68,12));dx,dz={0:(0,-65536),1:(0,65536),2:(-65536,0),3:(65536,0)}[r1]
+  x,y,z=struct.unpack('<iii',u.mem_read(P+68,12));dx,dz={0:(0,-rail_span),1:(0,rail_span),2:(-rail_span,0),3:(rail_span,0)}[r1]
   if controller==2:dx,dz=-dz,dx
   u.mem_write(r2,struct.pack('<iii',x+dx,y,z+dz))
  if pc==0x02016cb4:
@@ -165,7 +165,8 @@ def native(u,pc,size,user):
   actor=u32(r0+8);flags=struct.unpack('<H',u.mem_read(actor+24,2))[0]
   assert flags&0x0200 and flags&0xf000==0x1000,'Emote lost visibility or map lighting'
   assert not flags&0x0c00,'Emote must not inherit the follower texture mirror'
-  assert struct.unpack('<2h',u.mem_read(actor+18,4))==(8192,8192),'32px emote was drawn at half size'
+  sx,sy=struct.unpack('<2h',u.mem_read(actor+18,4))
+  assert sx==sy and 4096<sx<=8192,'32px emote was drawn at half size or stretched'
   emote_draws+=1
  if pc in (0x0218151c,0x02181aa0):result=provider
  u.reg_write(UC_ARM_REG_R0,result);u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
@@ -200,7 +201,9 @@ def tick():
  done=call(u32(EVENT+4),[EVENT,EVENT+8,EVENT+0x20])
  if done:put(GAME+0x18,0);frees.append(('event',EVENT))
  return done
-def balanced():assert collections.Counter(alloc)==collections.Counter(frees),(collections.Counter(alloc)-collections.Counter(frees),collections.Counter(frees)-collections.Counter(alloc))
+def balanced():
+ for _ in range(2):call('fwfx_tick')
+ assert collections.Counter(alloc)==collections.Counter(frees),(collections.Counter(alloc)-collections.Counter(frees),collections.Counter(frees)-collections.Counter(alloc))
 # Actual branch veneers forward native providers and leave retail event priority intact.
 provider=FOREIGN
 for name,args in [('THUMB_BRANCH_LINK_36_0x021818bc',[GAME,FIELD,SNAP,SNAP+4]),('THUMB_BRANCH_LINK_36_0x02181a6c',[GAME,FIELD])]:assert call(name,args)==FOREIGN
@@ -276,7 +279,8 @@ for direction in (2,3):
   put(A+68,x+sign*(18+side_gap)*4096);assert not call('fwt_reach',[F,P,A,FIELD])
 # toofar.mln: the side-gap registry row is 4+6=10; the west-facing follower
 # world actor is 28 units away, one beyond the talk box, though the drawn art
-# is two units nearer. Clamp the actor and art together before native reach.
+# is two units nearer. The box still rejects that world pose. The clamp runs
+# only after the box, trail and grid already admit the follower.
 setup(2);uc.mem_write(F+1852,bytes((0,0,10,10)))
 x,z=10*65536,10*65536;ax=x-28*4096
 uc.mem_write(P+68,struct.pack('<iii',x,0,z));uc.mem_write(A+68,struct.pack('<iii',ax,0,z))
@@ -284,6 +288,7 @@ uc.mem_write(A+60,struct.pack('<hhh',ax//65536,0,z//65536))
 for i,sx in enumerate((ax,x)):
  uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
 assert not call('fwt_reach',[F,P,A,FIELD])
+assert u32(A+68)==ax
 pose=SNAP+0x400;visual=pose+0x10
 uc.mem_write(pose,struct.pack('<3i',ax,0,z));uc.mem_write(visual,struct.pack('<3i',8192,6144,-8192))
 assert call('fw_clamp_dialogue_pose',[pose,P+68,visual,2,10])==1
@@ -291,9 +296,20 @@ fixed=struct.unpack('<3i',uc.mem_read(pose,12));assert fixed[0]==x-27*4096
 uc.mem_write(A+68,struct.pack('<3i',*fixed))
 assert call('fwt_reach',[F,P,A,FIELD])==1
 blocked=1;assert not call('fwt_reach',[F,P,A,FIELD]);blocked=0
-# The installed actor callback must apply that cap while the player stands
-# still, moving the native actor and its billboard anchor together. Reuse the
-# same saved-frame geometry and a stationary two-sample route.
+# A pose already inside the box, with art sticking two units past the limit,
+# is the only case the probe itself pulls. The world actor moves two units
+# closer so the drawn art sits on the limit.
+inside=x-27*4096
+uc.mem_write(A+68,struct.pack('<iii',inside,0,z));uc.mem_write(A+80,struct.pack('<3i',-8192,0,0));uc.mem_write(A+92,bytes(12))
+uc.mem_write(A+60,struct.pack('<hhh',inside//65536,0,z//65536))
+for i,sx in enumerate((inside,x)):
+ uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
+assert call('fwt_reach',[F,P,A,FIELD])==1
+assert u32(A+68)==x-25*4096
+uc.mem_write(A+80,bytes(12))
+# Walking no longer applies that cap. The old callback tugged every frame, so
+# a stationary step used to drag this actor into the box. It now stays put,
+# and a second probe still rejects it.
 setup(2);uc.mem_write(F+1852,bytes((0,0,10,10)))
 uc.mem_write(P+68,struct.pack('<3i',x,0,z))
 uc.mem_write(A+68,struct.pack('<3i',ax,0,z))
@@ -305,13 +321,13 @@ owner=addr('fwfield_owner');follower=addr('fwfield_follower')
 put(owner,SYS);put(addr('fwfield_player'),P);put(addr('fwfield_generation'),1)
 uc.mem_write(follower,bytes(uc.mem_read(F,1856)))
 assert not call('fwt_reach',[follower,P,A,FIELD])
-call('move',[A]);assert u32(A+68)==x-27*4096
-assert u32(A+80)==8192 and u32(A+68)+u32(A+80)==x-25*4096
-assert call('fwt_reach',[follower,P,A,FIELD])==1
-call('move',[A]);assert u32(A+68)==x-27*4096
+assert u32(A+68)==ax and u32(A+80)==8192
+call('move',[A]);assert u32(A+68)==ax and u32(A+80)==8192
+assert not call('fwt_reach',[follower,P,A,FIELD])
+call('move',[A]);assert u32(A+68)==ax
 put(owner,0);put(addr('fwfield_player'),0)
-# The new toofar.mln has only eight extra units, so the old >8-only second
-# grid-cell rule rejected it even after the coarse distance clamp.
+# Eight extra units used to land in the next grid cell only because movement
+# clamped first. Outside the box, the probe rejects and the step leaves it there.
 setup(2);uc.mem_write(F+1852,bytes((0,0,8,8)))
 uc.mem_write(P+68,struct.pack('<iii',x+32768,0,z))
 ax=x+32768-28*4096
@@ -322,25 +338,61 @@ for i,sx in enumerate((ax,x+32768)):
 put(owner,SYS);put(addr('fwfield_player'),P);put(addr('fwfield_generation'),1)
 uc.mem_write(follower,bytes(uc.mem_read(F,1856)))
 assert not call('fwt_reach',[follower,P,A,FIELD])
-call('move',[A]);assert u32(A+68)==x+32768-25*4096
-assert call('fwt_reach',[follower,P,A,FIELD])==1
+assert u32(A+68)==ax
+call('move',[A]);assert u32(A+68)==ax
+assert not call('fwt_reach',[follower,P,A,FIELD])
 blocked=1;assert not call('fwt_reach',[follower,P,A,FIELD]);blocked=0
 put(owner,0);put(addr('fwfield_player'),0)
 # Vertical reach does not expand with the lateral spacing.
-setup(0);put(A+76,10*65536-22*4096);assert not call('fwt_reach',[F,P,A,FIELD])
-# Rail keys rotated 90 degrees relative to world compass still address the follower.
+setup(0);put(A+76,10*65536-22*4096);assert not call('fwt_reach',[F,P,A,FIELD]);assert u32(A+76)==10*65536-22*4096
+# Rail keys rotated 90 degrees: +side is east and +front is north. A follower
+# standing on +side faces -side (1), not the world-west compass (2). A follower
+# standing on +front faces -front (3), not world south.
 setup(0);controller=2
 uc.mem_write(A+68,struct.pack('<iii',11*65536,0,10*65536))
 uc.mem_write(F+52,struct.pack('<iii',11*65536,0,10*65536))
 assert call('fwt_reach',[F,P,A,FIELD])==1
 blocked=3;assert not call('fwt_reach',[F,P,A,FIELD]);blocked=0
+assert begin();assert struct.unpack('<H',uc.mem_read(A+24,2))[0]==1;call('fwt_cancel');balanced()
+setup(2);controller=2
+x,z=10*65536,10*65536;az=z-65536
+uc.mem_write(A+68,struct.pack('<iii',x,0,az));uc.mem_write(A+60,struct.pack('<hhh',10,0,az//65536))
+for i,sz in enumerate((az,z)):
+ uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',x,0,sz,1,1,0,0,0,3,1))
+half(F+52+64*28+6,2)
+assert call('fwt_reach',[F,P,A,FIELD])==1
+assert begin();assert struct.unpack('<H',uc.mem_read(A+24,2))[0]==3;call('fwt_cancel');balanced();controller=0
+# An axis-aligned rail still stores the compass that matches the line frame.
+setup(3);controller=1
 assert begin();assert struct.unpack('<H',uc.mem_read(A+24,2))[0]==2;call('fwt_cancel');balanced();controller=0
+# A rail knot wider than one tile is still the adjacent point in front.
+# The pose stays put: it is outside the compass clamp window.
+setup(3);controller=1;rail_span=2*65536+20000
+x,z=10*65536,10*65536;ax=x+rail_span
+uc.mem_write(P+68,struct.pack('<iii',x,0,z));uc.mem_write(A+68,struct.pack('<iii',ax,0,z))
+uc.mem_write(A+60,struct.pack('<hhh',ax//65536,0,z//65536))
+for i,sx in enumerate((ax,x)):
+ uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
+half(F+52+64*28+6,2)
+assert call('fwt_reach',[F,P,A,FIELD])==1
+assert u32(A+68)==ax and u32(A+76)==z
+# Two grid tiles stay out of reach, and the rejected probe does not move the actor.
+controller=0;rail_span=65536
+setup(3);ax=x+2*65536
+uc.mem_write(A+68,struct.pack('<iii',ax,0,z));uc.mem_write(A+60,struct.pack('<hhh',ax//65536,0,z//65536))
+for i,sx in enumerate((ax,x)):
+ uc.mem_write(F+52+i*28,struct.pack('<iiiIIHHBBH',sx,0,z,1,1,0,0,0,3,1))
+assert not call('fwt_reach',[F,P,A,FIELD])
+assert u32(A+68)==ax
 # Exercise both frames of all seven private resources, without changing native material data.
 setup();half(bill+24,0x1600);half(bill+18,8192);half(bill+20,8192)
 uc.mem_write(0x02210000+32,struct.pack('<3i',0,200*4096,140*4096));uc.mem_write(0x02210000+56,bytes(12))
 shared=bytes(uc.mem_read(mat,40))+bytes(uc.mem_read(bill,28))
 for member in range(0,14,2):
  assert call('fwfx_emote_begin',[A,member])
+ skipped=emote_draws
+ call('fwfx_draw',[0x02210000,0x02211000])
+ assert emote_draws==skipped,'bind frame does not submit the bubble'
  for frame in (0,1,0,1):call('fwfx_emote_frame',[A,frame]);call('fwfx_draw',[0x02210000,0x02211000])
  call('fwfx_emote_end');balanced()
 assert emote_draws==28,emote_draws
@@ -491,7 +543,7 @@ if '--state' in sys.argv:
  path=Path(sys.argv[sys.argv.index('--state')+1]);_,ram=state_ram(path)
  debug=ram.find(b'FWDG');actor,player=struct.unpack_from('<II',ram,debug+32)
  field=struct.unpack_from('<I',ram,debug+56)[0];sidecar=state_follower(ram)
- cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.mem_map(RAM_BASE,0x1000000);cpu.mem_write(RAM_BASE,ram);cpu.mem_map(0x04000000,0x100000)
+ cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.mem_map(RAM_BASE,0x1000000);cpu.mem_write(RAM_BASE,ram);cpu.mem_map(0x04000000,0x100000);cpu.mem_write(0x04000006,b'\xc4\x00')
  newbase=0x02c00000;cpu.mem_write(newbase,bytes(relocate(DLL,newbase,{symbol_hash('FollowingCoreAPI'):STOP,symbol_hash('FollowingEventsAPI'):STOP})))
  scratch=0x023ef000;stack=0x023ef800;pose=scratch+1860;art=pose+12
  cpu.mem_write(scratch,ram[sidecar-RAM_BASE:sidecar-RAM_BASE+1856])

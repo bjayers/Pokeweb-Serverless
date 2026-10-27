@@ -21,7 +21,7 @@ def verify(rom_path):
   else:sp,form,gender,shiny,_,row=struct.unpack_from('<HBBBBH',data,at)
   rows[sp].append((form,gender,shiny,row));gaps[row]=(data[at+8]>>3)&7 if stride==12 else data[at+15]
   profiles[row]=bool(data[at+8]&4) if stride==12 else bool(data[at+11])
- uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+ uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
  base=0x02300000;core=0x022d0000;stop=0x02008000;stack=0x023f0000;pokemon=0x02210000
  dll=PACKAGE_BUILD/'PokewebFollowingFieldW2.dll';core_dll=PACKAGE_BUILD/'PokewebFollowingCoreW2.dll'
  for module in [dll,core_dll,PACKAGE_BUILD/'PokewebFollowingEventsW2.dll']:
@@ -85,9 +85,11 @@ def verify(rom_path):
  def expected(sp,f,g,s):
   variants=rows.get(sp,[])
   if not variants:return 0
+  # Unown (201) displays as '?'; Arceus (493) displays as Normal. Other forms pass through.
+  shown={201: 27, 493: 0}.get(sp, f)
   def score(e):
    ef,eg,es,_=e
-   return (8 if ef==f else 0 if ef==0 else -20)+(4 if eg==g else 2 if eg==2 else -20)+(1 if es==s else -20)
+   return (8 if ef==shown else 0 if ef==0 else -20)+(4 if eg==g else 2 if eg==2 else -20)+(1 if es==s else -20)
   return 0x3000+max(variants,key=score)[3]-1008
  assert config()==1 and not paths
  before=(reads,seeks,opens);assert config()==1 and before==(reads,seeks,opens)

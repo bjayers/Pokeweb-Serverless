@@ -11,7 +11,7 @@ _, _, _, _, functions, _ = audit(dll, elf)
 base, stop, stack, output = 0x02300000, 0x02008000, 0x023f0000, 0x02200000
 cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 cpu.ctl_set_cpu_model(UC_CPU_ARM_946)
-cpu.mem_map(0x02000000, 0x400000)
+cpu.mem_map(0x02000000, 0x400000);cpu.mem_map(0x04000000,0x1000);cpu.mem_write(0x04000006,b'\xc4\x00')
 cpu.mem_write(base, bytes(relocate(dll, base, load_dependencies(cpu))))
 
 member = bytearray(24 + 2 * 12 + 3 * 8)
@@ -73,7 +73,27 @@ assert call("fwp_surf", 1, 3, output) == 1
 assert bytes(cpu.mem_read(output, 8)) == member[56:64]
 assert call("fwp_land", 0, 2, 0, output) == 0
 assert call("fwp_surf", 3, 3, output) == 0
+# The installed one-member archive carries no zone overrides.
+call("fwp_zones_load")
+assert call("fwp_zone_flags", 448) == 0
+# An editor-appended member 1: positioning still reads, and zone rows load.
+zones = struct.pack("<IHH", 0x4f5a5746, 1, 2) + struct.pack("<HBBHBB", 448, 1, 0, 12, 0x80, 0)
+archive = bytearray(struct.pack("<IHHIHH", 0x4352414e, 0xfeff, 1, 0, 16, 3))
+archive += struct.pack("<IIHHIIII", 0x46415442, 28, 2, 0, 0, len(member), len(member), len(member) + len(zones))
+archive += struct.pack("<II", 0x464e5442, 8)
+archive += struct.pack("<II", 0x46494d47, len(member) + len(zones) + 8) + member + zones
+struct.pack_into("<I", archive, 8, len(archive))
+single = data; data = bytes(archive)
+assert call("fwp_land", 1, 2, 0x12345678, output) == 1
+assert bytes(cpu.mem_read(output, 12)) == member[36:48]
+call("fwp_zones_load")
+assert (call("fwp_zone_flags", 448), call("fwp_zone_flags", 12), call("fwp_zone_flags", 13)) == (1, 0x80, 0)
+bad = bytearray(data); bad[len(bad) - 1] = 1; data = bytes(bad)
+call("fwp_zones_load")
+assert call("fwp_zone_flags", 448) == 0
+assert call("fwp_land", 1, 2, 0x12345678, output) == 1
+data = single
 corrupt = bytearray(data); corrupt[60:64] = b"BAD!"; data = bytes(corrupt)
 assert call("fwp_land", 0, 2, 0x12345678, output) == 0
 assert call("fwp_surf", 1, 3, output) == 0
-print("Packaged positioning reader passed direct land/Surf row lookup, catalog binding, bounds, and malformed-header rejection. Native FS mocked; no game emulator run.")
+print("Packaged positioning reader passed direct land/Surf row lookup, catalog binding, bounds, malformed-header rejection, and appended zone overrides. Native FS mocked; no game emulator run.")

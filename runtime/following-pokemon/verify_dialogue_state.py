@@ -35,7 +35,7 @@ def verify(path, expect_rejected=False):
     cpu.ctl_set_cpu_model(UC_CPU_ARM_946)
     cpu.mem_map(base, 0x1000000)
     cpu.mem_write(base, ram)
-    cpu.mem_map(0x04000000, 0x100000)
+    cpu.mem_map(0x04000000, 0x100000);cpu.mem_write(0x04000006,b'\xc4\x00')
     cpu.mem_write(newbase, bytes(relocate(dll, newbase, {
         symbol_hash('FollowingCoreAPI'): stop, symbol_hash('FollowingEventsAPI'): stop,
     })))

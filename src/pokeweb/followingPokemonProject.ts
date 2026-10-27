@@ -686,13 +686,49 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
     expanded[at + 9] = followerAnimationSelector(entry.animationProfile);
     entry.offsets = [13, 14, 15].map(offset => (expanded[at + offset] << 24) >> 24) as [number, number, number];
   }
+  // Follower rows carry no native world Y offset (descriptor byte 14), as an
+  // installed and migrated ROM does. Registry Y takes any value first.
+  clearFollowerDescriptorY(registry, expanded);
   deriveFollowerGrounding(registry, resources.files, personal);
-  // The registry carries the follower-only artwork offset. Descriptor Y also
-  // positions the native shadow, so leave the copied retail zero in that row.
   descriptors.files[0] = expanded; deriveFollowerSpacing(registry, resources.files); validateFollowerRegistry(registry);
   const registryBytes = encodeFollowerRegistry(registry, Boolean(laterBytes));
   return { registry, registryBytes, descriptors: descriptors.save(), resources: resources.save(),
     config: encodeFollowerNativeConfig(registryBytes, registry.descriptorCount, registry.resourceCount) };
+}
+/* The runtime draws the follower at registry Y minus descriptor byte 14 (plus
+ * two pixels). Byte 14 is cleared on follower rows, so the native shadow stays
+ * on the ground; move its value into registry Y first so the sprite does not
+ * move. */
+function clearFollowerDescriptorY(registry: FollowerRegistry, descriptor: Uint8Array): void {
+  for (const entry of registry.entries) {
+    const at = 4 + entry.descriptorRow * 28 + 14, native = (descriptor[at] << 24) >> 24;
+    entry.offsets[1] = Math.max(-128, Math.min(127, entry.offsets[1] - native));
+    descriptor[at] = 0;
+  }
+}
+/* Core bridge ABIs a bundled package may record. ABI 4 adds the resident
+ * summon token; packages built before it record 3. The field and core DLLs
+ * come from one publish and are both pinned by hash, so either is a pair. */
+const FOLLOWER_CORE_ABIS: readonly number[] = [3, 4];
+/* A receipt from a previous version whose field, events, core, Options and
+ * battle modules were replaced by hand with exactly the bundled current build
+ * (a local build installed outside Pokeweb). Every other owned file is still
+ * checked against the receipt. */
+async function adoptsCurrentModules(project: ProjectState, rom: FollowerRom, state: FollowerAlphaInstall, profile: FollowerProfile,
+    variant: FollowerVariant, fingerprint: { fieldSha256: string; eventsSha256: string; eventsAbi: number } | undefined): Promise<boolean> {
+  const runtimeManifest = runtimeFor(profile), modulePaths = modulePathsFor(profile);
+  // A previous build can share the current version string, so the receipt's
+  // field hash, not its version, says whether it is already current.
+  if (!fingerprint || state.externalRuntime || state.removed || state.moduleSha256 === fingerprint.fieldSha256 ||
+      !runtimeManifest.previousVersions.some(version => (version.variant ?? "full") === variant && version.version === state.version && version.fieldSha256 === state.moduleSha256))
+    return false;
+  const expected: Array<[string, string]> = [[modulePaths.field, fingerprint.fieldSha256], [modulePaths.events, fingerprint.eventsSha256],
+    [modulePaths.core, runtimeManifest.coreSha256], [modulePaths.options, runtimeManifest.optionsModuleSha256], [modulePaths.battle, runtimeManifest.battleModuleSha256]];
+  for (const [path, sha256] of expected) {
+    const module = readFollowingFile(project, rom, path);
+    if (!module || await followerRomSha256(module) !== sha256) return false;
+  }
+  return true;
 }
 export async function readFollowerAlphaInstall(project: ProjectState, rom?: FollowerRom): Promise<FollowerAlphaInstall | undefined> {
   rom ??= await followerRom(project);
@@ -705,6 +741,10 @@ export async function readFollowerAlphaInstall(project: ProjectState, rom?: Foll
   const modulePaths = modulePathsFor(profile);
   const dll = readFollowingFile(project, rom, modulePaths.field), config = readFollowingFile(project, rom, FOLLOWER_NATIVE_PATH);
   if ((state.profile ?? "stock") !== profile) throw new Error("Follower installation belongs to a different ROM profile.");
+  if (await adoptsCurrentModules(project, rom, state, profile, variant, fingerprint))
+    Object.assign(state, { version: runtimeManifest.version, moduleSha256: fingerprint!.fieldSha256, eventsSha256: fingerprint!.eventsSha256,
+      eventsAbi: fingerprint!.eventsAbi, coreSha256: runtimeManifest.coreSha256, coreAbi: runtimeManifest.coreAbi,
+      optionsModuleSha256: runtimeManifest.optionsModuleSha256, battleModuleSha256: runtimeManifest.battleModuleSha256 });
   const external = state.externalRuntime;
   if (external && (external.schemaVersion !== 1 || external.compatibleVersion !== runtimeManifest.version ||
       typeof external.label !== "string" || !external.label.trim() || external.label.length > 128 ||
@@ -963,7 +1003,10 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
   const eventsDll = new Uint8Array(await eventsResponse.arrayBuffer());
   if (await followerRomSha256(eventsDll) !== fingerprint.eventsSha256 || (variant === "full" && fingerprint.eventsAbi !== binaryContractFor(profile).eventsAbi) || (variant === "base" && fingerprint.eventsAbi !== 4)) throw new Error("Follower event module fingerprint mismatch.");
   const coreDll = new Uint8Array(await coreResponse.arrayBuffer());
-  if (await followerRomSha256(coreDll) !== runtimeManifest.coreSha256 || runtimeManifest.coreAbi !== 3) throw new Error("Follower core module fingerprint mismatch.");
+  const coreSha256 = await followerRomSha256(coreDll);
+  if (coreSha256 !== runtimeManifest.coreSha256)
+    throw new Error(`Follower core module fingerprint mismatch: the bundled core DLL is ${coreSha256}, but runtime.json ${runtimeManifest.version} records ${runtimeManifest.coreSha256}. Restart the dev server and reload the page after publishing.`);
+  if (!FOLLOWER_CORE_ABIS.includes(runtimeManifest.coreAbi)) throw new Error(`Follower core module ABI ${runtimeManifest.coreAbi} is not supported.`);
   const optionsDll = new Uint8Array(await optionsResponse.arrayBuffer());
   const battleDll = new Uint8Array(await battleResponse.arrayBuffer());
   if (await followerRomSha256(battleDll) !== runtimeManifest.battleModuleSha256) throw new Error("Follower battle module fingerprint mismatch.");
@@ -1013,9 +1056,9 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
     resources = readFollowingFile(project, rom, FOLLOWER_RESOURCE_PATH)!.slice();
     const resourceFiles = new NARC(resources).files;
     deriveFollowerSpacing(decoded, resourceFiles);
-    deriveFollowerGrounding(decoded, resourceFiles, new NARC(readFollowingFile(project, rom, "a/0/1/6")!).files);
     const descriptorArchive = new NARC(descriptors);
-    for (const entry of decoded.entries) descriptorArchive.files[0][4 + entry.descriptorRow * 28 + 14] = 0;
+    clearFollowerDescriptorY(decoded, descriptorArchive.files[0]);
+    deriveFollowerGrounding(decoded, resourceFiles, new NARC(readFollowingFile(project, rom, "a/0/1/6")!).files);
     descriptors = descriptorArchive.save();
     const savedWorkspace = readFollowerWorkspace(project, rom);
     if (savedWorkspace) {
@@ -1089,8 +1132,8 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
     }
     decoded.resourceCount = resourceArchive.files.length;
     deriveFollowerSpacing(decoded, resourceArchive.files);
+    clearFollowerDescriptorY(decoded, descriptorArchive.files[0]);
     deriveFollowerGrounding(decoded, resourceArchive.files, new NARC(readFollowingFile(project, rom, "a/0/1/6")!).files);
-    for (const entry of decoded.entries) descriptorArchive.files[0][4 + entry.descriptorRow * 28 + 14] = 0;
     resources = resourceArchive.save(); descriptors = descriptorArchive.save();
     const previous = registry, zoneBytes = decoded.zones.length * 8;
     registry = encodeFollowerRegistry(decoded);

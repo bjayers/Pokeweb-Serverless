@@ -112,3 +112,24 @@ THUMB_BRANCH_LINK_36_0x021811b0:
  pop {r4,pc}
 .size THUMB_BRANCH_LINK_36_0x021811b0,.-THUMB_BRANCH_LINK_36_0x021811b0
 .endif
+
+/* MapSpawnFinish case 0, after the actor and weather drains, before
+ * FieldG3D_Update. r5 is Field*. Replay that update. */
+.ifdef FW_STOCK
+.thumb
+.balign 4
+.global THUMB_BRANCH_LINK_36_0x0217fe88
+.type THUMB_BRANCH_LINK_36_0x0217fe88,%function
+.thumb_func
+THUMB_BRANCH_LINK_36_0x0217fe88:
+ push {r5, r6, lr}
+ ldr r1, [r5, #0x40]
+ bl FollowingPreloadFollower
+ movs r0, r5
+ ldr r3, 1f
+ blx r3
+ pop {r5, r6, pc}
+.balign 4
+1: .word 0x02180885
+.size THUMB_BRANCH_LINK_36_0x0217fe88,.-THUMB_BRANCH_LINK_36_0x0217fe88
+.endif

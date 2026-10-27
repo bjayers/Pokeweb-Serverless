@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { NARC } from "../src/nds/narc";
 import { NintendoDSRom } from "../src/nds/rom";
 import { buildGen5FollowerArchives } from "../src/pokeweb/followingPokemonProject";
-import { decodeFollowerRegistry, followerGroundingPixels, followerHasFlyingType, followerKey, FOLLOWER_EXTRA_GROUNDING_PIXELS } from "../src/pokeweb/followingPokemonModel";
+import { decodeFollowerRegistry, followerGroundingPixels, followerHasFlyingType, followerKey } from "../src/pokeweb/followingPokemonModel";
 
 const sourcePath = process.argv[2];
 if (!sourcePath) throw new Error("Expected a clean audited Black 2/White 2 ROM path.");
@@ -21,7 +21,7 @@ const personal = new NARC(source.getFileByName("a/0/1/6")).files;
 const descriptors = new NARC(archive.descriptors).files[0], original = installed ? undefined : new NARC(source.getFileByName("a/0/4/7")).files[0];
 const resources = new NARC(archive.resources).files;
 if (original) assert.deepEqual(descriptors.subarray(4, original.length), original.subarray(4));
-let grounded = 0, flying = 0, lowered = 0;
+let grounded = 0, flying = 0;
 const marginCache = new Map<number, number>();
 for (const entry of archive.registry.entries) {
   const at = 4 + entry.descriptorRow * 28;
@@ -30,9 +30,7 @@ for (const entry of archive.registry.entries) {
   const flight = followerHasFlyingType(personal, entry.key);
   if (flight) { ++flying; assert.equal(entry.offsets[1], 0); continue; }
   ++grounded;
-  if (!marginCache.has(entry.resourceId)) marginCache.set(entry.resourceId, followerGroundingPixels(resources[entry.resourceId], entry.animationProfile));
-  assert.equal(entry.offsets[1], 0 - marginCache.get(entry.resourceId)! - FOLLOWER_EXTRA_GROUNDING_PIXELS);
-  if (entry.offsets[1] < 0) ++lowered;
+  assert.equal(entry.offsets[1], 0);
 }
 let comparison = "";
 if (installed && process.argv[3]?.endsWith(".nds")) {
@@ -44,9 +42,15 @@ if (installed && process.argv[3]?.endsWith(".nds")) {
   for (const entry of archive.registry.entries) {
     const prior = oldByKey.get(followerKey(entry.key));
     assert.ok(prior, `Missing prior appearance ${followerKey(entry.key)}`);
-    assert.equal(entry.offsets[1], prior.offsets[1]);
-    assert.equal((oldDescriptors[4 + prior.descriptorRow * 28 + 14] << 24) >> 24, prior.offsets[1]);
+    if (!followerHasFlyingType(personal, entry.key)) {
+      if (!marginCache.has(entry.resourceId)) marginCache.set(entry.resourceId, followerGroundingPixels(resources[entry.resourceId], entry.animationProfile));
+      const margin = marginCache.get(entry.resourceId)!;
+      const priorY = prior.offsets[1];
+      assert.ok(priorY === 0 || priorY === -margin || priorY === -margin - 3, `Prior Y ${priorY} is not 0, -${margin}, or the old extra-three bury`);
+    }
+    const priorDescriptorY = (oldDescriptors[4 + prior.descriptorRow * 28 + 14] << 24) >> 24;
+    assert.ok(priorDescriptorY === 0 || priorDescriptorY === prior.offsets[1], `Prior descriptor Y ${priorDescriptorY} is neither 0 nor the prior registry Y`);
   }
-  comparison = " Sprite-only offsets and resource artwork are byte-identical to the prior alpha; native descriptor Y is restored to zero for shadow placement.";
+  comparison = " Resource artwork matches the prior alpha. Automatic Y is 0. A prior foot-margin pull or extra-three bury is the value this derive drops. Prior descriptor Y is 0 or that prior offset.";
 }
-console.log(`${source.idCode}: ${archive.registry.entries.length} ${installed ? "installed" : "built"} appearances checked; ${grounded} grounded, ${flying} Flying, ${lowered} lowered. Native shadow flags retained with descriptor Y at ground; ${installed ? "retail rows checked separately by installer verification" : "stock descriptors preserved"}.${comparison} No emulator run.`);
+console.log(`${source.idCode}: ${archive.registry.entries.length} ${installed ? "installed" : "built"} appearances checked; ${grounded} grounded, ${flying} Flying. Automatic Y is 0. Native shadow flags retained with descriptor Y at ground; ${installed ? "retail rows checked separately by installer verification" : "stock descriptors preserved"}.${comparison} No emulator run.`);

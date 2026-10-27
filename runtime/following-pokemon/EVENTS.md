@@ -120,8 +120,12 @@ coordinate write. Once the actor is unpaused, normal route prediction applies.
 Direct world-position writes are checked before coordinates change, including
 non-grid writes. Native dimensions extend toward +X and -Z; height uses native
 grid-level separation. Pool/ID checks run before selecting a native actor slot.
-Grid spawns use a conservative 3-by-2 bound for stock descriptors. Special or
-rail spawn layouts recall rather than guessing their resolved geometry.
+Grid spawns use a conservative 3-by-2 bound for stock descriptors. Rail and
+placeholder-sprite spawns are not rejected at allocation; the following
+position write recalls when that actor actually lands on the follower.
+Sidewalk wall-walks and ordinary steps on a rail map are predicted the same
+way. A world write longer than three tiles is a relocate and tests its
+destination only. A missing rail cursor does not block every follower step.
 
 The native menu and its replacement subscreen-return callbacks are validated
 against their live game/field work. Both preserve the follower, including on

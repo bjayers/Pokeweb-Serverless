@@ -30,10 +30,10 @@ export type FollowerAssetEntry = {
 export function followerDefaultDirectionalGaps(entry: Pick<FollowerAssetEntry, "sideGap"> & Partial<Pick<FollowerAssetEntry, "offsets">>): [number, number, number, number] {
   // The largest supported talk envelope is 29 world units. Reserve the
   // native two-unit art anchor, any authored X anchor, and one unit of slack.
-  // Both side directions share the stricter bound; explicit values survive.
+  // Every direction uses that same distance; explicit authored values survive.
   const maximum = Math.max(0, FOLLOWER_MAX_DIRECTIONAL_GAP - 2 - Math.abs(entry.offsets?.[0] ?? 0));
   const side = Math.min((entry.sideGap ?? 0) + FOLLOWER_DEFAULT_SIDE_GAP_BONUS, maximum);
-  return [0, 0, side, side];
+  return [side, side, side, side];
 }
 export type FollowerZonePolicy = { zone: number; suppressed: boolean; reason: string };
 export type FollowerInstallState = {
@@ -52,6 +52,14 @@ export type FollowerDirection = typeof FOLLOWER_DIRECTIONS[number];
 
 function integer(value: number, min: number, max: number, label: string): void {
   if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Invalid ${label}: ${value}`);
+}
+/** Forced follower display forms. Unown '?' is Gen 5 form 27; Arceus is always Normal (form 0). */
+export const FOLLOWER_FORCED_FORMS: Readonly<Record<number, number>> = {
+  201: 27,
+  493: 0,
+};
+export function followerDisplayForm(species: number, form: number): number {
+  return FOLLOWER_FORCED_FORMS[species] ?? form;
 }
 export function followerKey(key: FollowerAppearanceKey): string {
   integer(key.species, 1, 1023, "species"); integer(key.form, 0, 255, "form"); integer(key.gender, 0, 2, "gender");
@@ -343,8 +351,9 @@ export function validateFollowerLandAnchors(bytes: Uint8Array, registryBytes: Ui
       view.getUint32(12, true) !== followerCrc32(bytes.subarray(16)))
     throw new Error("Land mount anchor table does not match follower artwork.");
 }
-/** Measure empty rows below the visible feet across every pose. This is an
- * install-time descriptor adjustment; the native shadow stays at actor ground. */
+/** Measure empty rows below the visible feet across every pose. Derive uses
+ * this only to recognize an old automatic offset. It does not write the
+ * descriptor, and the native shadow stays at actor ground. */
 export function followerGroundingPixels(resource: Uint8Array, profile: FollowerAnimationProfile): number {
   validateFollowerResource(resource, profile);
   const btx = parseBtx(resource), size = btx.textures[0].width;
@@ -368,11 +377,11 @@ export function followerHasFlyingType(personal: readonly Uint8Array[], key: Foll
   if (!record || record.length < 8) throw new Error(`Missing personal record for appearance ${followerKey(key)}.`);
   return record[6] === 2 || record[7] === 2;
 }
-export const FOLLOWER_EXTRA_GROUNDING_PIXELS = 3;
-/** Preserve explicit descriptor offsets; ground only default-anchored,
- * non-Flying appearances. Recognize the previous automatic foot-margin offset
- * during upgrades, then add three pixels. Cache by resource so shiny/form
- * variants cost no repeated texture scans. */
+/** Preserve explicit offsets. Non-Flying automatic rows sit at 0, the same
+ * value as descriptor byte 14 and a map NPC. A stored foot-margin pull
+ * (`-pad`) or the older extra-three bury (`-(pad)-3`) is rewritten to 0.
+ * Flying rows are left untouched. Cache by resource so shiny/form variants
+ * cost no repeated texture scans. */
 export function deriveFollowerGrounding(registry: FollowerRegistry, resources: readonly Uint8Array[], personal: readonly Uint8Array[]): void {
   const cache = new Map<string, number>();
   for (const entry of registry.entries) {
@@ -384,9 +393,10 @@ export function deriveFollowerGrounding(registry: FollowerRegistry, resources: r
       cache.set(key, followerGroundingPixels(resource, entry.animationProfile));
     }
     const margin = cache.get(key)!;
-    const next = -margin - FOLLOWER_EXTRA_GROUNDING_PIXELS;
-    if (entry.offsets[1] === 0 || entry.offsets[1] === -margin || entry.offsets[1] === next)
-      entry.offsets[1] = next;
+    const pulled = -margin;
+    const buried = -margin - 3;
+    if (entry.offsets[1] === 0 || entry.offsets[1] === pulled || entry.offsets[1] === buried)
+      entry.offsets[1] = 0;
   }
 }
 export function validateFollowerResource(bytes: Uint8Array, profile: FollowerAnimationProfile): { size: 32 | 64; frames: number } {

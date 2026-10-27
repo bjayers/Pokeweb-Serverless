@@ -8,7 +8,7 @@ from verify_packaged import (Uc, UC_ARCH_ARM, UC_MODE_THUMB, load_dependencies,
 core=PACKAGE_BUILD/f'PokewebFollowingCore{MODULE_SUFFIX}.dll'
 events=PACKAGE_BUILD/f'PokewebFollowingEvents{MODULE_SUFFIX}.dll'
 uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000,0x400000)
+uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 exports=load_dependencies(uc)
 base_core=0x022d0000;base_events=0x022c0000
 core_exports=module_exports(core,base_core)

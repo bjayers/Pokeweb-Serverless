@@ -223,7 +223,7 @@ Use `White2-Following-{SURF_VERSION}-alpha.nds` and its same-basename `.sav` fro
 |---|---|---|---|
 '''
 section+=''.join(f'| {case} | {steps} | {expected} | NOT RUN |\n' for case,steps,expected in SURF_CASES)
-section+='\nFor a failure, record direction, Surf animation phase, selected party member, map, ROM hash and a state made with this ROM. The following runtime exports `FollowingSurfDebug` with loaded/active, capture/draw counts, frame and failure reason. Do not resume a state created by an older build.\n'+end
+section+='\nFor a failure, record direction, Surf animation phase, selected party member, map, ROM hash and a state made with this ROM. Do not resume a state created by an older build.\n'+end
 
 if start in text and end in text:
     text=text[:text.index(start)]+section+text[text.index(end)+len(end):]

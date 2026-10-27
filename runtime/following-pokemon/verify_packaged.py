@@ -142,7 +142,7 @@ def execute(dll,elf):
  randomizer=random.Random(946)
  cases.extend((randomizer.getrandbits(64),randomizer.getrandbits(64)) for _ in range(100))
  for base in (0x02300000,0x023b9090,0x023b9094):
-  uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+  uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
   loaded=relocate(dll,base,load_dependencies(uc))
   uc.mem_write(base,bytes(loaded))
   def call(name,args):
@@ -175,8 +175,11 @@ def execute(dll,elf):
   for x in range(1,33):
    point(sample,x*4096,0);result=call('fw_trail_push',[trail,sample,out,6])[0]
    assert result==int(x>=22)
-   if x>=22:assert struct.unpack('<i',uc.mem_read(out,4))[0]==(x-22)*4096
+   # Gap 6 truncates each one-unit step. The emitted point is one tile of
+   # that metric, two fixed-point units ahead of the older sample.
+   if x>=22:assert struct.unpack('<i',uc.mem_read(out,4))[0]==(x-22)*4096+2
   # Both cardinal axes, speeds, reversals and bends execute in the final RPM.
+  # A run step is interpolated onto the same one-tile distance as a walk.
   for axis in (0,1):
    for sign in (-1,1):
     for speed in (4096,8192):
@@ -185,17 +188,28 @@ def execute(dll,elf):
       point(sample,0 if axis else sign*v,sign*v if axis else 0)
       result=call('fw_trail_push',[trail,sample,out,6])[0]
       assert result==int(v>=gap)
-      if result:assert struct.unpack('<iii',uc.mem_read(out,12))[2 if axis else 0]==sign*(v-gap)
+      if result:
+       coord=struct.unpack('<iii',uc.mem_read(out,12))[2 if axis else 0]
+       ahead=v-gap;sample_at=sign*(ahead-ahead%speed);toward=sample_at+sign*speed
+       if sign>0:assert sample_at<=coord<=toward,(axis,sign,speed,v,coord)
+       else:assert toward<=coord<=sample_at,(axis,sign,speed,v,coord)
+       if speed==4096:assert abs(coord-sample_at)<64
   call('fw_trail_clear',[trail]);poses=[];last=-1;x=z=0
   for i in range(180):
    if i:
     if (i//30)%2:x+=4096
     else:z+=4096
-   point(sample,x,z);poses.append((x,0,z));result=call('fw_trail_push',[trail,sample,out,6])[0]
+   point(sample,x,z);uc.mem_write(sample+26,struct.pack('<H',i));poses.append((x,0,z))
+   result=call('fw_trail_push',[trail,sample,out,6])[0]
    assert result in (0,1)
    if result:
-    pose=struct.unpack('<iii',uc.mem_read(out,12));at=poses.index(pose)
-    assert at>=last and (last<0 or at-last<=2);last=at
+    pose=struct.unpack('<iii',uc.mem_read(out,12))
+    at=struct.unpack('<H',uc.mem_read(out+26,2))[0]
+    assert at<i and at>=last
+    a,b=poses[at],poses[at+1]
+    assert all(min(a[c],b[c])<=pose[c]<=max(a[c],b[c]) for c in range(3)),(i,at,pose,a,b)
+    if last>=0:assert at-last<=2
+    last=at
  print(f'Packaged DLL: {count} immediate calls valid; multiply/divide, directional idle gate, stationary startup and walking trail pass at three load addresses. No DS game run.')
 
 if __name__=='__main__':

@@ -200,11 +200,10 @@ streams header/record/zone validation and both checksums before publishing
 lookup bounds; later identity changes read only the matching species pages.
 File handles close before returning, and no registry I/O runs in movement or
 render callbacks. Missing/short/invalid data suppresses following safely.
-The current core bridge ABI 3 receives only the validated descriptor count and retains no field callback.
+The core bridge ABI 4 receives the validated descriptor count and keeps the resident summon token; it retains no field callback.
 Unload revokes extension bounds and invalidates the cache.
 
-Bounded FWCG v2 diagnostics contain stage, registry length, cache capacity and
-read count. Stage 7 is ready; stage 8 is a selection-time read failure. Both
+Both
 profiles reserve 8,192 bytes for the 3,852-byte conversation data. Upgrade
 reaction selection now accepts species 1–1023, excluding reserved Egg IDs.
 

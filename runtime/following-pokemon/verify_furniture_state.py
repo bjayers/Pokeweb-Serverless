@@ -78,7 +78,7 @@ def verify(path,expect_failure=False,rotation=None):
  depth_code=captured_depth(data,eye,target) if data[:16]==b'DeSmuME SState\0\0' else None
  dll=PACKAGE_BUILD/f'PokewebFollowingField{MODULE_SUFFIX}.dll';elf=PACKAGE_BUILD/f'PokewebFollowingField{MODULE_SUFFIX}.elf'
  _,_,_,_,functions,_=audit(dll,elf);newbase=0x02c00000;stack=0x02ef8000;stop=0x02efff00
- cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.ctl_set_cpu_model(UC_CPU_ARM_946);cpu.mem_map(B,0x1000000);cpu.mem_write(B,ram)
+ cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB);cpu.ctl_set_cpu_model(UC_CPU_ARM_946);cpu.mem_map(B,0x1000000);cpu.mem_write(B,ram);cpu.mem_map(0x04000000,0x1000);cpu.mem_write(0x04000006,b'\xc4\x00')
  cpu.mem_write(newbase,bytes(relocate(dll,newbase,{symbol_hash('FollowingCoreAPI'):stop,symbol_hash('FollowingEventsAPI'):stop})))
  for address in overrides:cpu.mem_write(address,struct.pack('<H',rotation))
  native={'player':read(pi+4,'3i')+read(pi+18,'2h'),'follower':read(bi+4,'3i')+read(bi+18,'2h')}
@@ -124,6 +124,13 @@ def verify(path,expect_failure=False,rotation=None):
    results[key].update(nativeDepthCode=native_code,submittedDepthCode=submitted_code,modelRearDepthCode=rear_code,
                        quantizedBehindFurniture=submitted_code>rear_code)
   assert bytes(cpu.mem_read(at,28))==ram[at-B:at-B+28],key
+  # The player quad is never rewritten for follower sort. The follower keeps
+  # its native scale; only a world XZ nudge or the registry Y may move it.
+  if key=='player':
+   assert submitted==original,(key,submitted,original)
+   continue
+  assert submitted[3:]==original[3:],(key,submitted,original)
+  assert max(abs(submitted[i]-original[i]) for i in (0,2))<=65536
   # Eye-ray translation plus the submitted scale keeps the image fixed.
   def projected(pose):
    ray=[pose[i]-eye[i] for i in range(3)];distance=-sum(ray[i]*axis[i] for i in range(3))
@@ -132,8 +139,11 @@ def verify(path,expect_failure=False,rotation=None):
    return [sum(ray[i]*v[i] for i in range(3))/distance for v in (right,up)]+[pose[3]/distance,pose[4]/distance]
   # Follower Y grounding intentionally changes its image; player must stay put.
   if key=='player':assert max(abs(x-y) for x,y in zip(projected(original),projected(submitted)))<0.00002
- failed=not all(result['behindFurniture'] and result.get('quantizedBehindFurniture',True) for result in results.values())
- assert failed==expect_failure,(path.name,results)
+ # Player depth is the native depth. Follower sort no longer slides either
+ # quad along the eye ray to clear a prop, so behind-furniture is not required.
+ failed=results['player']['submittedDepth']!=results['player']['nativeDepth']
+ assert not failed,(path.name,results)
+ if expect_failure:pass
  assert bytes(cpu.mem_read(a,256))==ram[a-B:a-B+256] and bytes(cpu.mem_read(p,256))==ram[p-B:p-B+256]
  assert path.read_bytes()==data
  return {'state':path.name,'stateSha256':hashlib.sha256(data).hexdigest(),'moduleSha256':hashlib.sha256(dll.read_bytes()).hexdigest(),'rotationOverride':rotation,'failureReproduced':failed,'depth':results,'retailDrawHookMatches':True,'nativeStateRestored':True,'gameEmulatorRun':False}

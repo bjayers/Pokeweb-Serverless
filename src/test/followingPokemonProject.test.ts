@@ -120,7 +120,7 @@ describe("follower asset transactions",()=>{
     rpm.relocations[0].target={module:hook.segment,address:hook.address-6,type:"THUMB_BRANCH"};
     expect(followerModuleHookConflicts(rpm,contract.hooks)).toBe(true);
   });
-  it("grounds opaque feet while retaining Flying-form and explicit sprite heights",()=>{
+  it("leaves automatic sprite height at the actor and retains Flying-form and explicit heights",()=>{
     const template=new Uint8Array(readFileSync(new URL("../assets/following/template-32-8.btx",import.meta.url)));
     const rgba=new Uint8Array(32*32*4);rgba.set([255,0,0,255],(29*32+16)*4);
     const artwork=encodeFollowerFrames(Array.from({length:8},()=>({width:32,height:32,rgba})),template);
@@ -128,11 +128,11 @@ describe("follower asset transactions",()=>{
     const base=new Uint8Array(33),flyingForm=new Uint8Array(33);base[28]=2;base[32]=2;flyingForm[6]=2;
     const make=(form:number,row:number,vertical=0)=>({key:{species:1,form,gender:0 as const,shiny:false},descriptorRow:row,resourceId:0,size:32 as const,
       animationProfile:"pokemon-asymmetric" as const,offsets:[0,vertical,0] as [number,number,number],placeholder:false,source:"stock" as const});
-    const registry={runtimeAbi:1,descriptorCount:1012,resourceCount:1,zones:[],entries:[make(0,1008),make(1,1009),make(0,1010,-7),make(0,1011,-2)]};
+    const registry={runtimeAbi:1,descriptorCount:1014,resourceCount:1,zones:[],entries:[make(0,1008),make(1,1009),make(0,1010,-7),make(0,1011,-5),make(0,1012,-2),make(1,1013,-2)]};
     deriveFollowerGrounding(registry,[artwork],[new Uint8Array(33),base,flyingForm]);
-    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([-5,0,-7,-5]);
+    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([0,0,-7,0,0,-2]);
     deriveFollowerGrounding(registry,[artwork],[new Uint8Array(33),base,flyingForm]);
-    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([-5,0,-7,-5]);
+    expect(registry.entries.map(entry=>entry.offsets[1])).toEqual([0,0,-7,0,0,-2]);
   });
   it("validates a whole batch before any project mutation",()=>{
     const {project,rom,workspace}=fixture(),before=structuredClone(project);
@@ -271,6 +271,21 @@ describe("walking alpha ownership",()=>{
       [FOLLOWER_EFFECTS_PATH]:new Uint8Array(readFileSync(new URL('../assets/following/hgss-effects.narc',import.meta.url))),
     });
     expect((await readFollowerAlphaInstall(project))?.enabled).toBe(true);
+    // A previous version's receipt with every module replaced by the bundled
+    // current build (installed outside Pokeweb) is adopted as current. One
+    // module that is neither the receipt's nor the current build still refuses.
+    const previous=runtimeManifest.previousVersions.find(version=>(version.variant??"full")==="full"&&"coreSha256" in version&&version.optionsModuleSha256&&version.battleModuleSha256)!;
+    const currentReceipt=project.fileSystem!.additions![FOLLOWER_INSTALL_PATH];
+    project.fileSystem!.additions![FOLLOWER_INSTALL_PATH]=new TextEncoder().encode(JSON.stringify({...state,version:previous.version,moduleSha256:previous.fieldSha256,
+      eventsSha256:previous.eventsSha256,eventsAbi:previous.eventsAbi,coreSha256:previous.coreSha256,coreAbi:previous.coreAbi,
+      optionsModuleSha256:previous.optionsModuleSha256,battleModuleSha256:previous.battleModuleSha256}));
+    const adopted=await readFollowerAlphaInstall(project);
+    expect([adopted?.version,adopted?.moduleSha256,adopted?.coreAbi]).toEqual([runtimeManifest.version,runtimeManifest.fieldSha256,runtimeManifest.coreAbi]);
+    const currentBattle=project.fileSystem!.additions!["patches/PokewebFollowingBattleW2.dll"];
+    project.fileSystem!.additions!["patches/PokewebFollowingBattleW2.dll"]=new Uint8Array([1,2,3]);
+    await expect(readFollowerAlphaInstall(project)).rejects.toThrow(/have changed/);
+    project.fileSystem!.additions!["patches/PokewebFollowingBattleW2.dll"]=currentBattle;
+    project.fileSystem!.additions![FOLLOWER_INSTALL_PATH]=currentReceipt;
     const authored = readFollowerWorkspace(project,rom)!;
     authored.registry.entries[0].key.shiny = false;
     project.fileSystem!.additions![FOLLOWER_MANIFEST_PATH] = new TextEncoder().encode(JSON.stringify(authored));

@@ -20,11 +20,11 @@ VARIANT=os.environ.get('FOLLOWING_VARIANT','full')
 if VARIANT not in ('base','full'):raise ValueError('FOLLOWING_VARIANT must be base or full')
 BUILD=ROOT_BUILD/'base' if VARIANT=='base' else ROOT_BUILD
 os.environ['FOLLOWING_BUILD_DIR']=str(BUILD)
-VERSION='0.7.44-alpha' if UPGRADE else '0.6.49-alpha' if ITALY else '0.6.93-alpha' if PROFILE=='stock' else '0.6.48-alpha'
+VERSION='0.7.44-alpha' if UPGRADE else '0.6.49-alpha' if ITALY else '1.0.0' if PROFILE=='stock' else '0.6.48-alpha'
 SUFFIX=('B2' if BLACK2 else 'W2I' if ITALY else 'W2')+('Base' if VARIANT=='base' else '')
 CONTRACT=HERE/('black2-contract.json' if BLACK2 else 'italy-contract.json' if ITALY else 'contract.json')
 os.environ['FOLLOWING_MODULE_SUFFIX']=SUFFIX
-def run(*args): subprocess.run([str(a) for a in args],check=True)
+def run(*args): subprocess.run([str(a) for a in args],check=True,shell=(os.name=='nt'))
 def dedupe_versions(entries):
     seen=set(); result=[]
     for entry in entries:
@@ -33,6 +33,81 @@ def dedupe_versions(entries):
         if key in seen: continue
         seen.add(key);result.append(entry)
     return result
+def publish_outputs(field_dll,events_dll,output,options_dll,battle_dll):
+    """Copy built modules into src/assets/following and record them in
+    runtime.json; the previous current version moves to previousVersions."""
+    publish=True
+    if publish:
+        import hashlib, shutil
+        assets=REPO/'src/assets/following'
+        if UPGRADE: assets=assets/'white2upgrade'
+        elif BLACK2: assets=assets/'black2'
+        elif ITALY: assets=assets/'white2italy'
+        assets.mkdir(parents=True,exist_ok=True)
+        shared=lambda path:assets/path.name.replace('Base.dll','.dll')
+        if VARIANT=='base':
+            # A grounded-only build. Its field/events pair keeps the Base names;
+            # core, Options and battle are shared by both packages and keep the
+            # plain names the site loads. The riding pair already in assets is
+            # left as it is, and its fingerprint is read from those files.
+            shutil.copyfile(field_dll,assets/field_dll.name)
+            shutil.copyfile(events_dll,assets/events_dll.name)
+            for path in (output,options_dll,battle_dll):shutil.copyfile(path,shared(path))
+            base_field,base_events=field_dll,events_dll
+            full_field,full_events=shared(field_dll),shared(events_dll)
+            if not full_field.exists() or not full_events.exists():raise ValueError('Bundled riding follower package is missing')
+        else:
+            shutil.copyfile(field_dll,assets/field_dll.name)
+            shutil.copyfile(events_dll,assets/events_dll.name)
+            shutil.copyfile(output,assets/output.name)
+            shutil.copyfile(options_dll,assets/options_dll.name)
+            shutil.copyfile(battle_dll,assets/battle_dll.name)
+            base_build=ROOT_BUILD/'base'
+            base_suffix=('B2' if BLACK2 else 'W2I' if ITALY else 'W2')+'Base'
+            base_field=base_build/f'PokewebFollowingField{base_suffix}.dll'
+            base_events=base_build/f'PokewebFollowingEvents{base_suffix}.dll'
+            if not base_field.exists() or not base_events.exists():raise ValueError('Base follower package is missing')
+            shutil.copyfile(base_field,assets/base_field.name)
+            shutil.copyfile(base_events,assets/base_events.name)
+            full_field,full_events=field_dll,events_dll
+        old_runtime=json.loads((assets/'runtime.json').read_text()) if (assets/'runtime.json').exists() else None
+        old_current=({key:old_runtime[key] for key in ('version','fieldSha256','eventsSha256','eventsAbi','coreSha256','coreAbi','optionsModuleSha256','battleModuleSha256') if key in old_runtime} if old_runtime else None)
+        if ITALY and old_current:
+            interaction_manifest=assets/'interactions.json' if old_current['version']!='0.6.27-alpha' else REPO/'src/assets/following/interactions.json'
+            previous_interactions=json.loads(interaction_manifest.read_text())
+            old_current.update(interactionsSha256=previous_interactions['dataSha256'],emotesSha256=previous_interactions['emotesSha256'],effectsSha256=json.loads((REPO/'src/assets/following/effects.json').read_text())['sha256'])
+        previous_versions=dedupe_versions(([old_current] if old_current else [])+(old_runtime.get('previousVersions',[]) if old_runtime else [])) if BLACK2 or ITALY else dedupe_versions(([old_current] if old_current else [])+(old_runtime.get('previousVersions',[]) if old_runtime else [])+[json.loads((HERE/'stock-0.6.50-first-receipt.json').read_text()),json.loads((HERE/'stock-0.6.15-receipt.json').read_text()),json.loads((HERE/'stock-0.6.14-receipt.json').read_text()),json.loads((HERE/'stock-0.6.13-receipt.json').read_text()),json.loads((HERE/'stock-0.6.12-receipt.json').read_text()),json.loads((HERE/'stock-0.6.11-receipt.json').read_text()),
+            {'version': '0.6.9-alpha', 'fieldSha256': '75646645ec262e5a07dade75af572b490dddabdf1d299ef4885753b9280a813b', 'eventsSha256': 'c99bc16f9745df1b8647cf169f9e2c2de8599b25c05953b395dc649417797fb9', 'eventsAbi': 2, 'coreSha256': '3a442efc82ab76ed525d24931320e51ff9d631c2da3736c4039e9ddc5d231b30', 'coreAbi': 1, 'registrySha256': '30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58', 'descriptorsSha256': 'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939', 'resourcesSha256': 'c18ccf5f1b16b85f33d727f01ca9f8a749ce75bfca20cfec6d74cd6a1249aec6', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version': '0.6.8-alpha', 'fieldSha256': '481b56d37d2be98ff8db891642f76b181c8eb1b5923d6542e6517070e33d0555', 'eventsSha256': '51f3a5ad5aeefcef8b0403607c79ba8c8237f950adf5ec7525d091863f080636', 'eventsAbi': 2, 'coreSha256': '23c286b07ba85a1576551fc56a349dfec79ff1910a5f1817c3863a4a925f7d35', 'coreAbi': 1, 'registrySha256': '30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58', 'descriptorsSha256': 'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939', 'resourcesSha256': 'c18ccf5f1b16b85f33d727f01ca9f8a749ce75bfca20cfec6d74cd6a1249aec6', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.7-alpha','fieldSha256':'23a347b389cddcdd403b2127231424900e1ba7cc0ce58207bb5b4199580824e9','eventsSha256':'9536e2f107454e71fd0b5bf23bc4fe56eaa1a46743823b770f33734fcafd0767','eventsAbi':2,'coreSha256':'0b2e4aea438da6ce6920ce535ee5a4e1bbf18131032fb1fcbc36e071ea6a827b','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'c18ccf5f1b16b85f33d727f01ca9f8a749ce75bfca20cfec6d74cd6a1249aec6','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.6-alpha','fieldSha256':'1ce5f2f4427e9509698a6b279c996b41fc6743e119eb068ccd87fbd2f1517576','eventsSha256':'8643d9351834317c4fa8ef410db5b656283f8c7faaf2d691f662f1e91fb79501','eventsAbi':2,'coreSha256':'f3e6a16dd6c9f16aa9f0318a43112e059c39f948ff7705c890c04acc41ee40bb','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.5-alpha','fieldSha256':'fd317e3657b7113b953adf9dbb7113a3c85c44e2d9f0c67b812646290e16a095','eventsSha256':'97133db4ea175766e8f5eb0b50544cb586e4d755d05125a290f32c63e8c650cd','eventsAbi':2,'coreSha256':'db255cb37a451de3b2b47aaab62cd2f42406fb03d2ed63e13a3d02554487804e','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.4-alpha','fieldSha256':'dc5260432ee8818b30b0273b42636baf81e25e61370775986e6077291110b79c','eventsSha256':'c0dece9a333277ec156f3618381d4d8f5a521325d3ebf05f1bfe04b967a5ed9b','eventsAbi':2,'coreSha256':'d5034231547bc6c80fa139437d3152a0a2222d410c3ff19885df8e82620269c3','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.3-alpha','fieldSha256':'03d328a9dc6122a5230d629b5ea7542a362b1d3c3d12775f4a67eda4f61cd90c','eventsSha256':'90409eab9325a0e2f6b6e2b5c02d535fa48c9e487a6928229658b4795a8d891b','eventsAbi':2,'coreSha256':'4adac80d5710801d4eb3c01c0c33742fc31fba3b9e78cf916d470e9d74479de7','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.2-alpha','fieldSha256':'0ae394f60f1e38ff08053fe54af715cd1cfc27483f14bf6f83f60835a1f24660','eventsSha256':'231832269929065e6dcf6a1cc7f8195b739048376b03e57a43c92ec4ac621557','eventsAbi':1,'coreSha256':'ee0d6185583576d095ab5ab538ec645153ceb7a8708b04670bf3f3fd8bcb0336','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.1-alpha','fieldSha256':'5d8bd1a25a569559cb6d307176676067231ed59922eca9ef4c9cddfea38772b5','eventsSha256':'1a1bffb3034910895a52aac8c00c16c750b7052a9ece1e69204927720cbc11c7','eventsAbi':1,'coreSha256':'43d5a69aa8b76a3493aabd7e12c2d67744faebd87489b975dcccfd5fedb25310','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.6.0-alpha','fieldSha256':'d74c2a07f78f1d70b6b5fc4859b2bcfb93dbd4ed4fc6550db2e76345069f3065','eventsSha256':'c7e795c8f2d0b2eb7df6ede0fc06b05c96247b9b76f8bacbce61a66c6fa056fa','eventsAbi':1,'coreSha256':'68453359d2db5c840b2ad3b4d17ec0568c123492528b30f4a6a6bcbb84ea0591','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'6f989c8f8e15435bcc15ad502654716d35e0fd2d2283f2f3ad359102b85d5ac1','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.5.0-alpha','fieldSha256':'2922b042dab14a8f10fd711d71cf92877dda27956c716a3445fc4a4f382cab7d','eventsSha256':'c5f17239556437785e11e1e2cbf392d8a6c37d7fc129e8088874f9b45e399f90','eventsAbi':1,'effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version': '0.4.1-alpha', 'fieldSha256': 'b649712174e9fff35c0dbf5853adeadde4866b9c74013849879035f0a57dc2d5', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version': '0.4.0-alpha', 'fieldSha256': '9bd9f47d1fb414bb4c538241d715d89fdd6f89900e4eed69f21e8932c19f3e22', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
+            {'version':'0.2.0-alpha','fieldSha256':'ca596c57d768be026e625f6677784c4c588eb141d7f7d751b2739344fa7e6eba','effectsSha256':None},
+            {'version':'0.3.1-alpha','fieldSha256':'c6dc102b29bab9fb7cd8a8522f8437e58eab1a423dc4e4193ac18ac991a09a21','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0'},
+            {'version':'0.3.0-alpha','fieldSha256':'5ce8ecd2833ff53c4b2531621fff8527508c5931f9d0610de3b8626bdb7c8e5d','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0'}
+        ])
+        if PROFILE=='stock':
+            first_053=json.loads((HERE/'stock-0.6.53-first-receipt.json').read_text())
+            previous_versions=[first_053]+[entry for entry in previous_versions if entry.get('fieldSha256')!=first_053['fieldSha256']]
+        if old_current and old_runtime.get('variants',{}).get('base'):
+            previous_versions=dedupe_versions([{**old_current,**old_runtime['variants']['base'],'variant':'base'}]+previous_versions)
+        full_fingerprint={'fieldSha256':hashlib.sha256(full_field.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(full_events.read_bytes()).hexdigest(),'eventsAbi':6}
+        base_fingerprint={'fieldSha256':hashlib.sha256(base_field.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(base_events.read_bytes()).hexdigest(),'eventsAbi':4}
+        (assets/'runtime.json').write_text(json.dumps({'version':VERSION,'dialogueAnimations':True,'tileBounds':True,**full_fingerprint,'variants':{'base':base_fingerprint,'full':full_fingerprint},'coreSha256':hashlib.sha256(output.read_bytes()).hexdigest(),'coreAbi':4,'battleModuleSha256':hashlib.sha256(battle_dll.read_bytes()).hexdigest(),'optionsModuleSha256':hashlib.sha256(options_dll.read_bytes()).hexdigest(),'previousVersions':previous_versions},indent=2)+'\n')
+    if publish and UPGRADE:
+        manifest=json.loads((assets/'runtime.json').read_text())
+        manifest['previousVersions']=dedupe_versions(([old_current] if old_current else [])+(old_runtime.get('previousVersions',[]) if old_runtime else [])+[json.loads((HERE/'upgrade-0.7.6-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.5-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.4-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.3-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.2-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.1-receipt.json').read_text())])
+        if old_current and old_runtime.get('variants',{}).get('base'):
+            manifest['previousVersions']=dedupe_versions([{**old_current,**old_runtime['variants']['base'],'variant':'base'}]+manifest['previousVersions'])
+        (assets/'runtime.json').write_text(json.dumps(manifest,indent=2)+'\n')
 def build(rom, publish=False):
     if VARIANT=='full':
         env={**os.environ,'FOLLOWING_VARIANT':'base','FOLLOWING_BUILD_ROOT':str(ROOT_BUILD)}
@@ -178,7 +253,8 @@ def build(rom, publish=False):
     verify_imports(field_dll,events_dll,output,options_dll)
     targets=re.findall(r'Target: (\S+) @ (\S+) :: (\S+)',field_dump.decode())
     mount_hook_ids={'surf-mount-draw','surf-entry-mount-draw','mounted-surf-entry-step','mounted-surf-entry-finish','mounted-surf-shore-span','mounted-surf-exit-step','mounted-surf-exit-finish','land-mount-flat-step'}
-    expected_field=sorted((h['kind'],h['segment'],hex(h['address'])) for h in contract_data['hooks'] if h.get('module')=='field' and (VARIANT=='full' or h['id'] not in mount_hook_ids) and (PROFILE=='stock' or h['id']!='field-terrain-billboard-draw'))
+    stock_only_hooks={'field-terrain-billboard-draw','field-follower-matcache'}
+    expected_field=sorted((h['kind'],h['segment'],hex(h['address'])) for h in contract_data['hooks'] if h.get('module')=='field' and (VARIANT=='full' or h['id'] not in mount_hook_ids) and (PROFILE=='stock' or h['id'] not in stock_only_hooks))
     if sorted(t for t in targets if t[1]!='base')!=expected_field:raise ValueError('Unexpected field hooks')
     if field_dll.stat().st_size<1024:raise ValueError('Field DLL was not generated')
     run(os.environ.get('PYTHON','python3'),HERE/'verify_battle_intro.py',rom)
@@ -215,66 +291,24 @@ def build(rom, publish=False):
         run(os.environ.get('PYTHON','python3'),HERE/'verify_cycle.py',rom)
         run(os.environ.get('PYTHON','python3'),HERE/'verify_positioning.py')
         run(os.environ.get('PYTHON','python3'),HERE/'verify_ambient.py',rom)
-    if publish:
-        import hashlib, shutil
-        assets=REPO/'src/assets/following'
-        if UPGRADE: assets=assets/'white2upgrade'
-        elif BLACK2: assets=assets/'black2'
-        elif ITALY: assets=assets/'white2italy'
-        assets.mkdir(parents=True,exist_ok=True)
-        shutil.copyfile(field_dll,assets/field_dll.name)
-        shutil.copyfile(events_dll,assets/events_dll.name)
-        shutil.copyfile(output,assets/output.name)
-        shutil.copyfile(options_dll,assets/options_dll.name)
-        shutil.copyfile(battle_dll,assets/battle_dll.name)
-        base_build=ROOT_BUILD/'base'
-        base_suffix=('B2' if BLACK2 else 'W2I' if ITALY else 'W2')+'Base'
-        base_field=base_build/f'PokewebFollowingField{base_suffix}.dll'
-        base_events=base_build/f'PokewebFollowingEvents{base_suffix}.dll'
-        if not base_field.exists() or not base_events.exists():raise ValueError('Base follower package is missing')
-        shutil.copyfile(base_field,assets/base_field.name)
-        shutil.copyfile(base_events,assets/base_events.name)
-        old_runtime=json.loads((assets/'runtime.json').read_text()) if (assets/'runtime.json').exists() else None
-        old_current=({key:old_runtime[key] for key in ('version','fieldSha256','eventsSha256','eventsAbi','coreSha256','coreAbi','optionsModuleSha256','battleModuleSha256') if key in old_runtime} if old_runtime else None)
-        if ITALY and old_current:
-            interaction_manifest=assets/'interactions.json' if old_current['version']!='0.6.27-alpha' else REPO/'src/assets/following/interactions.json'
-            previous_interactions=json.loads(interaction_manifest.read_text())
-            old_current.update(interactionsSha256=previous_interactions['dataSha256'],emotesSha256=previous_interactions['emotesSha256'],effectsSha256=json.loads((REPO/'src/assets/following/effects.json').read_text())['sha256'])
-        previous_versions=dedupe_versions(([old_current] if old_current else [])+(old_runtime.get('previousVersions',[]) if old_runtime else [])) if BLACK2 or ITALY else dedupe_versions(([old_current] if old_current else [])+(old_runtime.get('previousVersions',[]) if old_runtime else [])+[json.loads((HERE/'stock-0.6.50-first-receipt.json').read_text()),json.loads((HERE/'stock-0.6.15-receipt.json').read_text()),json.loads((HERE/'stock-0.6.14-receipt.json').read_text()),json.loads((HERE/'stock-0.6.13-receipt.json').read_text()),json.loads((HERE/'stock-0.6.12-receipt.json').read_text()),json.loads((HERE/'stock-0.6.11-receipt.json').read_text()),
-            {'version': '0.6.9-alpha', 'fieldSha256': '75646645ec262e5a07dade75af572b490dddabdf1d299ef4885753b9280a813b', 'eventsSha256': 'c99bc16f9745df1b8647cf169f9e2c2de8599b25c05953b395dc649417797fb9', 'eventsAbi': 2, 'coreSha256': '3a442efc82ab76ed525d24931320e51ff9d631c2da3736c4039e9ddc5d231b30', 'coreAbi': 1, 'registrySha256': '30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58', 'descriptorsSha256': 'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939', 'resourcesSha256': 'c18ccf5f1b16b85f33d727f01ca9f8a749ce75bfca20cfec6d74cd6a1249aec6', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version': '0.6.8-alpha', 'fieldSha256': '481b56d37d2be98ff8db891642f76b181c8eb1b5923d6542e6517070e33d0555', 'eventsSha256': '51f3a5ad5aeefcef8b0403607c79ba8c8237f950adf5ec7525d091863f080636', 'eventsAbi': 2, 'coreSha256': '23c286b07ba85a1576551fc56a349dfec79ff1910a5f1817c3863a4a925f7d35', 'coreAbi': 1, 'registrySha256': '30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58', 'descriptorsSha256': 'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939', 'resourcesSha256': 'c18ccf5f1b16b85f33d727f01ca9f8a749ce75bfca20cfec6d74cd6a1249aec6', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.7-alpha','fieldSha256':'23a347b389cddcdd403b2127231424900e1ba7cc0ce58207bb5b4199580824e9','eventsSha256':'9536e2f107454e71fd0b5bf23bc4fe56eaa1a46743823b770f33734fcafd0767','eventsAbi':2,'coreSha256':'0b2e4aea438da6ce6920ce535ee5a4e1bbf18131032fb1fcbc36e071ea6a827b','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'c18ccf5f1b16b85f33d727f01ca9f8a749ce75bfca20cfec6d74cd6a1249aec6','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.6-alpha','fieldSha256':'1ce5f2f4427e9509698a6b279c996b41fc6743e119eb068ccd87fbd2f1517576','eventsSha256':'8643d9351834317c4fa8ef410db5b656283f8c7faaf2d691f662f1e91fb79501','eventsAbi':2,'coreSha256':'f3e6a16dd6c9f16aa9f0318a43112e059c39f948ff7705c890c04acc41ee40bb','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.5-alpha','fieldSha256':'fd317e3657b7113b953adf9dbb7113a3c85c44e2d9f0c67b812646290e16a095','eventsSha256':'97133db4ea175766e8f5eb0b50544cb586e4d755d05125a290f32c63e8c650cd','eventsAbi':2,'coreSha256':'db255cb37a451de3b2b47aaab62cd2f42406fb03d2ed63e13a3d02554487804e','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.4-alpha','fieldSha256':'dc5260432ee8818b30b0273b42636baf81e25e61370775986e6077291110b79c','eventsSha256':'c0dece9a333277ec156f3618381d4d8f5a521325d3ebf05f1bfe04b967a5ed9b','eventsAbi':2,'coreSha256':'d5034231547bc6c80fa139437d3152a0a2222d410c3ff19885df8e82620269c3','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.3-alpha','fieldSha256':'03d328a9dc6122a5230d629b5ea7542a362b1d3c3d12775f4a67eda4f61cd90c','eventsSha256':'90409eab9325a0e2f6b6e2b5c02d535fa48c9e487a6928229658b4795a8d891b','eventsAbi':2,'coreSha256':'4adac80d5710801d4eb3c01c0c33742fc31fba3b9e78cf916d470e9d74479de7','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.2-alpha','fieldSha256':'0ae394f60f1e38ff08053fe54af715cd1cfc27483f14bf6f83f60835a1f24660','eventsSha256':'231832269929065e6dcf6a1cc7f8195b739048376b03e57a43c92ec4ac621557','eventsAbi':1,'coreSha256':'ee0d6185583576d095ab5ab538ec645153ceb7a8708b04670bf3f3fd8bcb0336','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.1-alpha','fieldSha256':'5d8bd1a25a569559cb6d307176676067231ed59922eca9ef4c9cddfea38772b5','eventsSha256':'1a1bffb3034910895a52aac8c00c16c750b7052a9ece1e69204927720cbc11c7','eventsAbi':1,'coreSha256':'43d5a69aa8b76a3493aabd7e12c2d67744faebd87489b975dcccfd5fedb25310','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'4c6c87d7802f4aefa4025bf74386e458fd94cb04912971b43501c7bd74ae0a3f','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.6.0-alpha','fieldSha256':'d74c2a07f78f1d70b6b5fc4859b2bcfb93dbd4ed4fc6550db2e76345069f3065','eventsSha256':'c7e795c8f2d0b2eb7df6ede0fc06b05c96247b9b76f8bacbce61a66c6fa056fa','eventsAbi':1,'coreSha256':'68453359d2db5c840b2ad3b4d17ec0568c123492528b30f4a6a6bcbb84ea0591','coreAbi':1,'registrySha256':'30192d1ca20b6fae62a88421e8b505ac35202d4d5efa5c59fbcf7b62dcce2f58','descriptorsSha256':'f24b7c6833abd6d6a81078235b23875c8d79aac96862ff2b07ca0d26cf779939','resourcesSha256':'6f989c8f8e15435bcc15ad502654716d35e0fd2d2283f2f3ad359102b85d5ac1','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.5.0-alpha','fieldSha256':'2922b042dab14a8f10fd711d71cf92877dda27956c716a3445fc4a4f382cab7d','eventsSha256':'c5f17239556437785e11e1e2cbf392d8a6c37d7fc129e8088874f9b45e399f90','eventsAbi':1,'effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0','interactionsSha256':'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894','emotesSha256':'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version': '0.4.1-alpha', 'fieldSha256': 'b649712174e9fff35c0dbf5853adeadde4866b9c74013849879035f0a57dc2d5', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version': '0.4.0-alpha', 'fieldSha256': '9bd9f47d1fb414bb4c538241d715d89fdd6f89900e4eed69f21e8932c19f3e22', 'effectsSha256': 'd910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0', 'interactionsSha256': 'e0755091c6e7993d6573d0b9e1b574dd22084cf46ad4af3ac2f6313687907894', 'emotesSha256': 'ca753098e14141d4b92a1f151271df099e3a516590d0febd8de911fd6346f1f7'},
-            {'version':'0.2.0-alpha','fieldSha256':'ca596c57d768be026e625f6677784c4c588eb141d7f7d751b2739344fa7e6eba','effectsSha256':None},
-            {'version':'0.3.1-alpha','fieldSha256':'c6dc102b29bab9fb7cd8a8522f8437e58eab1a423dc4e4193ac18ac991a09a21','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0'},
-            {'version':'0.3.0-alpha','fieldSha256':'5ce8ecd2833ff53c4b2531621fff8527508c5931f9d0610de3b8626bdb7c8e5d','effectsSha256':'d910abbbf20657bd180d124a6f888574c8c2f091e02348e707c5fd29e879a5f0'}
-        ])
-        if PROFILE=='stock':
-            first_053=json.loads((HERE/'stock-0.6.53-first-receipt.json').read_text())
-            previous_versions=[first_053]+[entry for entry in previous_versions if entry.get('fieldSha256')!=first_053['fieldSha256']]
-        if old_current and old_runtime.get('variants',{}).get('base'):
-            previous_versions=dedupe_versions([{**old_current,**old_runtime['variants']['base'],'variant':'base'}]+previous_versions)
-        full_fingerprint={'fieldSha256':hashlib.sha256(field_dll.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(events_dll.read_bytes()).hexdigest(),'eventsAbi':6}
-        base_fingerprint={'fieldSha256':hashlib.sha256(base_field.read_bytes()).hexdigest(),'eventsSha256':hashlib.sha256(base_events.read_bytes()).hexdigest(),'eventsAbi':4}
-        (assets/'runtime.json').write_text(json.dumps({'version':VERSION,'dialogueAnimations':True,'tileBounds':True,**full_fingerprint,'variants':{'base':base_fingerprint,'full':full_fingerprint},'coreSha256':hashlib.sha256(output.read_bytes()).hexdigest(),'coreAbi':3,'battleModuleSha256':hashlib.sha256(battle_dll.read_bytes()).hexdigest(),'optionsModuleSha256':hashlib.sha256(options_dll.read_bytes()).hexdigest(),'previousVersions':previous_versions},indent=2)+'\n')
-    if publish and UPGRADE:
-        manifest=json.loads((assets/'runtime.json').read_text())
-        manifest['previousVersions']=dedupe_versions(([old_current] if old_current else [])+(old_runtime.get('previousVersions',[]) if old_runtime else [])+[json.loads((HERE/'upgrade-0.7.6-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.5-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.4-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.3-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.2-receipt.json').read_text()),json.loads((HERE/'upgrade-0.7.1-receipt.json').read_text())])
-        if old_current and old_runtime.get('variants',{}).get('base'):
-            manifest['previousVersions']=dedupe_versions([{**old_current,**old_runtime['variants']['base'],'variant':'base'}]+manifest['previousVersions'])
-        (assets/'runtime.json').write_text(json.dumps(manifest,indent=2)+'\n')
+    if publish: publish_outputs(field_dll,events_dll,output,options_dll,battle_dll)
     print(f'Follower field module: {field_dll.name} ({field_dll.stat().st_size} bytes). Published: {publish}.')
     print(f'Follower core module: {output.name} ({output.stat().st_size} bytes). Published: {publish}.')
     print(f'Follower Options module: {options_dll.name} ({options_dll.stat().st_size} bytes). Published: {publish}.')
     print(f'Follower battle module: {battle_dll.name} ({battle_dll.stat().st_size} bytes). Published: {publish}.')
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('rom',type=Path);p.add_argument('--publish',action='store_true');args=p.parse_args();build(args.rom,args.publish)
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('rom',type=Path,nargs='?')
+    p.add_argument('--publish',action='store_true')
+    p.add_argument('--publish-only',action='store_true',help='publish the modules already in the build folders, without rebuilding or running the checks')
+    args=p.parse_args()
+    if args.publish_only:
+        names=[f'PokewebFollowing{kind}{SUFFIX}.dll' for kind in ('Field','Events','Core','Options','Battle')]
+        paths=[BUILD/name for name in names]
+        missing=[str(path) for path in paths if not path.exists()]
+        if missing:raise ValueError('Build the modules first; missing: '+', '.join(missing))
+        publish_outputs(*paths)
+        print('Published '+VERSION+': '+', '.join(names))
+    else:
+        if not args.rom:p.error('rom is required unless --publish-only')
+        build(args.rom,args.publish)

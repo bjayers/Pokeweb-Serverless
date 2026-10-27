@@ -10,4 +10,6 @@ uint16_t fw_object_row(uint16_t code, uint16_t count) {
         return FW_STOCK_ROWS + code - FW_CODE_BASE;
     return fw_stock_row(code);
 }
-uint32_t fw_descriptor_offset(uint16_t row) { return 4u + (uint32_t)row * 28u; }
+uint32_t fw_descriptor_offset(uint16_t row) {
+    return 4u + (uint32_t)row * 28u;
+}

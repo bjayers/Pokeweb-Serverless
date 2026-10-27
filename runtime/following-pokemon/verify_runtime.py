@@ -14,7 +14,7 @@ preserved=[UC_ARM_REG_R4,UC_ARM_REG_R5,UC_ARM_REG_R6,UC_ARM_REG_R7,UC_ARM_REG_R8
 STOP=0x02008000; STACK=0x023f0000; BASE=0x02300000
 linked=BUILD/'core.linked.elf'
 subprocess.run([str(TOOLS/'arm-none-eabi-ld'),'-Ttext',hex(BASE),'-Tdata',hex(BASE+0x8000),'-e','PokewebFollowingObjectRow',str(BUILD/f'PokewebFollowingCore{SUFFIX}.elf'),'-o',str(linked)],check=True)
-uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000)
+uc=Uc(UC_ARCH_ARM,UC_MODE_THUMB);uc.ctl_set_cpu_model(UC_CPU_ARM_946);uc.mem_map(0x02000000,0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 symbols={}
 with linked.open('rb') as stream:
     elf=ELFFile(stream)

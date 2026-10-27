@@ -2,168 +2,215 @@
 #include "events.h"
 #include "resident_events.h"
 #define API __attribute__((visibility("default")))
-API unsigned FollowingEventOpcode(void*);
-API int FollowingEventCallback(void*);
-API void FollowingEventFree(void*);
-API void FollowingEventVmFree(void*);
-static const FwrEvents residentHooks={FWRE_ABI,sizeof(FwrEvents),FollowingEventOpcode,FollowingEventCallback,FollowingEventFree,FollowingEventVmFree};
-_Static_assert(sizeof(FweRestore)==FWRE_RESTORE_BYTES,"resident restore token size");
+API unsigned FollowingEventOpcode(void *);
+API int FollowingEventCallback(void *);
+API void FollowingEventFree(void *);
+API void FollowingEventVmFree(void *);
+static const FwrEvents residentHooks = {
+    FWRE_ABI,           sizeof(FwrEvents),   FollowingEventOpcode, FollowingEventCallback,
+    FollowingEventFree, FollowingEventVmFree};
+_Static_assert(sizeof(FweRestore) == FWRE_RESTORE_BYTES, "resident restore token size");
 #ifdef FW_MOUNT
-_Static_assert(sizeof(FweMount)==FWRE_MOUNT_BYTES,"resident mount token size");
+_Static_assert(sizeof(FweMount) == FWRE_MOUNT_BYTES, "resident mount token size");
 #endif
-static struct {void *field,*game;uint32_t generation;FweObserver observer;unsigned notifying;Actor *ambient;
- int (*holdCallback)(void);
+static struct {
+    void *field, *game;
+    uint32_t generation;
+    FweObserver observer;
+    unsigned notifying;
+    Actor *ambient;
+    int (*holdCallback)(void);
 } bridge;
 #ifdef FW_MOUNT
-static void discard_mount(void){FollowingResidentTokenDiscard(FWRE_MOUNT_TOKEN);}
-static void preserve_mount(void *field,uint32_t generation,const FweMount *mount){
- if(!mount||!mount->game||bridge.field!=field||bridge.generation!=generation||PTR(field,8)!=mount->game)return;
- FollowingResidentTokenStore(FWRE_MOUNT_TOKEN,mount,sizeof(*mount));
+static void discard_mount(void) {
+    FollowingResidentTokenDiscard(FWRE_MOUNT_TOKEN);
 }
-static int consume_mount(void *game,FweMount *mount){
- if(!game||!mount||!FollowingResidentTokenConsume(FWRE_MOUNT_TOKEN,mount,sizeof(*mount)))return 0;
- return mount->game==game;
+static void preserve_mount(void *field, uint32_t generation, const FweMount *mount) {
+    if (!mount || !mount->game || bridge.field != field || bridge.generation != generation ||
+        PTR(field, 8) != mount->game)
+        return;
+    FollowingResidentTokenStore(FWRE_MOUNT_TOKEN, mount, sizeof(*mount));
+}
+static int consume_mount(void *game, FweMount *mount) {
+    if (!game || !mount || !FollowingResidentTokenConsume(FWRE_MOUNT_TOKEN, mount, sizeof(*mount))) return 0;
+    return mount->game == game;
 }
 #endif
-static int bind(void *field,void *game,uint32_t generation,FweObserver observer
-                ,int (*holdCallback)(void)
-                ){
- if(!field||!game||!generation||!observer)return 0;
- if(bridge.observer&&(bridge.field!=field||bridge.generation!=generation))return 0;
- if(!FollowingResidentEventBind(&residentHooks))return 0;
- bridge.field=field;bridge.game=game;bridge.generation=generation;bridge.observer=observer;
- bridge.holdCallback=holdCallback;
- return 1;
+static int bind(void *field, void *game, uint32_t generation, FweObserver observer,
+                int (*holdCallback)(void)) {
+    if (!field || !game || !generation || !observer) return 0;
+    if (bridge.observer && (bridge.field != field || bridge.generation != generation)) return 0;
+    if (!FollowingResidentEventBind(&residentHooks)) return 0;
+    bridge.field = field;
+    bridge.game = game;
+    bridge.generation = generation;
+    bridge.observer = observer;
+    bridge.holdCallback = holdCallback;
+    return 1;
 }
-static void unbind(void *field,uint32_t generation){
- if(bridge.field==field&&bridge.generation==generation){bridge.observer=0;bridge.ambient=0;bridge.field=bridge.game=0;bridge.generation=0;
-  bridge.holdCallback=0;
-  FollowingResidentEventClear();
- }
+static void unbind(void *field, uint32_t generation) {
+    if (bridge.field == field && bridge.generation == generation) {
+        bridge.observer = 0;
+        bridge.ambient = 0;
+        bridge.field = bridge.game = 0;
+        bridge.generation = 0;
+        bridge.holdCallback = 0;
+        FollowingResidentEventClear();
+    }
 }
 /* PMC calls this before freeing an overlay-scoped event module. */
-API int DllMain(void *manager,void *module,int reason){
- (void)manager;(void)module;
- if(reason==1)FollowingResidentEventClear();
- return 0;
+API int DllMain(void *manager, void *module, int reason) {
+    (void)manager;
+    (void)module;
+    if (reason == 1) FollowingResidentEventClear();
+    return 0;
 }
-static void preserve(void *field,uint32_t generation,const FweRestore *restore){
- if(bridge.field!=field||bridge.generation!=generation||!restore||restore->magic!=FWE_RESTORE_MAGIC)return;
- FollowingResidentTokenStore(FWRE_RESTORE_TOKEN,restore,sizeof(*restore));
+static void preserve(void *field, uint32_t generation, const FweRestore *restore) {
+    if (bridge.field != field || bridge.generation != generation || !restore ||
+        restore->magic != FWE_RESTORE_MAGIC)
+        return;
+    FollowingResidentTokenStore(FWRE_RESTORE_TOKEN, restore, sizeof(*restore));
 }
-static int consume(FweRestore *restore){
- return restore&&FollowingResidentTokenConsume(FWRE_RESTORE_TOKEN,restore,sizeof(*restore));
+static int consume(FweRestore *restore) {
+    return restore && FollowingResidentTokenConsume(FWRE_RESTORE_TOKEN, restore, sizeof(*restore));
 }
-static void discard(void){FollowingResidentTokenDiscard(FWRE_RESTORE_TOKEN);
+static void discard(void) {
+    FollowingResidentTokenDiscard(FWRE_RESTORE_TOKEN);
 #ifdef FW_MOUNT
- discard_mount();
+    discard_mount();
 #endif
 }
-API const FweApi FollowingEventsAPI={FWE_ABI,sizeof(FweApi),bind,unbind,preserve,consume,discard
+API const FweApi FollowingEventsAPI = {FWE_ABI,
+                                       sizeof(FweApi),
+                                       bind,
+                                       unbind,
+                                       preserve,
+                                       consume,
+                                       discard
 #ifdef FW_MOUNT
- ,preserve_mount,consume_mount,discard_mount
+                                       ,
+                                       preserve_mount,
+                                       consume_mount,
+                                       discard_mount
 #endif
 };
-static void notify(unsigned kind,void *subject,uintptr_t value){
- if(!bridge.observer||bridge.notifying)return;
- bridge.notifying=1;bridge.observer(kind,subject,value);bridge.notifying=0;
+static void notify(unsigned kind, void *subject, uintptr_t value) {
+    if (!bridge.observer || bridge.notifying) return;
+    bridge.notifying = 1;
+    bridge.observer(kind, subject, value);
+    bridge.notifying = 0;
 }
-API unsigned FollowingEventOpcode(void *vm){
- unsigned opcode=CALL(0x020159e9,unsigned(*)(void*))(vm);
- /* Other VMs (battle, applications) are not field scripts. Do not inspect
-    their environments. This comparison precedes every environment read. */
- if(bridge.observer&&U32(vm,4)==0x0216b578){
-  void *env=PTR(vm,0x2c),*param=env?PTR(env,0x20):0;
-  if(param&&PTR(param,4)==bridge.game&&PTR(param,12)&&PTR(PTR(param,12),64)==bridge.field)
-   notify(FWE_OPCODE,vm,opcode);
- }
- return opcode;
+API unsigned FollowingEventOpcode(void *vm) {
+    unsigned opcode = CALL(0x020159e9, unsigned (*)(void *))(vm);
+    /* Other VMs (battle, applications) are not field scripts. Do not inspect
+       their environments. This comparison precedes every environment read. */
+    if (bridge.observer && U32(vm, 4) == 0x0216b578) {
+        void *env = PTR(vm, 0x2c), *param = env ? PTR(env, 0x20) : 0;
+        if (param && PTR(param, 4) == bridge.game && PTR(param, 12) &&
+            PTR(PTR(param, 12), 64) == bridge.field)
+            notify(FWE_OPCODE, vm, opcode);
+    }
+    return opcode;
 }
-API int FollowingEventCallback(void *event){
- if(bridge.observer&&PTR(event,16)==bridge.game)notify(FWE_CALLBACK,event,U32(event,4));
- /* Keep the native event node alive while the field-owned recall image and
-  * ball finish. Returning 0 is the retail "still running" callback result.
-  * No script command, warp, or scripted player movement advances in this wait. */
- if(bridge.observer&&PTR(event,16)==bridge.game&&bridge.holdCallback&&bridge.holdCallback())return 0;
- /* The observer never edits the event. Fetch its arguments once, before the
-    native callback can replace/free itself. No post-call event dereference. */
- int (*callback)(void*,void*,void*)=PTR(event,4);
- return callback(event,(uint8_t*)event+8,PTR(event,12));
+API int FollowingEventCallback(void *event) {
+    if (bridge.observer && PTR(event, 16) == bridge.game) notify(FWE_CALLBACK, event, U32(event, 4));
+    /* Keep the native event node alive while the field-owned recall image and
+     * ball finish. Returning 0 is the retail "still running" callback result.
+     * No script command, warp, or scripted player movement advances in this wait. */
+    if (bridge.observer && PTR(event, 16) == bridge.game && bridge.holdCallback && bridge.holdCallback())
+        return 0;
+    /* The observer never edits the event. Fetch its arguments once, before the
+       native callback can replace/free itself. No post-call event dereference. */
+    int (*callback)(void *, void *, void *) = PTR(event, 4);
+    return callback(event, (uint8_t *)event + 8, PTR(event, 12));
 }
-extern void FollowingOriginalEventFree(void*);
-API void FollowingEventFree(void *event){
- if(bridge.observer&&PTR(event,16)==bridge.game)notify(FWE_FREE,event,0);
- FollowingOriginalEventFree(event);
+extern void FollowingOriginalEventFree(void *);
+API void FollowingEventFree(void *event) {
+    if (bridge.observer && PTR(event, 16) == bridge.game) notify(FWE_FREE, event, 0);
+    FollowingOriginalEventFree(event);
 }
-API void FollowingEventAction(Actor *actor,unsigned code){
- unsigned wasUsed=actor->flags&1;
- if(bridge.observer&&actor->system&&PTR(actor->system,64)==bridge.field)notify(FWE_ACTION,actor,code);
- if(wasUsed&&!(actor->flags&1))return;
- /* Original SetNextActorAcmd is two instructions, not an eight-byte hook. */
- CALL(0x02167259,void(*)(Actor*,unsigned))(actor,code);
+API void FollowingEventAction(Actor *actor, unsigned code) {
+    unsigned wasUsed = actor->flags & 1;
+    if (bridge.observer && actor->system && PTR(actor->system, 64) == bridge.field)
+        notify(FWE_ACTION, actor, code);
+    if (wasUsed && !(actor->flags & 1)) return;
+    /* Original SetNextActorAcmd is two instructions, not an eight-byte hook. */
+    CALL(0x02167259, void (*)(Actor *, unsigned))(actor, code);
 }
-API Actor *FollowingEventAllocate(ActorSystem *sys,const void *entity){
- if(bridge.observer&&sys->field==bridge.field)notify(FWE_ALLOCATE,sys,(uintptr_t)entity);
- return CALL(0x02167aad,Actor*(*)(ActorSystem*))(sys);
+API Actor *FollowingEventAllocate(ActorSystem *sys, const void *entity) {
+    if (bridge.observer && sys->field == bridge.field) notify(FWE_ALLOCATE, sys, (uintptr_t)entity);
+    return CALL(0x02167aad, Actor * (*)(ActorSystem *))(sys);
 }
-extern void FollowingOriginalPosition(Actor*,const Vec*,unsigned);
-API void FollowingEventPosition(Actor *actor,const Vec *position,unsigned direction){
- unsigned wasUsed=actor->flags&1;
- if(bridge.observer&&actor->system&&PTR(actor->system,64)==bridge.field)notify(FWE_POSITION,actor,(uintptr_t)position);
- if(wasUsed&&!(actor->flags&1))return;
- FollowingOriginalPosition(actor,position,direction);
+extern void FollowingOriginalPosition(Actor *, const Vec *, unsigned);
+API void FollowingEventPosition(Actor *actor, const Vec *position, unsigned direction) {
+    unsigned wasUsed = actor->flags & 1;
+    if (bridge.observer && actor->system && PTR(actor->system, 64) == bridge.field)
+        notify(FWE_POSITION, actor, (uintptr_t)position);
+    if (wasUsed && !(actor->flags & 1)) return;
+    FollowingOriginalPosition(actor, position, direction);
 }
-extern void FollowingOriginalDelete(Actor*);
-API void FollowingEventDelete(Actor *actor){
- unsigned wasUsed=actor->flags&1;
- if(bridge.observer&&actor->system&&PTR(actor->system,64)==bridge.field)notify(FWE_DELETE,actor,0);
- if(wasUsed&&!(actor->flags&1))return; /* owned follower already removed by observer */
- FollowingOriginalDelete(actor);
+extern void FollowingOriginalDelete(Actor *);
+API void FollowingEventDelete(Actor *actor) {
+    unsigned wasUsed = actor->flags & 1;
+    if (bridge.observer && actor->system && PTR(actor->system, 64) == bridge.field)
+        notify(FWE_DELETE, actor, 0);
+    if (wasUsed && !(actor->flags & 1)) return; /* owned follower already removed by observer */
+    FollowingOriginalDelete(actor);
 }
-API void FollowingEventWorldStep(Actor *actor,const Vec *position){
- unsigned wasUsed=actor->flags&1;
- /* Native initialization writes the first position before MOVEPROC_INIT
-    (flags bit 1). That is placement, not a sweep from the cleared origin.
-    Reuse the existing placement notification so a real destination conflict
-    still recalls. Initialized actors keep the full movement guard. */
- if(bridge.observer&&actor->system&&PTR(actor->system,64)==bridge.field)
-  notify((actor->flags&2)?FWE_WORLD_STEP:FWE_POSITION,actor,(uintptr_t)position);
- if(wasUsed&&!(actor->flags&1))return;
- actor->world=*position;
+API void FollowingEventWorldStep(Actor *actor, const Vec *position) {
+    unsigned wasUsed = actor->flags & 1;
+    /* Native initialization writes the first position before MOVEPROC_INIT
+       (flags bit 1). That is placement, not a sweep from the cleared origin.
+       Reuse the existing placement notification so a real destination conflict
+       still recalls. Initialized actors keep the full movement guard. */
+    if (bridge.observer && actor->system && PTR(actor->system, 64) == bridge.field)
+        notify((actor->flags & 2) ? FWE_WORLD_STEP : FWE_POSITION, actor, (uintptr_t)position);
+    if (wasUsed && !(actor->flags & 1)) return;
+    actor->world = *position;
 }
-API void FollowingEventVmFree(void *vm){
- /* Its environment has already been freed by the field VM destructor. */
- if(bridge.observer&&U32(vm,4)==0x0216b578)notify(FWE_VM_FREE,vm,0);
- CALL(0x0203a279,void(*)(void*))(vm);
+API void FollowingEventVmFree(void *vm) {
+    /* Its environment has already been freed by the field VM destructor. */
+    if (bridge.observer && U32(vm, 4) == 0x0216b578) notify(FWE_VM_FREE, vm, 0);
+    CALL(0x0203a279, void (*)(void *))(vm);
 }
 
 /* Only collision queries issued by this actor's autonomous callback qualify.
    Sight/event queries outside the callback retain retail results. */
-API void FollowingAmbientUpdate(Actor *actor){
- Actor *previous=bridge.ambient;
- bridge.ambient=actor;
- if(actor->callbacks->update)actor->callbacks->update(actor);
- bridge.ambient=previous;
+API void FollowingAmbientUpdate(Actor *actor) {
+    Actor *previous = bridge.ambient;
+    bridge.ambient = actor;
+    if (actor->callbacks->update) actor->callbacks->update(actor);
+    bridge.ambient = previous;
 }
-extern int FollowingOriginalGridCollision(Actor*,int,int,int);
-API int FollowingAmbientGrid(Actor *actor,int x,int y,int z){
- int result=FollowingOriginalGridCollision(actor,x,y,z);
- if(!result&&bridge.ambient==actor&&bridge.observer&&actor->system&&PTR(actor->system,64)==bridge.field){
-  FweCollision query;query.position.x=x;query.position.y=y;query.position.z=z;query.radius=0;query.blocked=0;notify(FWE_AMBIENT_GRID,actor,(uintptr_t)&query);
-  result=query.blocked?1:0;
- }
- return result;
+extern int FollowingOriginalGridCollision(Actor *, int, int, int);
+API int FollowingAmbientGrid(Actor *actor, int x, int y, int z) {
+    int result = FollowingOriginalGridCollision(actor, x, y, z);
+    if (!result && bridge.ambient == actor && bridge.observer && actor->system &&
+        PTR(actor->system, 64) == bridge.field) {
+        FweCollision query;
+        query.position.x = x;
+        query.position.y = y;
+        query.position.z = z;
+        query.radius = 0;
+        query.blocked = 0;
+        notify(FWE_AMBIENT_GRID, actor, (uintptr_t)&query);
+        result = query.blocked ? 1 : 0;
+    }
+    return result;
 }
-API int FollowingAmbientRail(Actor *actor,const void *location){
- int result=CALL(0x021957a9,int(*)(Actor*,const void*))(actor,location);
- if(!result&&bridge.ambient==actor&&bridge.observer&&actor->system&&PTR(actor->system,64)==bridge.field){
-  void *mapper=PTR(actor->system,60),*manager=mapper?PTR(mapper,0):0;
-  if(manager){
-   FweCollision query;query.blocked=0;
-   CALL(0x021b0725,void(*)(void*,const void*,Vec*))(manager,location,&query.position);
-   query.radius=CALL(0x021b0625,int32_t(*)(void*))(manager)/4;
-   notify(FWE_AMBIENT_RAIL,actor,(uintptr_t)&query);result=query.blocked?1:0;
-  }
- }
- return result;
+API int FollowingAmbientRail(Actor *actor, const void *location) {
+    int result = CALL(0x021957a9, int (*)(Actor *, const void *))(actor, location);
+    if (!result && bridge.ambient == actor && bridge.observer && actor->system &&
+        PTR(actor->system, 64) == bridge.field) {
+        void *mapper = PTR(actor->system, 60), *manager = mapper ? PTR(mapper, 0) : 0;
+        if (manager) {
+            FweCollision query;
+            query.blocked = 0;
+            CALL(0x021b0725, void (*)(void *, const void *, Vec *))(manager, location, &query.position);
+            query.radius = CALL(0x021b0625, int32_t(*)(void *))(manager) / 4;
+            notify(FWE_AMBIENT_RAIL, actor, (uintptr_t)&query);
+            result = query.blocked ? 1 : 0;
+        }
+    }
+    return result;
 }

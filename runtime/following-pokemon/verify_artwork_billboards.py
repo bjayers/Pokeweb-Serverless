@@ -31,7 +31,7 @@ assert hashlib.sha256(field.data[material_address-field.ramAddress:material_addr
 
 uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
 uc.ctl_set_cpu_model(UC_CPU_ARM_946)
-uc.mem_map(0x02000000, 0x400000)
+uc.mem_map(0x02000000, 0x400000);uc.mem_map(0x04000000,0x1000);uc.mem_write(0x04000006,b'\xc4\x00')
 uc.mem_write(rom.arm9RamAddress, bytes(ndspy.codeCompression.decompress(rom.arm9)))
 for overlay in overlays.values():
     uc.mem_write(overlay.ramAddress, bytes(overlay.data))
