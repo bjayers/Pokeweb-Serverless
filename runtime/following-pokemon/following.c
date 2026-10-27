@@ -156,6 +156,34 @@ int fw_trail_translate(FwTrail *t, int32_t dx, int32_t dy, int32_t dz) {
     }
     return 1;
 }
+/* The HGSS side-by-side stand. Walking back from the newest sample (the
+ * player's tile): exactly one tile sideways at the same z to the corner,
+ * then straight above it, that is, the player came down onto the corner.
+ * The vertical leg needs one sample; it is checked for one tile, or to the
+ * trail's end, which a short gap trims to less. */
+int fw_trail_side_corner(const FwTrail *t, FwPoint *corner) {
+    if (!t || !corner || t->count < 3) return 0;
+    const FwSample *p = &t->samples[index_at(t, t->count - 1)], *c = 0;
+    int i = (int)t->count - 2;
+    for (; i >= 0; --i) {
+        const FwSample *s = &t->samples[index_at(t, (unsigned)i)];
+        uint32_t dx = abs_delta(s->x, p->x);
+        if (s->z != p->z || dx > FW_TILE) return 0;
+        if (dx == FW_TILE) { c = s; break; }
+    }
+    if (!c) return 0;
+    int32_t last = c->z; int up = 0;
+    for (--i; i >= 0; --i) {
+        const FwSample *s = &t->samples[index_at(t, (unsigned)i)];
+        if (s->x != c->x || s->z > last) return 0;
+        last = s->z;
+        if (s->z < c->z) up = 1;
+        if (abs_delta(c->z, s->z) >= FW_TILE) break;
+    }
+    if (!up) return 0;
+    corner->x = c->x; corner->y = c->y; corner->z = c->z;
+    return 1;
+}
 /* The pushed distance is summed under the gaps of each push, and trimming
  * subtracts under the current ones. After a gap change, sum it again so the
  * two agree; a stale sum could underflow on the next trim. */

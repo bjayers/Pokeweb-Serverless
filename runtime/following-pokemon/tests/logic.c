@@ -439,6 +439,50 @@ static void large_gap(void) {
     pulled = (FwPoint){player0 + 2 * (int32_t)FW_TILE + 4096, 0, 0};
     assert(fw_clamp_dialogue_pose(&pulled, &player, 0, 3, FW_MAX_AUTHORED_GAP) == 0);
 }
+/* Walk a path of (dx, dz) tile steps in two-unit samples from (x, z). */
+static FwSample walked;
+static void walk(FwTrail *t, int32_t *x, int32_t *z, int dx, int dz, unsigned tiles) {
+    const uint8_t gaps[4] = {12, 12, 12, 12};
+    FwSample pose = walked;
+    for (unsigned i = 0; i < tiles * 8; ++i) {
+        *x += dx * 2 * 4096; *z += dz * 2 * 4096;
+        FwSample s = sample(*x, 0, *z, 1, FW_WORLD);
+        s.direction = (uint8_t)(dz > 0 ? 1 : dz < 0 ? 0 : dx < 0 ? 2 : 3);
+        if (fw_trail_push_directional(t, &s, &pose, gaps) == 1) walked = pose;
+    }
+}
+static void side_corner(void) {
+    const int32_t start = 8 * 4096;
+    FwTrail t; FwPoint c; int32_t x, z;
+    /* Down two tiles, then right one: the corner is the tile beside. */
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 0, 1, 2); walk(&t, &x, &z, 1, 0, 1);
+    assert(fw_trail_side_corner(&t, &c) && c.x == start && c.z == start + 2 * (int32_t)FW_TILE);
+    /* The follower stands above the corner by its gap, on the leg. */
+    assert(walked.x == c.x && walked.z < c.z && c.z - walked.z <= (int32_t)FW_TILE);
+    /* Down one, then left one. */
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 0, 1, 1); walk(&t, &x, &z, -1, 0, 1);
+    assert(fw_trail_side_corner(&t, &c) && c.x == start && c.z == start + (int32_t)FW_TILE);
+    /* Two tiles sideways, up then sideways, sideways then down, and only
+     * down are not the stand. */
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 0, 1, 2); walk(&t, &x, &z, 1, 0, 2);
+    assert(!fw_trail_side_corner(&t, &c));
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 0, -1, 2); walk(&t, &x, &z, 1, 0, 1);
+    assert(!fw_trail_side_corner(&t, &c));
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 1, 0, 2); walk(&t, &x, &z, 0, 1, 1);
+    assert(!fw_trail_side_corner(&t, &c));
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 0, 1, 3);
+    assert(!fw_trail_side_corner(&t, &c));
+    /* Moving on after the stand is not the stand any more. */
+    fw_trail_clear(&t); x = z = start;
+    walk(&t, &x, &z, 0, 1, 2); walk(&t, &x, &z, 1, 0, 1); walk(&t, &x, &z, 0, 1, 1);
+    assert(!fw_trail_side_corner(&t, &c));
+}
 /* The resting ball walks the gap down to the tile behind the player and back
  * out, re-summing the trail on each change, while the player walks. */
 static void ball_gap(void) {
@@ -896,5 +940,6 @@ int main(void) {
     corner_spacing();
     large_gap();
     ball_gap();
+    side_corner();
     puts("Follower host logic: selection, identity, suppression, trail, mapping and wide offsets passed.");
 }

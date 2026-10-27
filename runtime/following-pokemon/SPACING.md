@@ -43,6 +43,18 @@ adjacent-tile, elevation, obstruction and trail-corridor checks. North/south rea
 does not increase. Existing render corrections, menu/PC retention and seamless
 zone handling are retained. A changed appearance uses normal trail reseeding.
 
+### Side-by-side stand
+
+An HGSS Easter egg, 32-pixel followers only. Walk down any number of tiles,
+step one tile left or right, then turn to face down without moving. The
+follower is still above the corner tile by its gap; it takes the rest of the
+step onto the corner, two units an update, and stands beside the player
+facing down. `fw_trail_side_corner` reads that sequence from the trail. When
+the player moves again the follower holds until the trail pose has come down
+through the corner, so it never steps back up. Any other facing or path, a
+swap or ease in progress, rails, the ball, a 64-pixel follower, an effect, or
+an NPC on the corner leave the ordinary pose.
+
 ## Storage and compatibility
 
 Stock White 2 0.6.89 widens the dialogue corridor sideways from one-third to

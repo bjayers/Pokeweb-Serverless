@@ -109,6 +109,9 @@ static struct { uint8_t active,departed,rail; uint16_t savedFace; FwPoint follow
 static struct { uint8_t active; uint32_t traveled, close_keep; FwPoint last; } ease;
 static Vec settled;
 static uint8_t haveSettled,haveLast;
+/* The HGSS side-by-side stand: the follower on the corner tile beside the
+ * player, held until the trail passes that corner again. */
+static struct { uint8_t active; FwPoint at; } beside;
 static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
 static void clear_ease(void){ease.active=0;ease.traveled=ease.close_keep=0;}
 void fw_depth_query(int *swapping,int *easing,uint32_t *traveled){
@@ -496,6 +499,40 @@ static int begin_swap(Actor *a,const FwSample *sample,const FwPoint *player){
  FollowingSwapDebug.blocked=0;FollowingSwapDebug.active=1;
  return drive_swap(a,sample,player);
 }
+/* An Easter egg from HGSS, 32-pixel followers only. Walk down, step one
+ * tile left or right, then turn to face down in place: the follower, still
+ * on the tile above the corner by its gap, takes the rest of the step onto
+ * the corner and stands beside the player facing down. Two units an update,
+ * the walking pace. Any other facing, a moving player, a swap, an ease, a
+ * rail, the ball, a large follower or an NPC on the corner leave it as is. */
+static int beside_step(Actor *a){
+ if(large_actor(a)||fwfield_follower.state!=FW_FOLLOWING||(a->flags&HIDDEN)||
+    swapOn.active||ease.active||fwfx_busy()||on_rail()||fwfield_player->face!=1u||
+    !centered(&fwfield_player->world))return 0;
+ FwPoint c;
+ if(!fw_trail_side_corner(&fwfield_follower.trail,&c))return 0;
+ int64_t side=(int64_t)fwfield_player->world.x-c.x;
+ if(fwfield_player->world.z!=c.z||(side!=(int64_t)FW_TILE&&side!=-(int64_t)FW_TILE))return 0;
+ if(a->world.x!=c.x||a->world.z>c.z||(int64_t)c.z-a->world.z>(int64_t)FW_TILE)return 0;
+ if(a->world.z==c.z){beside.active=1;beside.at=c;return 0;}
+ Vec corner={c.x,c.y,c.z};
+ if(!fws_step_clear(a,&corner))return 0;
+ int32_t z=a->world.z+2*4096;if(z>c.z)z=c.z;
+ bind_pose(a,c.x,z==c.z?c.y:a->world.y,z,1);
+ beside.active=1;beside.at=c;return 1;
+}
+/* Once the player moves on, the trail pose starts above the corner and
+ * walks down through it. Hold the follower until it does, so there is no
+ * step back up. */
+static void beside_hold(const Actor *a,FwSample *target){
+ if(!beside.active)return;
+ /* Hold where it stands, on the corner or part way down to it, while the
+  * trail pose is still above it on that leg. A swap, reset or new trail
+  * moved it off the leg and ends the hold. */
+ if(a->world.x==beside.at.x&&a->world.z<=beside.at.z&&(int64_t)beside.at.z-a->world.z<=(int64_t)FW_TILE&&
+    target->x==beside.at.x&&target->z<a->world.z){target->x=a->world.x;target->y=a->world.y;target->z=a->world.z;return;}
+ beside.active=0;
+}
 static void move(Actor *a) {
  if ((uintptr_t)a!=fwfield_follower.actor || !fwfield_player || a->system!=fwfield_owner) return;
 #ifdef FW_MOUNT
@@ -520,7 +557,7 @@ static void move(Actor *a) {
   * Pause and a full stop do not advance the ease, so a held gap stays put. */
  if(paused)return;
  if(fwfield_follower.state==FW_FOLLOWING){reveal_follower(a);FollowingDebug.visible=!(a->flags&HIDDEN);}
- if(result!=1){note_settled();animation_gate(a);return;}
+ if(result!=1){beside_step(a);note_settled();animation_gate(a);return;}
  if(ease.active){
   if(!fwfield_follower.trail.count)clear_ease();
   else{
@@ -543,6 +580,7 @@ static void move(Actor *a) {
    }
   }
  }
+ beside_hold(a,&target);
  if(large_held(a,&target)){
   /* The blocked-step recall. The trail keeps recording and the hidden actor
    * keeps its pose, so a release or an L/R switch sends out from there. */
@@ -610,7 +648,7 @@ static void cleanup_impl(int keepTrail) {
  fwfield_shownNow=fwfield_reveal=0;
  if(!keepTrail){fw_trail_clear(&fwfield_follower.trail);fwfield_trailZoneValid=0;}
  fwfield_terrainActor=0;
- fwfield_cyclePending=0;fwfield_ballOff=0;
+ fwfield_cyclePending=0;fwfield_ballOff=0;beside.active=0;
  clear_swap();clear_ease();drop_settled();settled=(Vec){0,0,0};
  FollowingDebug.actor=FollowingDebug.visible=0;
 }
