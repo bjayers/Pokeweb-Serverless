@@ -686,9 +686,12 @@ export function buildGen5FollowerArchives(personalBytes: Uint8Array, appearanceB
     expanded[at + 9] = followerAnimationSelector(entry.animationProfile);
     entry.offsets = [13, 14, 15].map(offset => (expanded[at + offset] << 24) >> 24) as [number, number, number];
   }
+  // Follower rows carry no native world Y offset (descriptor byte 14), as an
+  // installed and migrated ROM does: the retail Pokemon rows set 50, which the
+  // engine applies to the actor and lifted every fresh follower above its
+  // shadow. Registry Y takes the value first and comes out at 0.
+  clearFollowerDescriptorY(registry, expanded);
   deriveFollowerGrounding(registry, resources.files, personal);
-  // Automatic registry Y is 0, matching a map NPC. Descriptor byte 14 also
-  // positions the native shadow, so leave the copied retail zero in that row.
   descriptors.files[0] = expanded; deriveFollowerSpacing(registry, resources.files); validateFollowerRegistry(registry);
   const registryBytes = encodeFollowerRegistry(registry, Boolean(laterBytes));
   return { registry, registryBytes, descriptors: descriptors.save(), resources: resources.save(),
