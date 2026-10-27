@@ -75,20 +75,35 @@ On brings the follower out at once.
 
 The same placement runs at boot, and after any field unloaded with the
 follower out or with Followers off: menus that leave the field, battles,
-the options screen. The unload records the player's zone and tile, and the
-next field places only when the player is back on that tile. A door, Fly,
-Escape Rope or any other warp lands elsewhere and keeps the walk-in. The
-player moving first cancels it.
+the options screen. The unload records the field's zone and the player's
+tile. The next field judges them once no event holds it, so a door's step
+out or a warp's arrival has already happened, and places only when the
+player is back on that tile in that zone. A door, Fly, Escape Rope or any
+other warp keeps the walk-in. The player moving first cancels it.
 
-Placement prefers behind the player at the follow distance, facing the
-player's way: the tile behind, and the next tile when the pose reaches it,
-must pass the native NPC step check (`ActorRouteCollCheckOneTileInDir`
-`0x0215e4f1`, `ActorRouteCollCheckCore` `0x0215e3fd`: terrain, height,
-actors, bounds). Otherwise either side at the follow distance, the same two
-tiles checked, facing the player, with its trail recorded facing the player
-so the first steps keep that facing. Neither: the
-ordinary walk-in. On rails it is the walk-in. A large follower kept in its
-ball there comes out as the resting ball, with no send-out.
+Placement runs on grids and rails. Each step is probed from the player with
+the native checks: on a grid `ActorRouteCollCheckOneTileInDir` (`0x0215e4f1`)
+and, for a second tile, `ActorRouteCollCheckCore` (`0x0215e3fd`); on a rail
+`RailActor_GetHitBitsDirNoAttr` (`0x02195729`). The step's world point is
+`FieldPlayer_GetWPosInDir` (`0x0219a9d1`) on a rail. The trail is reseeded
+along that step toward the player, recorded facing the player.
+
+1. A 32-pixel follower with the player facing down (-side on a rail): the
+   tile beside, facing down, held there like the side-by-side stand.
+2. Behind at the follow distance, facing the player's way. On a grid the
+   next tile must be open too when the pose reaches it.
+3. Either side at the follow distance, facing the player.
+
+Neither: the ordinary walk-in. A large follower kept in its ball there (in
+a barred zone, or under a floor) comes out as the resting ball one tile
+away, its gap already walked to 0, with no send-out.
+
+`FollowingSummonDebug` (magic `FWSM`, RAM bytes `46 57 53 4d`) version 1:
+word +8 source (1 boot, 2 SELECT, 3 unload with the follower out, 0 none),
++12 decision (1 same tile, 2 cancelled by a different zone or tile, 3
+cancelled by moving, 4 no tile to match), +16 placement (1 behind, 2 side,
+3 face-down stand, 4 no open tile, 5 ball), +20 placements so far, +24..+32
+the unload zone, x and z, +36..+44 the judged zone, x and z.
 
 ## Storage and compatibility
 
