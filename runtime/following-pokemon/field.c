@@ -622,6 +622,15 @@ static int step_pose(Actor *a,Actor *p,int rail,unsigned d,const Vec *step,FwSam
  Vec at={pose->x,pose->y,pose->z};
  return fws_step_clear(a,&at);
 }
+/* step_pose, then the ball decision at the pose the follower would stand
+ * on: a large follower whose pose is under a floor comes out as the ball,
+ * reposed one tile away at the ball's zero gap. */
+static int place_pose(Actor *a,Actor *p,int rail,unsigned d,const Vec *step,FwSample *pose,int *ball){
+ if(!step_pose(a,p,rail,d,step,pose,0))return 0;
+ if(*ball||!large_actor(a)||!under_floor(a,pose))return 1;
+ *ball=1;fwfield_shrink=FW_MAX_DIRECTIONAL_GAP;
+ return step_pose(a,p,rail,d,step,pose,0);
+}
 static void summon_out(Actor *a,int ball){
  if(ball){
   fwfield_held=1;fwfield_heldClear=0;fwfield_ballOff=0;fwfield_follower.state=FW_WAITING;
@@ -642,8 +651,9 @@ static int summon_place(Actor *a){
  if(!fp)return 0;
  fwfield_summon=0;
  FwSample ps,pose;player_sample(&ps);
- int large=large_actor(a),ball=large&&(large_barred()||under_floor(a,&ps));
- /* The ball keeps the tile behind; its gap is already walked to 0. */
+ int large=large_actor(a),ball=large&&large_barred();
+ /* The ball keeps the tile behind; its gap is already walked to 0. Under a
+  * floor it is decided at the follower's pose (place_pose). */
  if(ball){fwfield_shrink=FW_MAX_DIRECTIONAL_GAP;fw_trail_clear(&fwfield_follower.trail);}
  Vec step;
  if(!large&&p->face==1u){
@@ -656,13 +666,13 @@ static int summon_place(Actor *a){
   }
  }
  unsigned back=p->face^1u;
- if(step_open(a,p,fp,rail,back,&step)&&step_pose(a,p,rail,back,&step,&pose,0)){
+ if(step_open(a,p,fp,rail,back,&step)&&place_pose(a,p,rail,back,&step,&pose,&ball)){
   clear_ease();bind_pose(a,pose.x,pose.y,pose.z,p->face);
   summon_out(a,ball);FollowingSummonDebug.placed=ball?5:1;return 1;
  }
  for(unsigned i=0;i<2;++i){
   unsigned d=p->face<2?2u+i:i;
-  if(!step_open(a,p,fp,rail,d,&step)||!step_pose(a,p,rail,d,&step,&pose,0))continue;
+  if(!step_open(a,p,fp,rail,d,&step)||!place_pose(a,p,rail,d,&step,&pose,&ball))continue;
   clear_ease();bind_pose(a,pose.x,pose.y,pose.z,d^1u);
   summon_out(a,ball);FollowingSummonDebug.placed=ball?5:2;return 1;
  }
@@ -1331,12 +1341,23 @@ static void before(ActorSystem *sys) {
 #endif
   if(fwfield_cyclePending){
    fwfield_cyclePending=0;
-   if(fws_step_clear(a,&fwfield_cyclePose)){
-    a->world=fwfield_cyclePose;
-    for(unsigned i=0;i<3;++i)a->grid[i]=a->previous[i]=fwfield_cycleGrid[i];
-    CALL(0x02167099,void(*)(Actor*,uint32_t))(a,fwfield_cycleFace);
-    fwr_anchor(a,fwfield_cycleFace);
-    if(large_kept(a)){
+   /* The kept trail was summed under the old follower's gaps. Re-sum it
+    * under the new one's (a 64-pixel bonus, or the ball's zero gap) and
+    * stand the new follower on its own pose, so the distance is right at
+    * once rather than after the player's next turn. */
+   int ball=large_kept(a);
+   fwfield_shrink=ball?FW_MAX_DIRECTIONAL_GAP:0u;
+   fw_trail_remeasure(&fwfield_follower.trail,walk_gaps());
+   FwSample posed;
+   Vec at=fwfield_cyclePose;
+   if(fwfield_follower.trail.count&&fw_trail_pose_behind(&fwfield_follower.trail,walk_gaps(),FW_TILE,&posed)){
+    Vec own={posed.x,posed.y,posed.z};
+    if(fws_step_clear(a,&own))at=own;
+   }
+   if(fws_step_clear(a,&at)){
+    bind_pose(a,at.x,at.y,at.z,fwfield_cycleFace);
+    for(unsigned i=0;i<3;++i)a->previous[i]=a->grid[i];
+    if(ball){
      /* The lead switched to indoors comes out as its closed ball, with one
       * bounce; move() keeps it on the trail. */
      fwfield_held=1;fwfield_heldClear=FW_COVER_CLEAR;fwfield_ballOff=0;
