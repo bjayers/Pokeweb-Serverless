@@ -80,12 +80,14 @@ static FweRestore fwfield_restore;
  * already submitted. A later door fade still recalls. */
 static uint8_t fwfield_population;
 /* 1 while the next follower should be placed at once, with its send-out,
- * instead of waiting for the player to walk: boot, a field unloaded with the
- * follower out (menus, battles), and SELECT turning it on. A door recalls
- * before its unload, so it keeps the walk-in. The player moving first, or a
- * placement with no open tile, clears it. */
-static uint8_t fwfield_summon=1,fwfield_summonSeen;
-static Vec fwfield_summonAt;
+ * instead of waiting for the player to walk: boot, SELECT turning it on, and
+ * a field unloaded with the follower out (menus, battles). An unload records
+ * the player's zone and tile; the next field only places when the player is
+ * back on that tile, so a door, Fly, Escape Rope or any warp keeps the
+ * walk-in. The player moving first, or no open tile, clears it. */
+static uint8_t fwfield_summon=1,fwfield_summonSeen,fwfield_summonMatch;
+static uint16_t fwfield_summonZone;
+static Vec fwfield_summonAt,fwfield_summonFrom;
 /* 1 after something stepped onto the resting ball: the trail restarts and
  * the ball stays away until the hold places it again. */
 static uint8_t fwfield_ballOff;
@@ -561,8 +563,8 @@ static void beside_hold(const Actor *a,FwSample *target){
 /* Summon placement. Behind the player at the follow distance when the tile
  * behind, and the next one if the pose reaches it, pass the native NPC step
  * check (ActorRouteCollCheck: terrain, height, actors, bounds). Otherwise
- * the tile to either side, facing the player, held there like the side
- * stand until the trail comes through. Neither: the ordinary walk-in. A
+ * either side at the follow distance, the same two tiles checked, facing the
+ * player. Neither: the ordinary walk-in. A
  * large follower kept in its ball here comes out as the resting ball. */
 static int dir_dx(unsigned d){return d==2?-1:d==3?1:0;}
 static int dir_dz(unsigned d){return d==0?-1:d==1?1:0;}
@@ -608,12 +610,17 @@ static int summon_place(Actor *a){
  for(unsigned i=0;i<2;++i){
   unsigned d=p->face<2?2u+i:i;
   if(!tile_open(p,1,d,&h))continue;
-  FwSample side=ps;
+  /* The trail runs in from that side, recorded facing the player, so the
+   * pose is the follow distance out and the first steps face the player. */
+  FwSample side=ps,toward=ps;
   side.x=p->world.x+dir_dx(d)*(int32_t)FW_TILE;side.z=p->world.z+dir_dz(d)*(int32_t)FW_TILE;side.y=h;
-  if(!fw_trail_reseed_along(&fwfield_follower.trail,&side,&ps,walk_gaps(),&pose))continue;
-  clear_ease();bind_pose(a,side.x,h,side.z,d^1u);
-  beside.active=1;beside.at=(FwPoint){side.x,h,side.z};beside.last=FW_TILE+FW_TILE/2;
-  summon_out(a,&side);return 1;
+  toward.direction=(uint8_t)(d^1u);
+  if(!fw_trail_reseed_along(&fwfield_follower.trail,&side,&toward,walk_gaps(),&pose))continue;
+  int far=fw_tile(pose.x)!=p->grid[0]+dir_dx(d)||fw_tile(pose.z)!=p->grid[2]+dir_dz(d);
+  if(far&&!tile_open(p,2,d,&h2))continue;
+  if(far)h=h2;
+  clear_ease();bind_pose(a,pose.x,h,pose.z,d^1u);pose.y=h;
+  summon_out(a,&pose);return 1;
  }
  fw_trail_clear(&fwfield_follower.trail);
  return 0;
@@ -1085,7 +1092,7 @@ static void select_toggle(void *field,int ownTalk,int paused,uint32_t *reason){
   cleanup();set_followers_off(game,1);fwfield_summon=0;*reason|=4096u;
  }else{
   set_followers_off(game,0);*reason&=~4096u;
-  fwfield_summon=1;fwfield_summonSeen=1;fwfield_summonAt=p->world;
+  fwfield_summon=1;fwfield_summonSeen=1;fwfield_summonMatch=0;fwfield_summonAt=p->world;
  }
 }
 static void before(ActorSystem *sys) {
@@ -1142,7 +1149,12 @@ static void before(ActorSystem *sys) {
   fws_set_player(fwfield_player);
   if(fwfield_summon&&fwfield_player){
    Vec at=fwfield_player->world;
-   if(!fwfield_summonSeen){fwfield_summonSeen=1;fwfield_summonAt=at;}
+   if(!fwfield_summonSeen){
+    fwfield_summonSeen=1;fwfield_summonAt=at;
+    if(fwfield_summonMatch&&(fwfield_player->zone!=fwfield_summonZone||
+       at.x!=fwfield_summonFrom.x||at.z!=fwfield_summonFrom.z))fwfield_summon=0;
+    fwfield_summonMatch=0;
+   }
    else if(at.x!=fwfield_summonAt.x||at.y!=fwfield_summonAt.y||at.z!=fwfield_summonAt.z)fwfield_summon=0;
   }
   if(!fwfield_player || !(fwfield_player->flags&USE) || (fwfield_player->flags&HIDDEN) || ((fwfield_player->moveflags&8)&&!ownTalk&&!paused))reason|=4;
@@ -1440,8 +1452,15 @@ API int FollowingUnload(void *game,void *field) {
   FollowingEventsAPI.preserveMount(field,fwfield_generation,&mount);
  else FollowingEventsAPI.discardMount();
 #endif
- /* Leaving with the follower out (a menu or battle) places it on return. */
- fwfield_summon=(uint8_t)(owned()||(field&&followers_off(PTR(field,8))));
+ /* Leaving with the follower out (a menu or battle) places it on return
+  * to this same tile. */
+ {
+  void *fp=field?PTR(field,0x94):0;
+  Actor *pl=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
+  fwfield_summon=(uint8_t)(pl&&(owned()||followers_off(PTR(field,8))));
+  fwfield_summonMatch=1;
+  if(pl){fwfield_summonZone=pl->zone;fwfield_summonFrom=pl->world;}
+ }
  fws_detach();fwfield_eventsReady=0;cleanup();fwt_unload();fwfx_destroy();fwfx_set_resource_count(0);FollowingCoreAPI.clear();
 #ifdef FW_MOUNT
  fwfield_landCarry=0;

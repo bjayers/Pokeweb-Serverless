@@ -3849,6 +3849,78 @@
       "address": 33750436,
       "expectedHex": "f8b5041c0d1ce6f795fe071c084a201c00211023e6f77cff061ce7f78df8041c381ce7f769fb6060a560301cf8bdc04659fd0202",
       "abi": "Pure native audio constructor; 16-byte work references the live game sound context at +4. No actor, graphics, map or battle ownership."
+    },
+    {
+      "id": "field-actor-route-coll-check-core",
+      "module": "field",
+      "segment": "12",
+      "address": 34989052,
+      "expectedHex": "f0b587b0019202930f1c019900240a04",
+      "abi": "Thumb ActorRouteCollCheckCore; r0=FieldActor*, r1=const VecFx32* origin, r2=x, r3=y, stack z and dir. Returns the native step-collision bits (1 walk area, 2 path, 4 actor, 8 height, 0x10 bounds). Probes the second tile behind for summon placement. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-mmsys-g3d-mapper",
+      "module": "field",
+      "segment": "12",
+      "address": 35024868,
+      "expectedHex": "806b7047c06b7047",
+      "abi": "Thumb GetMMSysG3DMapper; r0=MMSys*, returns the FieldG3DMapper*. Used by the floor, wall and terrain probes. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-npc-model-info",
+      "module": "field",
+      "segment": "12",
+      "address": 35028760,
+      "expectedHex": "f0b583b0051c0c1ce96c161c0a881a2a",
+      "abi": "Thumb GetNPCMdlInfoForOBJCODE; r0=MMSys*, r1=object code, r2=out model config (byte 7 billboard size, 2 = 64 px). Reads a large follower's size before an actor exists. The descriptor-offset-width hook later in this function is separate. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-get-field-effects",
+      "module": "field",
+      "segment": "36",
+      "address": 35128652,
+      "expectedHex": "9c30006870470000",
+      "abi": "Thumb Field_GetFieldEffects; r0=FieldSystem*, returns the FieldEffects*. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-g3d-terrain-all",
+      "module": "field",
+      "segment": "36",
+      "address": 35147948,
+      "expectedHex": "f8b5cab0041ce06900910192002802d1",
+      "abi": "Thumb FieldG3DMapper_GetTerrainAll; r0=FieldG3DMapper*, r1=const VecFx32*, r2=out terrain (16 layers of normal, pad, tile type, height; u16 count at +256). Returns nonzero on success. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-area-is-exterior",
+      "module": "field",
+      "segment": "36",
+      "address": 35272568,
+      "expectedHex": "c07d7047f8b5061c",
+      "abi": "Thumb FieldEffects_GetAreaIsExterior; r0=FieldEffects*, returns the area's exterior flag. Decides where large followers come out. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-load-static-blact",
+      "module": "field",
+      "segment": "36",
+      "address": 35207276,
+      "expectedHex": "78b587b00c1c051cd3f7b0fb211c00ac",
+      "abi": "Thumb FldActSys_LoadStaticBlact; r0=FldActSys*, r1=object code. The MapSpawnFinish preload registers the follower sheet with the retail MatCache. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
+    },
+    {
+      "id": "field-find-cached-obj-mat",
+      "module": "field",
+      "segment": "36",
+      "address": 35208708,
+      "expectedHex": "08b51430fff75eff08bd0000",
+      "abi": "Thumb FieldBlAct_FindCachedObjMat; r0=FieldBlAct*, r1=object code, r2=u16* material, r3=u16* flags. Returns nonzero when the code is cached. No patch is written at this site.",
+      "status": "Pinned from the clean US White 2 binaries (arm9, overlays 12 and 36)."
     }
   ],
   "eventsAbi": 6,

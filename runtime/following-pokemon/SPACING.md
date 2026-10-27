@@ -75,15 +75,18 @@ On brings the follower out at once.
 
 The same placement runs at boot, and after any field unloaded with the
 follower out or with Followers off: menus that leave the field, battles,
-the options screen. A door recalls the follower before its unload, so a door
-keeps the walk-in. The player moving first cancels it.
+the options screen. The unload records the player's zone and tile, and the
+next field places only when the player is back on that tile. A door, Fly,
+Escape Rope or any other warp lands elsewhere and keeps the walk-in. The
+player moving first cancels it.
 
 Placement prefers behind the player at the follow distance, facing the
 player's way: the tile behind, and the next tile when the pose reaches it,
 must pass the native NPC step check (`ActorRouteCollCheckOneTileInDir`
 `0x0215e4f1`, `ActorRouteCollCheckCore` `0x0215e3fd`: terrain, height,
-actors, bounds). Otherwise either side tile, facing the player, held there
-like the side-by-side stand until the trail comes through. Neither: the
+actors, bounds). Otherwise either side at the follow distance, the same two
+tiles checked, facing the player, with its trail recorded facing the player
+so the first steps keep that facing. Neither: the
 ordinary walk-in. On rails it is the walk-in. A large follower kept in its
 ball there comes out as the resting ball, with no send-out.
 
