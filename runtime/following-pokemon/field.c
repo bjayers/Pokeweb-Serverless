@@ -1005,24 +1005,33 @@ static void move(Actor *a) {
         if (!fwfield_follower.trail.count)
             clear_ease();
         else {
-            int64_t dy = (int64_t)sample.y - a->world.y;
-            if (dy < 0) dy = -dy;
             uint32_t step = fw_travel(ease.last.x, ease.last.z, player.x, player.z);
             uint32_t traveled = ease.traveled + step;
             if (traveled < ease.traveled) traveled = 0xffffffffu;
             ease.last = player;
-            /* A stair or ledge completes onto the ordinary trail pose. Past the
-             * travel budget the push output is the fresh-load rest, exactly. */
-            if (dy > (int64_t)FW_TILE || traveled >= FW_EASE_TRAVEL)
+            /* Past the travel budget the push output is the fresh-load rest,
+             * exactly. */
+            if (traveled >= FW_EASE_TRAVEL)
                 clear_ease();
             else {
                 ease.traveled = traveled;
                 uint32_t keep = fw_ease_keep(traveled, FW_EASE_TRAVEL, ease.close_keep, FW_TILE);
                 FwSample posed;
                 if (fw_trail_pose_behind(&fwfield_follower.trail, walk_gaps(), keep, &posed)) {
-                    target.x = posed.x;
-                    target.y = posed.y;
-                    target.z = posed.z;
+                    /* A ledge or stair drop moves the eased pose more than a
+                     * tile in one update and completes onto the ordinary
+                     * trail pose. An incline climbs a little each update and
+                     * keeps easing, though the player is soon more than a
+                     * tile above or below the follower. */
+                    int64_t dy = (int64_t)posed.y - a->world.y;
+                    if (dy < 0) dy = -dy;
+                    if (dy > (int64_t)FW_TILE)
+                        clear_ease();
+                    else {
+                        target.x = posed.x;
+                        target.y = posed.y;
+                        target.z = posed.z;
+                    }
                 }
             }
         }
