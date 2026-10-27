@@ -331,6 +331,14 @@ static int grid_overlap(const Actor *a,const Vec *p,const Actor *b,const int16_t
  return p->y==q[1]&&p->x<=q[0]+bw-1&&p->x+aw-1>=q[0]
   &&p->z-ad+1<=q[2]&&p->z>=q[2]-bd+1;
 }
+/* The follower's own tile against `b`'s footprint. The follower walks the
+ * player's trail one tile wide, whatever its descriptor's collision size: a
+ * 64-pixel row's larger footprint counted an NPC beside a corner as stepped
+ * into and recalled it. */
+static int tile_overlap(const Vec *p,const Actor *b,const int16_t *q){
+ int bw=max(b->dimensions[0],1),bd=max(b->dimensions[1],1);
+ return p->y==q[1]&&p->x<=q[0]+bw-1&&p->x>=q[0]&&p->z<=q[2]&&p->z>=q[2]-bd+1;
+}
 static int sphere_overlap(const Vec *a,const Vec *b,int radius){
  if(radius<=0||radius>FW_TILE*4)return 0;
  return CALL(0x021b0d9d,int(*)(const Vec*,const Vec*,int))(a,b,radius);
@@ -374,7 +382,7 @@ int fws_step_clear(Actor *f,const Vec *target){
     if(!CALL(0x021b084d,int(*)(void*,unsigned,void*,Vec*))(unit,key,0,&point))return 0;
     if(sphere_overlap(target,&point,radius))return 0;
    }
-  }else if(grid_overlap(f,&grid,a,a->grid)||grid_overlap(f,&grid,a,a->previous))return 0;
+  }else if(tile_overlap(&grid,a,a->grid)||tile_overlap(&grid,a,a->previous))return 0;
  }
  return 1;
 }

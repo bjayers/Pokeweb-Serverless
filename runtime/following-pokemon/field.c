@@ -75,10 +75,6 @@ static uint32_t fwfield_surfAppearance;
 static FweRestore fwfield_restore;
 /* Actor built in MapSpawnFinish, before FollowingUpdate owns the system.
  * fw_init clears the follower struct; these statics keep the actor. */
-static Actor *fwfield_covered;
-static FwPokemon fwfield_coveredMon;
-static uint16_t fwfield_coveredCode;
-static int8_t fwfield_coveredSlot;
 /* 1 from the covered adopt until the first field update that is not the
  * entrance fade. That fade must not delete the actor the covered render
  * already submitted. A later door fade still recalls. */
@@ -141,8 +137,11 @@ static void animation_gate(Actor *a) {
 static int body_sheet_ready(const Actor *a){
  return *(const uint16_t*)a->drawWork!=0xffffu;
 }
+static int large_kept(const Actor *a);
 static void reveal_follower(Actor *a){
- if(!fwfx_hides_actor()&&body_sheet_ready(a))a->flags&=~HIDDEN;
+ /* Every reveal comes through here: the trail, a swap, an event pause. A
+  * large follower kept in its ball (indoors, under a floor) stays there. */
+ if(!fwfx_hides_actor()&&body_sheet_ready(a)&&!large_kept(a))a->flags&=~HIDDEN;
 }
 static int coord_ok(int64_t v){return v>=INT32_MIN&&v<=INT32_MAX;}
 static int add_coord(Vec *v,int32_t dx,int32_t dy,int32_t dz){
@@ -271,18 +270,21 @@ static int large_barred(void){
 #define FW_COVER_CLEAR 20u
 static struct { int32_t x,z,y,sx,sz; uint8_t valid,covered; } fwfield_cover;
 static uint8_t fwfield_held,fwfield_heldClear;
-static int floor_over(void *mapper,int32_t x,int32_t y,int32_t z){
+static int floor_over(void *mapper,int32_t x,int32_t y,int32_t z,int ground){
  /* FieldG3DMapperTerrain: 16 layers of normal, pad, tile type, height, then
   * the u16 layer count. */
  uint32_t terrain[65];
  Vec at={x,y,z};
  if(!CALL(0x021850ad,int(*)(void*,const Vec*,void*))(mapper,&at,terrain))return 0;
  unsigned layers=*(uint16_t*)(terrain+64);if(layers>16)layers=16;
+ int over=0,walk=!ground;
  for(unsigned i=0;i<layers;++i){
   uint32_t type=terrain[i*4+2];int64_t above=(int64_t)(int32_t)terrain[i*4+3]-y;
-  if(type!=UINT32_MAX&&(type&0xffffu)!=0xffu&&above>FW_FLOOR_LOW&&above<FW_LARGE_TALL)return 1;
+  if(type==UINT32_MAX||(type&0xffffu)==0xffu)continue;
+  if(above>FW_FLOOR_LOW&&above<FW_LARGE_TALL)over=1;
+  else if(above>=-(int64_t)FW_TILE&&above<=(int64_t)FW_TILE&&!((type>>16)&1u))walk=1;
  }
- return 0;
+ return over&&walk;
 }
 static int under_floor(Actor *a,const FwSample *t){
  int32_t tx=fw_tile(t->x),tz=fw_tile(t->z),sx=0,sz=0;
@@ -295,12 +297,17 @@ static int under_floor(Actor *a,const FwSample *t){
  if(fwfield_cover.valid&&fwfield_cover.x==tx&&fwfield_cover.z==tz&&fwfield_cover.y==t->y&&
     fwfield_cover.sx==sx&&fwfield_cover.sz==sz)return fwfield_cover.covered;
  void *mapper=CALL(0x02166fe5,void*(*)(void*))(a->system);
- int covered=mapper&&(floor_over(mapper,t->x,t->y,t->z)||
-  ((sx||sz)&&(floor_over(mapper,t->x+sx,t->y,t->z+sz)||floor_over(mapper,t->x-sx,t->y,t->z-sz))));
+ /* A tile ahead or behind only counts where the follower could walk under
+  * it: walkable ground at its feet. A raised hedge or rooftop beside a
+  * corner is not a bridge. */
+ int covered=mapper&&(floor_over(mapper,t->x,t->y,t->z,0)||
+  ((sx||sz)&&(floor_over(mapper,t->x+sx,t->y,t->z+sz,1)||floor_over(mapper,t->x-sx,t->y,t->z-sz,1))));
  fwfield_cover.x=tx;fwfield_cover.z=tz;fwfield_cover.y=t->y;fwfield_cover.sx=sx;fwfield_cover.sz=sz;
  fwfield_cover.valid=1;fwfield_cover.covered=(uint8_t)covered;
  return covered;
 }
+/* A 64-pixel follower barred here, or held under a floor by move(). */
+static int large_kept(const Actor *a){return large_actor(a)&&(fwfield_held||large_barred());}
 /* 1 while a 64-pixel follower stays in its ball: barred here, or under a
  * floor. Leaving cover waits FW_COVER_CLEAR updates, so a trail along a
  * floor's edge does not flash it in and out. */
@@ -708,49 +715,17 @@ static int select(void *game,void *field,FwPokemon *out,FwrSnapshot *snapshot,in
  }
  return 1;
 }
-/* Draw flag is already 1. CreateNewActorByParam therefore builds the
- * billboard inside the constructor. Exist-mat uses the material just
- * inserted, and the MapSpawnFinish render that follows this hook submits
- * that quad with the zone NPCs, before the entrance fade. */
-#ifdef FW_STOCK
-static void covered_spawn(void *field, ActorSystem *sys, uint16_t code, const FwPokemon *mon, int slot){
- void *fp=PTR(field,0x94);
- Actor *player=fp?CALL(0x0219a6e1,Actor*(*)(void*))(fp):0;
- if(!player||!(player->flags&USE)){FollowingConfigDebug.covered=2;return;}
- /* A large follower barred here stays in its ball; the field update builds
-  * it hidden and move() keeps it there. */
- if(code_large(sys,code)&&large_barred_at(field,player->zone)){FollowingConfigDebug.covered=6;return;}
- unsigned free=0;
- for(unsigned i=0;i<sys->capacity;++i)if(!(sys->actors[i].flags&USE))++free;
- if(free<2){FollowingConfigDebug.covered=5;return;}
- unsigned id;
- for(id=0xf0;id<=0xf8;++id){unsigned i;for(i=0;i<sys->capacity;++i)if((sys->actors[i].flags&USE)&&sys->actors[i].id==id)break;if(i==sys->capacity)break;}
- if(id>0xf8||CALL(0x0203a2d5,uint32_t(*)(uint32_t))(sys->resourceHeap)<32768){FollowingConfigDebug.covered=5;return;}
- Actor *a=CALL(0x021668c1,Actor*(*)(ActorSystem*,int,int,unsigned,unsigned,unsigned,unsigned,unsigned))(sys,player->grid[0],player->grid[2],player->face,id,code,0,player->zone);
- if(!a){FollowingConfigDebug.covered=3;return;}
- a->flags|=NONBLOCKING|NO_QUERY|KEEP_ZONE; a->flags&=~HIDDEN;
- a->moveflags|=NOT_SAVE|NO_EFFECT; a->moveflags&=~(8u|2048u|4096u);
- a->callbacks=&fwfield_moves; a->world=player->world;
- fwr_anchor(a,player->face);
- fwfield_covered=a; fwfield_coveredMon=*mon; fwfield_coveredCode=code; fwfield_coveredSlot=(int8_t)slot;
- fwfield_code=code;
- FollowingDebug.actor=(uint32_t)a; FollowingDebug.visible=1; FollowingDebug.species=mon->species; FollowingDebug.fwfield_code=code;
- FollowingConfigDebug.covered=body_sheet_ready(a)?1:4;
- /* White sheet for the later recall flash. Same window as the body upload,
-  * before this routine swaps the new picture. A repeat from the field update
-  * sees the id and does not upload again. */
- fwfx_prepare(a);
-}
-#endif
 /* MapSpawnFinish case 0 has finished the actor and weather drains.
  * field+8 is GameData. field+0x40 is the actor system. The entrance fade
- * has not run, so LoadStaticBlact is the covered retail upload and the
- * CreateNewActorByParam below is the covered retail spawn.
+ * has not run, so LoadStaticBlact is the covered retail upload. The actor
+ * itself is built hidden by the field update and sent out with the ball
+ * once its trail is ready, as a map entry always did; a body created here
+ * appeared already out, with no send-out. The line that early spawn was
+ * hiding came from mid-frame texture uploads, which now wait for VBlank.
  * A config miss on this first try is cleared; the field update can retry.
  * Emote sheets stay off this path.
  * FollowingConfigDebug.insert records the cache lookup. 8 means FindCachedObjMat
- * found uid with a material and flags bit 2 clear. covered 1 means the actor
- * was created with that billboard before the render. Read both after the
+ * found uid with a material and flags bit 2 clear. Read it after the
  * entrance fade, before the next zone. */
 #ifdef FW_STOCK
 API void FollowingPreloadFollower(void *field, void *actorSystem) {
@@ -778,7 +753,6 @@ API void FollowingPreloadFollower(void *field, void *actorSystem) {
  if(hit&&found[0]!=0xffffu&&!(found[1]&2u))FollowingConfigDebug.insert=8;
  else if(hit)FollowingConfigDebug.insert=9;
  else FollowingConfigDebug.insert=7;
- if(FollowingConfigDebug.insert==8)covered_spawn(field,(ActorSystem*)actorSystem,code,&selected,slot);
 }
 #endif
 static void cycle_follower(void *game,void *field){
@@ -920,21 +894,6 @@ static void before(ActorSystem *sys) {
   }
   fwfield_landCarry=(uint8_t)(carry&&fwfield_restore.magic==FWE_RESTORE_MAGIC);
 #endif
-  if(fwfield_covered&&fwfield_covered->system==sys&&(fwfield_covered->flags&USE)&&fwfield_covered->callbacks==&fwfield_moves){
-   if(!fwfield_follower.has_selection||fw_same_identity(&fwfield_coveredMon,&fwfield_follower.selected)){
-    fwfield_follower.actor=(uintptr_t)fwfield_covered;
-    fwfield_follower.selected=fwfield_coveredMon;
-    fwfield_follower.slot=fwfield_coveredSlot;
-    fwfield_follower.has_selection=1;
-    fwfield_follower.state=FW_FOLLOWING;
-    fwfield_code=fwfield_coveredCode;
-    FollowingDebug.actor=(uint32_t)fwfield_covered;
-    FollowingDebug.visible=!(fwfield_covered->flags&HIDDEN);
-    fwfield_population=1;
-    ++FollowingDebug.spawns;
-   }else CALL(0x02166981,void(*)(Actor*))(fwfield_covered);
-   fwfield_covered=0;
-  }
  }
  void *field=sys->field;
  if(fwt_active()&&!fwt_owns(field))fwt_cancel();
@@ -1247,7 +1206,7 @@ API int FollowingUnload(void *game,void *field) {
  fwsurf_destroy();fwfield_surfAppearance=0;
 #endif
 fwfield_pageCount=fwfield_stride=0;
- fwfield_covered=0;fwfield_population=0;
+ fwfield_population=0;
  fwfield_owner=0;fwfield_configState=0;fwfield_registrySize=0;return FollowingOriginalUnload(game,field); }
 
 /* Original event providers retain first refusal for every retail event. */
