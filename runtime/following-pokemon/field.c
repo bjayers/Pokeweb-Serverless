@@ -111,7 +111,7 @@ static Vec settled;
 static uint8_t haveSettled,haveLast;
 /* The HGSS side-by-side stand: the follower on the corner tile beside the
  * player, held until the trail passes that corner again. */
-static struct { uint8_t active; FwPoint at; } beside;
+static struct { uint8_t active; FwPoint at; uint32_t last; } beside;
 static void clear_swap(void){swapOn.active=swapOn.departed=swapOn.rail=0;FollowingSwapDebug.active=FollowingSwapDebug.progress=0;}
 static void clear_ease(void){ease.active=0;ease.traveled=ease.close_keep=0;}
 void fw_depth_query(int *swapping,int *easing,uint32_t *traveled){
@@ -530,21 +530,25 @@ static int beside_step(Actor *a){
  if(!fw_trail_side_corner(t,rail,&c))return 0;
  if(corner_span(a->world.x,a->world.z,&c)>FW_TILE)return 0;
  if(!rail&&(a->world.x!=c.x||a->world.z>c.z))return 0;
- if(a->world.x==c.x&&a->world.z==c.z){beside.active=1;beside.at=c;return 0;}
+ if(a->world.x==c.x&&a->world.z==c.z){beside.active=1;beside.at=c;beside.last=FW_TILE+FW_TILE/2;return 0;}
  Vec corner={c.x,c.y,c.z};
  if(!fws_step_clear(a,&corner))return 0;
  int32_t x=toward(a->world.x,c.x),z=toward(a->world.z,c.z);
  bind_pose(a,x,x==c.x&&z==c.z?c.y:a->world.y,z,1);
- beside.active=1;beside.at=c;return 1;
+ beside.active=1;beside.at=c;beside.last=FW_TILE+FW_TILE/2;return 1;
 }
 /* Once the player moves on, the trail pose starts behind the corner and
  * walks through it. Hold the follower where it stands, on the corner or part
- * way to it, until the trail pose comes as close to the corner as it is, so
- * there is no step back. Then the hold ends for good. */
+ * way to it, while the trail pose is still closing on the corner, so there
+ * is no step back. A pose that comes as close as the follower, or that has
+ * stepped over the corner and starts moving away from it, ends the hold for
+ * good; the follower is then on its ordinary pose. */
 static void beside_hold(const Actor *a,FwSample *target){
  if(!beside.active)return;
  uint32_t held=corner_span(a->world.x,a->world.z,&beside.at),trail=corner_span(target->x,target->z,&beside.at);
- if(held<=FW_TILE&&trail>held&&trail<=FW_TILE+FW_TILE/2){target->x=a->world.x;target->y=a->world.y;target->z=a->world.z;return;}
+ if(held<=FW_TILE&&trail>held&&trail<=beside.last){
+  beside.last=trail;target->x=a->world.x;target->y=a->world.y;target->z=a->world.z;return;
+ }
  beside.active=0;
 }
 static void move(Actor *a) {

@@ -54,8 +54,9 @@ the trail recorded, so a rail works the same way in its line frame: down is
 -side (1), assumed for every rail so far, and the sideways step is one knot
 along +/-front (2/3), half a tile to a tile and a half. A grid step must be
 exactly one tile. When
-the player moves again the follower holds until the trail pose has come down
-through the corner, so it never steps back up. Any other facing or path, a
+the player moves again the follower holds while the trail pose is still
+closing on the corner, and follows from the first update the pose comes as
+close or turns away, so it never steps back and never lags. Any other facing or path, a
 swap or ease in progress, the ball, a 64-pixel follower, an effect, or
 an NPC on the corner leave the ordinary pose.
 
