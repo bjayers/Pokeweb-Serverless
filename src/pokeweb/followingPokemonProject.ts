@@ -991,7 +991,9 @@ export async function installFollowerAlpha(project: ProjectState, rom?: Follower
   const eventsDll = new Uint8Array(await eventsResponse.arrayBuffer());
   if (await followerRomSha256(eventsDll) !== fingerprint.eventsSha256 || (variant === "full" && fingerprint.eventsAbi !== binaryContractFor(profile).eventsAbi) || (variant === "base" && fingerprint.eventsAbi !== 4)) throw new Error("Follower event module fingerprint mismatch.");
   const coreDll = new Uint8Array(await coreResponse.arrayBuffer());
-  if (await followerRomSha256(coreDll) !== runtimeManifest.coreSha256) throw new Error("Follower core module fingerprint mismatch: the bundled core DLL is not the one runtime.json records.");
+  const coreSha256 = await followerRomSha256(coreDll);
+  if (coreSha256 !== runtimeManifest.coreSha256)
+    throw new Error(`Follower core module fingerprint mismatch: the bundled core DLL is ${coreSha256}, but runtime.json ${runtimeManifest.version} records ${runtimeManifest.coreSha256}. Restart the dev server and reload the page after publishing.`);
   if (!FOLLOWER_CORE_ABIS.includes(runtimeManifest.coreAbi)) throw new Error(`Follower core module ABI ${runtimeManifest.coreAbi} is not supported.`);
   const optionsDll = new Uint8Array(await optionsResponse.arrayBuffer());
   const battleDll = new Uint8Array(await battleResponse.arrayBuffer());
