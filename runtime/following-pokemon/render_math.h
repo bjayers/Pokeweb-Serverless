@@ -2,12 +2,21 @@
 #define FOLLOWING_RENDER_MATH_H
 #include "following.h"
 /* Camera and positions use native 20.12 world units; scale uses native fx16. */
-typedef struct { FwPoint eye,target; uint32_t projection; } FwrCamera;
-typedef struct { FwPoint position; int32_t sx,sy; } FwrPose;
-typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
-#define FWR_TIE_MARGIN 512 /* 1/8 world unit; a tile is 16 world units. */
-#define FWR_LARGE 1u
-#define FWR_NORTH 2u
+typedef struct {
+    FwPoint eye, target;
+    uint32_t projection;
+} FwrCamera;
+typedef struct {
+    FwPoint position;
+    int32_t sx, sy;
+} FwrPose;
+typedef struct {
+    FwPoint axis;
+    int32_t before, after, policy;
+} FwrResult;
+#define FWR_TIE_MARGIN  512 /* 1/8 world unit; a tile is 16 world units. */
+#define FWR_LARGE       1u
+#define FWR_NORTH       2u
 #define FWR_NORTH_ART_Y 2
 /* One world unit is one native Z step at the field camera. The old four-unit
  * target pushed the quad through its shadow and through nearby stair walls. */
@@ -29,21 +38,20 @@ typedef struct { FwPoint axis; int32_t before,after,policy; } FwrResult;
 /* Ground XZ keep that puts the center about four view units behind the
  * feet at an ordinary field camera, and never as far as half a tile.
  * Screen half-width (8*sx) is not a world distance. */
-#define FWR_PLANE_CAP (6 * 4096)
+#define FWR_PLANE_CAP   (6 * 4096)
 #define FWR_FORCE_FRONT 4u
-#define FWR_FORCE_BACK 8u
-int fwr_correct(const FwPoint *world,const FwPoint *player_world,
-    const FwrPose *native,const FwPoint *player_draw,const FwrCamera *camera,
-    unsigned flags,FwrPose *output,FwrResult *result);
+#define FWR_FORCE_BACK  8u
+int fwr_correct(const FwPoint *world, const FwPoint *player_world, const FwrPose *native,
+                const FwPoint *player_draw, const FwrCamera *camera, unsigned flags, FwrPose *output,
+                FwrResult *result);
 /* Keep the opaque billboard in front of its ground shadow without moving its
  * projected image. The shadow itself remains at the native ground anchor. */
-int fwr_above_shadow(const FwrPose *native,const FwPoint *ground,
-    const FwrCamera *camera,FwrPose *output);
+int fwr_above_shadow(const FwrPose *native, const FwPoint *ground, const FwrCamera *camera, FwrPose *output);
 /* Push only the follower quad back along the eye ray until it is `margin`
  * behind the player. `cap` limits that backward move. The player quad, shadow
  * anchor, and logical world position stay where they are. */
-int fwr_keep_behind(const FwrPose *follower,const FwrPose *player,
-    const FwrCamera *camera,int32_t margin,int32_t cap,FwrPose *output);
+int fwr_keep_behind(const FwrPose *follower, const FwrPose *player, const FwrCamera *camera, int32_t margin,
+                    int32_t cap, FwrPose *output);
 /* Eye-to-target length in 20.12. 0 when the camera has no separation. */
 uint32_t fwr_view_distance(const FwrCamera *camera);
 /* Margin for fwr_keep_behind. `ease_s` is a smoothstep in 0..65536: 0 while
@@ -60,43 +68,40 @@ int32_t fwr_clear_front(const FwrCamera *camera);
 /* Same bias, with an explicit keep. `keep` is the follower's sort margin:
  * one unit at rest, and the swap margin while a tuck has pulled the sprite
  * back through the oval. The shadow is not moved on screen. */
-int fwr_shadow_tuck(const FwrPose *shadow,const FwPoint *sprite,
-    const FwrCamera *camera,int32_t keep,FwrPose *output);
+int fwr_shadow_tuck(const FwrPose *shadow, const FwPoint *sprite, const FwrCamera *camera, int32_t keep,
+                    FwrPose *output);
 /* fwr_shadow_tuck, for a shadow within four tiles of `feet`. */
-int fwr_shadow_match(const FwrPose *shadow,const FwPoint *feet,
-    const FwPoint *sprite,const FwrCamera *camera,int32_t keep,FwrPose *output);
+int fwr_shadow_match(const FwrPose *shadow, const FwPoint *feet, const FwPoint *sprite,
+                     const FwrCamera *camera, int32_t keep, FwrPose *output);
 /* Push this ground oval away from the camera by its near-rim depth plus
  * eight world pixels, then stop at one tile. Perspective scale keeps the
  * picture on the ground sample. Orthographic and unknown cameras are left
  * alone. Does not follow the body. */
-int fwr_oval_behind(const FwrPose *shadow,const FwrCamera *camera,FwrPose *output);
+int fwr_oval_behind(const FwrPose *shadow, const FwrCamera *camera, FwrPose *output);
 /* 60-byte private billboard header for a second GX submit. Copies heap,
  * scale, and the four light colors from the live field scene. Zeroes the
  * 20-byte tail and does not copy the live polygon id: that pair is the 3DS
  * black-line state, which emulators do not keep. Polygon id is 1, or 2 when
  * the live scene is already 1. A later hardware pass changes this function
  * only. `actors` and `materials` are stored as 32-bit addresses. */
-void fwr_private_scene(void *dst,const void *live,const void *actors,const void *materials,
-                       uint16_t actorCount,uint16_t materialCount);
+void fwr_private_scene(void *dst, const void *live, const void *actors, const void *materials,
+                       uint16_t actorCount, uint16_t materialCount);
 /* Camera-facing grass clears its owner, but stays behind a nearer body. */
-int fwr_cover_feet(const FwrPose *grass,const FwrPose *body,
-    const FwrPose *other,const FwrCamera *camera,FwrPose *output);
+int fwr_cover_feet(const FwrPose *grass, const FwrPose *body, const FwrPose *other, const FwrCamera *camera,
+                   FwrPose *output);
 /* Raise an attached bubble in the camera plane, preserving horizontal center
  * and depth even with a perspective camera. Height is in world 20.12 units. */
-int fwr_head_position(const FwPoint *base,const FwrCamera *camera,
-    int32_t height,FwPoint *output);
+int fwr_head_position(const FwPoint *base, const FwrCamera *camera, int32_t height, FwPoint *output);
 /* Pull a head-attached bubble toward the camera along the eye ray so map
  * geometry behind the follower cannot depth-test it away. Screen position
  * stays put. When `player` is at least half a tile closer than the bubble,
  * the bubble stops one unit behind that player instead of covering them.
  * `player` may be null. */
-int fwr_emote_place(const FwrPose *bubble,const FwPoint *player,
-    const FwrCamera *camera,FwrPose *output);
+int fwr_emote_place(const FwrPose *bubble, const FwPoint *player, const FwrCamera *camera, FwrPose *output);
 /* Move `feet` away from the camera along the ground until it is `view_keep`
  * view-units further, or FWR_PLANE_CAP world units, whichever is smaller.
  * Y is copied. A camera with no horizontal axis leaves the point planted. */
-int fwr_plane_keep(const FwPoint *feet,const FwrCamera *camera,int32_t view_keep,
-    FwPoint *output);
+int fwr_plane_keep(const FwPoint *feet, const FwrCamera *camera, int32_t view_keep, FwPoint *output);
 /* The top row of a 56-unit body with a quarter forward lean is about 74
  * units forward at a 44° camera. Past this a steep camera's top rows lean
  * back again. */
@@ -105,7 +110,9 @@ int fwr_plane_keep(const FwPoint *feet,const FwrCamera *camera,int32_t view_keep
  * (positive toward the camera): `base` (-5..2 tiles), plus `forward` (0..2
  * tiles) ramped in over `ramp` units of height starting `rise` units up. A
  * strip whose native top already stands there or nearer does not move. */
-typedef struct { int32_t base,forward,rise,ramp; } FwrStack;
+typedef struct {
+    int32_t base, forward, rise, ramp;
+} FwrStack;
 /* Horizontal strips of a tall body for their own submit. `body` is the
  * submitted camera-facing quad (foot anchor), `half` its world half-width.
  * Strip i spans top - (i+1)*strip .. top - i*strip world units up the camera
@@ -114,9 +121,13 @@ typedef struct { int32_t base,forward,rise,ramp; } FwrStack;
  * of depth, with its screen pixels unchanged. The camera basis is built once
  * for all strips. Returns 0 for an unknown projection, a vertical camera or
  * an unusable pose. */
-int fwr_strips(const FwrPose *body,const FwrCamera *camera,int32_t half,int32_t top,int32_t strip,
-               unsigned count,const FwrStack *stack,int32_t strip_sy,FwrPose *output);
+int fwr_strips(const FwrPose *body, const FwrCamera *camera, int32_t half, int32_t top, int32_t strip,
+               unsigned count, const FwrStack *stack, int32_t strip_sy, FwrPose *output);
 /* The camera-facing basis fwr_strips uses, built once per frame. */
-typedef struct { FwPoint eye,view,right,up,toward; int32_t flat,upToward; int ortho; } FwrBasis;
-int fwr_basis(const FwrCamera *camera,FwrBasis *output);
+typedef struct {
+    FwPoint eye, view, right, up, toward;
+    int32_t flat, upToward;
+    int ortho;
+} FwrBasis;
+int fwr_basis(const FwrCamera *camera, FwrBasis *output);
 #endif

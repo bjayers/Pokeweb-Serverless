@@ -1,0 +1,19 @@
+# Formatting for the runtime C sources. Generated headers (scene-policy.h,
+# effects_assets.h) are left as their generators write them.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 110
+SortIncludes: Never
+ReflowComments: true
+BreakStringLiterals: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: true
+IndentCaseLabels: true
+MaxEmptyLinesToKeep: 1
+AlignConsecutiveMacros: Consecutive
+AlignTrailingComments: true
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Right
